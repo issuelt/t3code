@@ -117,13 +117,13 @@ function DevicePreviewScreen({
   }, [focused, foreground]);
   // Android back reveals the controls first, so leaving takes a deliberate second press.
   useEffect(() => {
-    if (controlsVisible) return;
+    if (controlsVisible || !focused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       setControlsVisible(true);
       return true;
     });
     return () => subscription.remove();
-  }, [controlsVisible]);
+  }, [controlsVisible, focused]);
 
   const shutDownDevice = async () => {
     if (!preview || shuttingDown) return;

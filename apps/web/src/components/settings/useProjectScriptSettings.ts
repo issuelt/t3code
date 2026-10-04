@@ -21,6 +21,7 @@ import { isElectron } from "../../env";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
+  PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING,
 } from "../../lib/projectScriptKeybindings";
 import {
   buildProjectScript,
@@ -61,14 +62,12 @@ export function useProjectScriptSettings(
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "project actions update");
-  const upsertKeybinding = useAtomCommand(
-    serverEnvironment.upsertKeybinding,
-    "action shortcut update",
-  );
-  const removeKeybinding = useAtomCommand(
-    serverEnvironment.removeKeybinding,
-    "action shortcut removal",
-  );
+  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
+  });
+  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
+    reportFailure: false,
+  });
 
   async function persist(
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
@@ -148,7 +147,9 @@ export function useProjectScriptSettings(
             : previous && !retainedElsewhere
               ? await removeKeybinding({ environmentId, input: previous })
               : null;
-          if (bindingResult?._tag === "Failure") return reportScriptFailure(bindingResult);
+          if (bindingResult?._tag === "Failure") {
+            toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+          }
         }
       }
       return AsyncResult.success(undefined);

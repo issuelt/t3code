@@ -299,6 +299,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
+  PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING,
 } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -5045,20 +5046,24 @@ export default function ChatView(props: ChatViewProps) {
       const previous = previousRules.at(-1);
       for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
         const result = await removeKeybinding({ environmentId, input: rule });
-        if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
+        if (result._tag === "Failure") {
+          toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+          return updateResult;
+        }
       }
-      return keybindingRule
-        ? mapAtomCommandResult(
-            await upsertKeybinding({
-              environmentId,
-              input:
-                previous && previous.key !== keybindingRule.key
-                  ? { ...keybindingRule, replace: previous }
-                  : keybindingRule,
-            }),
-            () => undefined,
-          )
-        : updateResult;
+      if (keybindingRule) {
+        const result = await upsertKeybinding({
+          environmentId,
+          input:
+            previous && previous.key !== keybindingRule.key
+              ? { ...keybindingRule, replace: previous }
+              : keybindingRule,
+        });
+        if (result._tag === "Failure") {
+          toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+        }
+      }
+      return updateResult;
     },
     [
       allProjects,
