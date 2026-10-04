@@ -702,6 +702,8 @@ const RootStackConfig = createNativeStackNavigator({
         presentation: "fullScreenModal",
         headerShown: false,
         gestureEnabled: false,
+        autoHideHomeIndicator: true,
+        navigationBarHidden: true,
       },
     }),
     BrowserClone: createNativeStackScreen({

@@ -1,4 +1,5 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
+import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
 export function resolveThreadDetailsCardDensity(
   height: number,
@@ -9,22 +10,26 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
-/** The card uses leftover space. It never changes the conversation's width. */
+/**
+ * The card pins to the top right while a readable chat lane fits beside it.
+ * The chat canvas decides whether chat moves over to make room.
+ */
 export function resolveThreadDetailsCardLayout({
   container,
-  chat,
+  lane,
   frame,
   overlapsDetailsCard = false,
 }: {
   container: { width: number; height: number };
-  chat: { left: number; width: number };
+  lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
 }) {
   const gap = 12;
-  const width = Math.min(312, container.width - chat.left - chat.width - gap * 2);
-  if (width < 240) return null;
+  // Keep in sync with --thread-details-panel-width, which sizes the popover.
+  const width = 280;
   const x = container.width - width - gap;
+  if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
   const densityHeight = container.height - gap * 2;
   // The player limits how tall the card's viewport is, never which controls it shows.
   const height =

@@ -26,6 +26,7 @@ import { ThreadDetailsCard } from "./ThreadDetailsCard";
 
 const canvas = {
   container: { width: 1584, height: 700 },
+  lane: { padding: 20, minChatWidth: 640 },
   layout: {
     chat: { left: 424, width: 736 },
     frame: { x: 1260, y: 400, width: 240, height: 288 },

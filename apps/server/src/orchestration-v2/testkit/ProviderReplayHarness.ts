@@ -434,6 +434,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         dispatch: orchestrator.dispatch,
         getThreadRecords: orchestrator.getThreadRecords,
         getThreadProjection: orchestrator.getThreadProjection,
+        recoverDelegatedTask: orchestrator.recoverDelegatedTask,
+        delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
       });
     }),
   ).pipe(Layer.provide(orchestratorProvided));
@@ -498,6 +500,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Orchestrator.OrchestratorV2,
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      // As in serverRuntimeStartup: after runtime recovery, before the worker.
+      yield* orchestrator.recoverDelegatedTasks;
       yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
       return orchestrator;
     }),
