@@ -8,6 +8,13 @@ import * as Schema from "effect/Schema";
 
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
 
+/** Shortcut failures after the action settings commit must not invite retrying the saved edit. */
+export const PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING = {
+  type: "warning",
+  title: "Action changes saved",
+  description: "The shortcut could not be updated. Adjust it in Settings > Keybindings.",
+} as const;
+
 const decodeKeybindingRule = Schema.decodeUnknownOption(KeybindingRuleSchema);
 
 function normalizeProjectScriptKeybindingInput(
