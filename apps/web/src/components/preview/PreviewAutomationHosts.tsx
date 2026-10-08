@@ -19,10 +19,11 @@ import {
   type PreviewRenderedViewportSize,
   type PreviewViewportSetting,
   type ScopedThreadRef,
+  AuthPreviewOperateScope,
 } from "@t3tools/contracts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -58,6 +59,7 @@ import {
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
+import { useEnvironmentScope } from "~/state/session";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -295,6 +297,11 @@ export function PreviewAutomationHosts() {
 }
 
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
+  const canOperate = useEnvironmentScope(props.environmentId, AuthPreviewOperateScope);
+  return canOperate ? <AuthorizedPreviewAutomationHost {...props} /> : null;
+}
+
+function AuthorizedPreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const previewSessions = useActivePreviewSessions();
   const visibleRuntimeTabIds = useBrowserSurfaceStore(

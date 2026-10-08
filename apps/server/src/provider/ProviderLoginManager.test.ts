@@ -21,7 +21,7 @@ import {
   type PtySpawnInput,
 } from "../terminal/PtyAdapter.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "./ProviderRegistry.ts";
 import { CodexDeviceAuth, type CodexDeviceAuthStartInput } from "./CodexDeviceAuth.ts";
 import * as ProviderLoginManager from "./ProviderLoginManager.ts";
 

@@ -12,8 +12,8 @@ import * as Stream from "effect/Stream";
 import { AutoFallbackCooldownTracker } from "./autoFallback/CooldownTracker.ts";
 import { selectFallbackCandidate } from "./autoFallback/candidates.ts";
 import { isInstanceCoolingDown } from "./autoFallback/cooldown.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 

@@ -1,30 +1,37 @@
 import * as NodeVM from "node:vm";
+import * as Schema from "effect/Schema";
 import { it as effectIt } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
+const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
 
 describe("fitPictureInPictureContentSize", () => {
   it("preserves the PiP content area across aspect-ratio changes", () => {
@@ -233,7 +240,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-const browserSessionLayer = Layer.succeed(
+const layerBrowserSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
     getPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -244,7 +251,7 @@ const browserSessionLayer = Layer.succeed(
   }),
 );
 
-const environmentLayer = Layer.succeed(
+const layerEnvironment = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
     browserArtifactsDir: "/tmp/t3/dev/browser-artifacts",
@@ -255,7 +262,7 @@ const environmentLayer = Layer.succeed(
   } as DesktopEnvironment.DesktopEnvironment["Service"]),
 );
 
-const fileSystemLayer = FileSystem.layerNoop({
+const layerFileSystem = FileSystem.layerNoop({
   makeDirectory: (path) =>
     Effect.sync(() => {
       mkdir(path);
@@ -266,24 +273,34 @@ const fileSystemLayer = FileSystem.layerNoop({
     }),
 });
 
-const layer = PreviewManager.layer.pipe(
-  Layer.provideMerge(browserSessionLayer),
-  Layer.provideMerge(environmentLayer),
-  Layer.provideMerge(fileSystemLayer),
-  Layer.provideMerge(Path.layer),
-  Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
-);
-const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
+const managerLayer = (platform: NodeJS.Platform = "darwin") =>
+  PreviewManager.layer.pipe(
+    Layer.provideMerge(
+      Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+        register: () => Effect.void,
+        recordMetrics: () => Effect.void,
+        shutdown: Effect.void,
+      }),
+    ),
+    Layer.provideMerge(DesktopBrowserHost.layer),
+    Layer.provideMerge(layerBrowserSession),
+    Layer.provideMerge(layerEnvironment),
+    Layer.provideMerge(layerFileSystem),
+    Layer.provideMerge(Path.layer),
+    Layer.provideMerge(NodeCrypto.layer),
+    Layer.provideMerge(Layer.succeed(HostProcessPlatform, platform)),
+  );
 
 const withManager = <A>(
   use: (
     manager: PreviewManager.PreviewManager["Service"],
   ) => Effect.Effect<A, PreviewManager.PreviewManagerError, Scope.Scope>,
+  platform: NodeJS.Platform = "darwin",
 ) =>
   Effect.gen(function* () {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* use(manager);
-  }).pipe(Effect.provide(layer), Effect.scoped);
+  }).pipe(Effect.provide(managerLayer(platform)), Effect.scoped);
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
@@ -563,7 +580,7 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const preview = makeFaviconWebContents();
         const sendInputEvent = vi.fn();
-        const hostWebContents = { sendInputEvent };
+        const hostWebContents = { sendInputEvent, isDestroyed: () => false };
         Object.assign(preview.webContents, { hostWebContents });
         fromId.mockReturnValue(preview.webContents);
         getFocusedWebContents.mockReturnValue(preview.webContents as never);
@@ -615,6 +632,108 @@ describe("PreviewManager", () => {
         expect(sendInputEvent).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect.each([
+    ["mod+shift+t", "view.reopenClosed"],
+    ["ctrl+alt+u", "sidebar.toggle"],
+  ] as const)(
+    "forwards only the configured command from the focused guest: %s",
+    ([chord, command]) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeFaviconWebContents();
+          const send = vi.fn();
+          Object.assign(preview.webContents, {
+            hostWebContents: { isDestroyed: () => false, send },
+          });
+          fromId.mockReturnValue(preview.webContents);
+          getFocusedWebContents.mockReturnValue(preview.webContents as never);
+          yield* manager.createTab("tab_reopen");
+          yield* manager.registerWebview("tab_reopen", 42);
+          const shortcut = parseKeybindingShortcut(chord)!;
+          yield* manager.setForwardedShortcuts([{ command, shortcut }]);
+          const beforeInput = preview.listeners.get("before-input-event")!;
+          const input = {
+            type: "keyDown",
+            key: shortcut.key.toUpperCase(),
+            meta: shortcut.metaKey || shortcut.modKey,
+            control: shortcut.ctrlKey,
+            shift: shortcut.shiftKey,
+            alt: shortcut.altKey,
+          };
+          const preventDefault = vi.fn();
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).toHaveBeenCalledOnce();
+          expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
+          for (const overrides of [
+            { isAutoRepeat: true },
+            { type: "keyUp" },
+            { shift: !input.shift },
+            { key: "x" },
+          ]) {
+            preventDefault.mockClear();
+            beforeInput({ preventDefault } as never, { ...input, ...overrides } as never);
+            expect(preventDefault).toHaveBeenCalledTimes("isAutoRepeat" in overrides ? 1 : 0);
+            expect(send).toHaveBeenCalledOnce();
+          }
+          getFocusedWebContents.mockReturnValue(null);
+          preventDefault.mockClear();
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).not.toHaveBeenCalled();
+          expect(send).toHaveBeenCalledOnce();
+          getFocusedWebContents.mockReturnValue(preview.webContents as never);
+          yield* manager.setForwardedShortcuts([]);
+          beforeInput({ preventDefault } as never, input as never);
+          expect(preventDefault).not.toHaveBeenCalled();
+          expect(send).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
+  effectIt.effect.each([
+    ["linux", "ctrl+alt+[", "[", "BracketLeft", false],
+    ["win32", "ctrl+alt+8", "[", "Digit8", false],
+    ["win32", "ctrl+alt+k", "K", "KeyK", false],
+    ["linux", "ctrl+alt+`", "Dead", "Backquote", false],
+    ["darwin", "ctrl+alt+[", "[", "BracketLeft", true],
+    ["linux", "ctrl+alt+f7", "F7", "F7", true],
+  ] as const)(
+    "handles ambiguous preview chords on %s: %s",
+    ([platform, chord, key, code, expected]) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            const send = vi.fn();
+            Object.assign(preview.webContents, {
+              hostWebContents: { isDestroyed: () => false, send },
+            });
+            fromId.mockReturnValue(preview.webContents);
+            getFocusedWebContents.mockReturnValue(preview.webContents as never);
+            yield* manager.createTab("tab_alt_graph");
+            yield* manager.registerWebview("tab_alt_graph", 42);
+            yield* manager.setForwardedShortcuts([
+              { command: "view.reopenClosed", shortcut: parseKeybindingShortcut(chord)! },
+            ]);
+            const preventDefault = vi.fn();
+            preview.listeners.get("before-input-event")!(
+              { preventDefault } as never,
+              {
+                type: "keyDown",
+                key,
+                code,
+                meta: false,
+                control: true,
+                shift: false,
+                alt: true,
+              } as never,
+            );
+            expect(preventDefault).toHaveBeenCalledTimes(expected ? 1 : 0);
+            expect(send).toHaveBeenCalledTimes(expected ? 1 : 0);
+          }),
+        platform,
+      ),
   );
 
   effectIt.effect("preserves focused browser editing in tabs and sign-in popups", () =>
@@ -2357,6 +2476,40 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("preserves both screenshots of the same site in the same millisecond", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstPng = Buffer.from("first-preview-png");
+        const secondPng = Buffer.from("second-preview-png");
+        const pngImage = (png: Buffer) => ({
+          toPNG: () => png,
+          toJPEG: () => png,
+          getSize: () => ({ width: 1280, height: 720 }),
+        });
+        const capturePage = vi
+          .fn<() => Promise<ReturnType<typeof pngImage>>>()
+          .mockResolvedValueOnce(pngImage(firstPng))
+          .mockResolvedValueOnce(pngImage(secondPng));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        // it.effect keeps TestClock fixed until explicitly advanced.
+        const first = yield* manager.captureScreenshot("tab_1");
+        const second = yield* manager.captureScreenshot("tab_1");
+
+        expect(first.createdAt).toBe(second.createdAt);
+        expect(first.id).not.toBe(second.id);
+        expect(first.path).not.toBe(second.path);
+        expect(first.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(second.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(writeFile.mock.calls).toEqual([
+          [first.path, firstPng],
+          [second.path, secondPng],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2675,6 +2828,39 @@ describe("PreviewManager", () => {
         expect(host.session.setDisplayMediaRequestHandler).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect("tells the server when a tab it renders natively closes", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped,
+      );
+      const nextType = Queue.take(lines).pipe(
+        Effect.map((line) => /"type":"(\w+)"/.exec(line)?.[1]),
+      );
+      const capturePage = vi.fn(async () => ({
+        toPNG: () => Buffer.from("png"),
+        toJPEG: () => Buffer.from("jpeg"),
+        getSize: () => ({ width: 100, height: 80 }),
+      }));
+      fromId.mockReturnValue(
+        Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+        }),
+      );
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      // The debugger attaches in the background; the server hears it here.
+      expect(yield* nextType).toBe("attached");
+      yield* manager.closeTab("tab_1");
+      expect(yield* nextType).toBe("detached");
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("stops capture retries when the tab swaps during the retry delay", () =>
@@ -3849,6 +4035,85 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps annotation send grants isolated and updates an active pick", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const picked = new Map<number, (event: unknown, ...args: unknown[]) => void>();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("annotation"),
+          toDataURL: () => "data:image/png;base64,YW5ub3RhdGlvbg==",
+          getSize: () => ({ width: 10, height: 10 }),
+        }));
+        const guests = new Map(
+          [42, 43, 44].map(
+            (id) =>
+              [
+                id,
+                Object.assign(makeTestPreviewWebContents(capturePage, id), {
+                  isFocused: () => true,
+                  once: vi.fn(),
+                  ipc: {
+                    on: vi.fn(
+                      (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
+                        if (channel === "preview:element-picked") picked.set(id, listener);
+                      },
+                    ),
+                    off: vi.fn(),
+                    removeListener: vi.fn(),
+                  },
+                }),
+              ] as const,
+          ),
+        );
+        fromId.mockImplementation((id) => (id === undefined ? null : (guests.get(id) ?? null)));
+        yield* manager.createTab("tab_a");
+        yield* manager.createTab("tab_b");
+        yield* manager.registerWebview("tab_a", 42);
+        yield* manager.registerWebview("tab_b", 43);
+        yield* manager.setAnnotationSendEnabled("tab_a", true);
+        const annotation = {
+          id: "annotation-scopes",
+          pageUrl: "https://example.com",
+          pageTitle: "Example",
+          comment: "Tighten this spacing",
+          elements: [],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-09-05T00:00:00.000Z",
+        };
+        for (const [tabId, id, nextGrant, expected] of [
+          ["tab_b", 43, undefined, "attach"],
+          ["tab_a", 42, false, "attach"],
+          ["tab_a", 42, true, "send"],
+        ] as const) {
+          const pick = yield* manager.pickElement(tabId).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          if (nextGrant !== undefined) {
+            yield* manager.setAnnotationSendEnabled(tabId, nextGrant);
+          }
+          picked.get(id)?.({}, annotation, null, "send");
+          const result = yield* Fiber.join(pick);
+          expect(result?.annotation.id).toBe(annotation.id);
+          expect(result?.submission).toBe(expected);
+        }
+        yield* manager.registerWebview("tab_a", 44);
+        const replacementPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        picked.get(44)?.({}, annotation, null, "send");
+        expect((yield* Fiber.join(replacementPick))?.submission).toBe("send");
+        yield* manager.closeTab("tab_a");
+        yield* manager.createTab("tab_a");
+        yield* manager.registerWebview("tab_a", 44);
+        const reopenedPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        picked.get(44)?.({}, annotation, null, "send");
+        expect((yield* Fiber.join(reopenedPick))?.submission).toBe("attach");
+      }),
+    ),
+  );
+
   effectIt.effect("settles the pick when the annotation screenshot never arrives", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3895,6 +4160,7 @@ describe("PreviewManager", () => {
         const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
         yield* Effect.yieldNow;
 
+        yield* manager.setAnnotationSendEnabled("tab_1", true);
         onPicked?.(
           {},
           {

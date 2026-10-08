@@ -1,6 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -30,7 +30,7 @@ export function createProviderLoginEnvironmentAtoms<R, E>(
       label: "environment-data:provider-login:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.providerLoginStart>) =>
         subscribe(WS_METHODS.providerLoginStart, input).pipe(
-          Stream.scan(EMPTY_PROVIDER_LOGIN_STATE, applyProviderLoginStreamEvent),
+          Stream.scan(() => EMPTY_PROVIDER_LOGIN_STATE, applyProviderLoginStreamEvent),
         ),
     }),
     write: createEnvironmentRpcCommand(runtime, {

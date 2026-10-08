@@ -23,7 +23,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -108,7 +108,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
-  readonly loadCached?: Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
+  readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
@@ -122,6 +122,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
+  const lastAcceptCompactTurnItems = yield* Ref.make<true | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -139,6 +140,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
+      readonly acceptCompactTurnItems?: true;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -147,6 +149,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
+          Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -261,6 +264,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
+    lastAcceptCompactTurnItems,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -315,6 +319,28 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect("loads the server thread when its local cache read fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        loadCached: Effect.fail(
+          new Persistence.ConnectionPersistenceError({
+            operation: "load-thread",
+            message: "The database connection is closing.",
+          }),
+        ),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 7, projection: BASE_PROJECTION },
+        },
+      });
+
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(h.subscriptionCount)).toBe(1);
+    }),
+  );
+
   it.effect.each(["disk", "HTTP"] as const)(
     "does not rewrite an unchanged %s snapshot on navigation or warm return",
     (source) =>
@@ -817,6 +843,113 @@ describe("EnvironmentThreads", () => {
         Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
       ).toBe(true);
       expect(expanded.history.hasMoreHistory).toBe(false);
+    }),
+  );
+
+  it.effect("restores compact socket snapshot turnItems before reducing and caching", () =>
+    Effect.gen(function* () {
+      const at = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+      const command = (id: string, ordinal: number, threadId = THREAD_ID) =>
+        ({
+          id: TurnItemId.make(id),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed" as const,
+          title: null,
+          startedAt: at,
+          completedAt: at,
+          updatedAt: at,
+          type: "command_execution" as const,
+          input: id,
+          output: id,
+          exitCode: 0,
+        }) satisfies OrchestrationV2TurnItem;
+      const parentThread = ThreadId.make("thread:compact-parent");
+      const inherited = command("parent-item", 1, parentThread);
+      const local = [command("local-1", 1), command("local-2", 2)];
+      const retainedRequest = {
+        ...command("retained-request", 0),
+        type: "run_interrupt_request" as const,
+        message: "Stop",
+      } as unknown as OrchestrationV2TurnItem;
+      const visibleTurnItems = [
+        {
+          position: 0,
+          visibility: "inherited" as const,
+          sourceThreadId: parentThread,
+          sourceItemId: inherited.id,
+          item: inherited,
+        },
+        ...local.map((item, index) => ({
+          position: index + 1,
+          visibility: "local" as const,
+          sourceThreadId: THREAD_ID,
+          sourceItemId: item.id,
+          item,
+        })),
+      ];
+      const harness = yield* makeHarness();
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 5,
+        // Only the dependency that is not a visible local row is on the wire.
+        projection: { ...BASE_PROJECTION, turnItems: [retainedRequest], visibleTurnItems },
+        historyCursor: "compact-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 2,
+        payloadBudgetExceeded: false,
+        turnItemsOmitLocalVisible: true,
+      });
+
+      const seeded = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.history.historyCursor === "compact-cursor",
+      );
+      expect(Option.getOrThrow(seeded.data).turnItems).toEqual([...local, retainedRequest]);
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+      expect(yield* Ref.get(harness.lastAcceptCompactTurnItems)).toBe(true);
+
+      // Live updates reduce against the restored list, not the compact one.
+      const updated = { ...local[1]!, output: "updated", ordinal: 2 };
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 6,
+        event: {
+          id: EventId.make("event-compact-update"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: at,
+          payload: updated,
+        },
+      });
+      const live = yield* awaitThreadState(harness.observed, (value) =>
+        Option.exists(value.data, (data) =>
+          data.turnItems.some(
+            (item) => item.type === "command_execution" && item.output === "updated",
+          ),
+        ),
+      );
+      expect(Option.getOrThrow(live.data).turnItems.map((item) => String(item.id))).toEqual([
+        "local-1",
+        "local-2",
+        "retained-request",
+      ]);
+
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+      expect(saved?.projection.turnItems.map((item) => String(item.id))).toEqual([
+        "local-1",
+        "local-2",
+        "retained-request",
+      ]);
+      expect(saved && "turnItemsOmitLocalVisible" in saved).toBe(false);
     }),
   );
 

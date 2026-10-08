@@ -4,12 +4,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
 
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { buildCodexInitializeParams } from "./Layers/CodexProvider.ts";
+import { buildCodexInitializeParams } from "./CodexProvider.ts";
 
 export interface CodexDeviceAuthSession {
   readonly loginId: string;

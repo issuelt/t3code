@@ -1,5 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Pressable, ScrollView, StatusBar, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -44,9 +44,8 @@ export function BrowserCloneRouteScreen({ route }: Props) {
   const sessionRef = useRef<ReturnType<typeof createBrowserCloneSession> | null>(null);
   const failedRef = useRef(false);
   const tabs = AsyncResult.isSuccess(list) ? list.value.sessions : [];
-  const tabId = tabs.some((tab) => tab.tabId === selectedTab)
-    ? selectedTab
-    : (tabs[0]?.tabId ?? null);
+  const tab = tabs.find((tab) => tab.tabId === selectedTab) ?? tabs[0];
+  const tabId = tab?.tabId ?? null;
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
       // iOS permission prompts are inactive, but their pending clipboard action
@@ -145,33 +144,6 @@ export function BrowserCloneRouteScreen({ route }: Props) {
     refreshList();
     setGeneration((value) => value + 1);
   };
-  if (!tabId || error || AsyncResult.isFailure(list))
-    return (
-      <View className="flex-1 items-center justify-center gap-4 bg-screen px-8">
-        <AppText className="text-center text-base text-foreground">
-          {error ??
-            (AsyncResult.isFailure(list)
-              ? "Unable to list desktop browser tabs."
-              : AsyncResult.isInitial(list)
-                ? "Loading desktop browser tabs…"
-                : "Open a browser tab in this thread on the desktop, then return here.")}
-        </AppText>
-        <Pressable
-          accessibilityRole="button"
-          onPress={retry}
-          className="border border-border px-5 py-3"
-        >
-          <AppText className="text-foreground">Reconnect</AppText>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => navigation.goBack()}
-          className="px-5 py-3"
-        >
-          <AppText className="text-foreground">Done</AppText>
-        </Pressable>
-      </View>
-    );
   return (
     <View
       style={{
@@ -207,12 +179,54 @@ export function BrowserCloneRouteScreen({ route }: Props) {
           ))}
         </ScrollView>
       </View>
-      <BrowserCloneViewer
-        key={`${tabId}:${generation}`}
-        frame={frame}
-        transport={transport}
-        onDone={() => navigation.goBack()}
-      />
+      {tab?.runtime === "server" && (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() =>
+            navigation.navigate("ThreadBrowserPreview", {
+              environmentId,
+              threadId,
+              tabId: tab.tabId,
+            })
+          }
+          className="border-b border-white/10 px-5 py-3"
+        >
+          <AppText className="text-center text-white">Open server browser</AppText>
+        </Pressable>
+      )}
+      {!tabId || error || AsyncResult.isFailure(list) ? (
+        <View className="flex-1 items-center justify-center gap-4 bg-screen px-8">
+          <AppText className="text-center text-base text-foreground">
+            {AsyncResult.isFailure(list)
+              ? "Unable to list browser tabs."
+              : (error ??
+                (AsyncResult.isInitial(list)
+                  ? "Loading browser tabs…"
+                  : "Open a browser tab in this thread, then return here."))}
+          </AppText>
+          <Pressable
+            accessibilityRole="button"
+            onPress={retry}
+            className="border border-border px-5 py-3"
+          >
+            <AppText className="text-foreground">Reconnect</AppText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => navigation.goBack()}
+            className="px-5 py-3"
+          >
+            <AppText className="text-foreground">Done</AppText>
+          </Pressable>
+        </View>
+      ) : (
+        <BrowserCloneViewer
+          key={`${tabId}:${generation}`}
+          frame={frame}
+          transport={transport}
+          onDone={() => navigation.goBack()}
+        />
+      )}
     </View>
   );
 }

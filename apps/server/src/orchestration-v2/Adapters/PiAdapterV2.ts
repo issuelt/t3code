@@ -57,10 +57,11 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { mcpToolPresentation } from "../../provider/McpToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -1016,6 +1017,7 @@ export function makePiAdapterV2(
             ...shared,
             title: toolName,
             type: "dynamic_tool",
+            ...mcpToolPresentation({ toolName }),
             toolName,
             input: args ?? {},
             ...(outputText.length > 0 ? { output: outputText } : {}),
@@ -2677,8 +2679,9 @@ export function makePiAdapterV2(
             }
             // Pi fork replaces the session file, including for rollback. Persist
             // its new identity before any later request can fail or restart.
+            // An interrupted read leaves the identity just as unknown as a failed one.
             const forkState = yield* request({ type: "get_state" }).pipe(
-              Effect.tapError(() =>
+              Effect.onError(() =>
                 Effect.sync(() => {
                   threadState = null;
                 }),
