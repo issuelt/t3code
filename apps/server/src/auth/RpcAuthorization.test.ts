@@ -21,6 +21,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
@@ -29,6 +30,85 @@ import {
   requiredScopeForDeviceList,
 } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
+
+describe("provider login authorization", () => {
+  const methods = [
+    WS_METHODS.providerLoginStart,
+    WS_METHODS.providerLoginWrite,
+    WS_METHODS.providerLoginResize,
+    WS_METHODS.providerLoginCancel,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof methods)[number]> =>
+        !methods.some((method) => method === tag),
+    ),
+  );
+
+  it.effect.each(
+    methods.flatMap((method) => [
+      { method, scope: AuthOrchestrationOperateScope, allowed: false },
+      { method, scope: AuthProvidersManageScope, allowed: true },
+    ]),
+  )("$method with $scope grants access: $allowed", ({ method, scope, allowed }) =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const event = { type: "output", data: "login ready" } as const;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.providerLoginStart, () =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  handled.push(WS_METHODS.providerLoginStart);
+                  return event;
+                }),
+              ),
+            ),
+            group.toLayerHandler(WS_METHODS.providerLoginWrite, () =>
+              Effect.sync(() => {
+                handled.push(WS_METHODS.providerLoginWrite);
+              }),
+            ),
+            group.toLayerHandler(WS_METHODS.providerLoginResize, () =>
+              Effect.sync(() => {
+                handled.push(WS_METHODS.providerLoginResize);
+              }),
+            ),
+            group.toLayerHandler(WS_METHODS.providerLoginCancel, () =>
+              Effect.sync(() => {
+                handled.push(WS_METHODS.providerLoginCancel);
+              }),
+            ),
+            RpcAuthorization.layer([scope]),
+          ),
+        ),
+      );
+      const input = {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        data: "\n",
+        cols: 80,
+        rows: 24,
+      };
+      const call =
+        method === WS_METHODS.providerLoginStart
+          ? client[method](input).pipe(Stream.runCollect)
+          : client[method](input);
+      if (allowed) {
+        const result = yield* call;
+        if (method === WS_METHODS.providerLoginStart) expect(result).toEqual([event]);
+        expect(handled).toEqual([method]);
+      } else {
+        expect(yield* call.pipe(Effect.flip)).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthProvidersManageScope,
+          requiredScope: AuthOrchestrationOperateScope,
+        });
+        expect(handled).toEqual([]);
+      }
+    }).pipe(Effect.scoped),
+  );
+});
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
