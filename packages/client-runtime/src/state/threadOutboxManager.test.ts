@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 
 import {
   createThreadOutboxManager,

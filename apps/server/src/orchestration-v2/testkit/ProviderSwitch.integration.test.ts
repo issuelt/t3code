@@ -1,5 +1,5 @@
 import { makeAccountFallback } from "../AccountFallbackWorker.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AutoFallbackCooldownTrackerLive } from "../autoFallback/CooldownTracker.ts";
 import { ServerSettings } from "@t3tools/contracts";
@@ -35,11 +35,14 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
-import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
+import {
+  ClaudeBackgroundWorkBlocksQueryReplacementError,
+  ClaudeProviderCapabilitiesV2,
+} from "../Adapters/ClaudeAdapterV2.ts";
 import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
@@ -58,6 +61,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2HistoricalContext,
   ProviderAdapterProtocolError,
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
@@ -69,7 +73,7 @@ import {
   CURSOR_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -92,6 +96,9 @@ interface CapturedTurn {
   readonly providerThreadId: ProviderThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly nativeThreadId?: string | null;
+  readonly providerTurnOrdinal?: number;
+  readonly nativeThreadHasTurns?: boolean;
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
@@ -108,6 +115,8 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  /** Starts left to refuse the way Claude does while background work runs. */
+  readonly refuseStarts?: Ref.Ref<number>;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
@@ -231,6 +240,17 @@ function makeTestAdapter(input: {
                 (yield* Ref.getAndSet(input.failStartOnce, false))
               )
                 return yield* unimplemented(input.driver, "turn start failed after injection");
+              if (
+                input.refuseStarts !== undefined &&
+                (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
+              )
+                return yield* new ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+                });
               yield* Effect.yieldNow;
               yield* Ref.update(input.capturedTurns, (turns) => [
                 ...turns,
@@ -240,6 +260,11 @@ function makeTestAdapter(input: {
                   providerThreadId: turnInput.providerThread.id,
                   text: turnInput.message.text,
                   attachments: turnInput.message.attachments,
+                  nativeThreadId: turnInput.providerThread.nativeThreadRef?.nativeId ?? null,
+                  providerTurnOrdinal: turnInput.providerTurnOrdinal,
+                  ...(turnInput.nativeThreadHasTurns === undefined
+                    ? {}
+                    : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
               if (
@@ -393,7 +418,7 @@ describe("orchestration v2 provider switching", () => {
             ...CODEX_MODEL_SELECTION,
             instanceId: ProviderInstanceId.make("codex-sibling"),
           };
-          const registry = ProviderAdapterRegistry.makeLayer([
+          const registry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
               driver: CODEX_DRIVER,
@@ -535,7 +560,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "account-fallback",
                   runtimePolicyOverride: {
@@ -614,7 +639,7 @@ describe("orchestration v2 provider switching", () => {
                   ? { options: [{ id: "contextWindow", value: "1m" }] }
                   : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
             };
-        const registry = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
             driver: CODEX_DRIVER,
@@ -1050,7 +1075,7 @@ describe("orchestration v2 provider switching", () => {
           }
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: `handoff-${scenario}`,
                 runtimePolicyOverride: {
@@ -1059,7 +1084,7 @@ describe("orchestration v2 provider switching", () => {
                   sandboxPolicy: { type: "readOnly" },
                 },
               },
-              registry,
+              layerRegistry,
             ),
           ),
         );
@@ -1076,7 +1101,7 @@ describe("orchestration v2 provider switching", () => {
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
           const failOnce = yield* Ref.make(true);
           const generation = yield* Ref.make(0);
-          const registry = ProviderAdapterRegistry.makeLayer([
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
               driver: CODEX_DRIVER,
@@ -1212,7 +1237,7 @@ describe("orchestration v2 provider switching", () => {
             );
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: `handoff-retry-${failure}`,
                   runtimePolicyOverride: {
@@ -1221,12 +1246,236 @@ describe("orchestration v2 provider switching", () => {
                     sandboxPolicy: { type: "readOnly" },
                   },
                 },
-                registry,
+                layerRegistry,
               ),
             ),
           );
         }),
       ),
+  );
+
+  it.live.each(["native", "legacy"] as const)(
+    "starts a replacement native thread as new after the resume fallback with %s attempts",
+    (attempts) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("resume-fallback-native-turns");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const failResumeOnce = yield* Ref.make(false);
+          const generation = yield* Ref.make(0);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              failResumeOnce,
+              nativeThreadGeneration: generation,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runToCompletion = Effect.fn("runToCompletion")(function* (ordinal: number) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`resume-fallback:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`resume-fallback:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Request ${ordinal}`,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "completed",
+              );
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("resume-fallback:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Resume fallback",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* runToCompletion(1);
+            // A detached session resumes on the next turn, as after a restart.
+            const providerThread = (yield* orchestrator.getThreadProjection(
+              threadId,
+            )).providerThreads.at(0);
+            if (providerThread === undefined || providerThread.providerSessionId === null) {
+              return yield* Effect.die("Expected a provider session after the first turn.");
+            }
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("resume-fallback:detach"),
+              threadId,
+              providerSessionId: providerThread.providerSessionId,
+            });
+            yield* worker.drain();
+            if (attempts === "legacy") {
+              // Attempts persisted before native identity existed carry no native id.
+              const existing = yield* orchestrator.getThreadProjection(threadId);
+              yield* (yield* EventSink.EventSinkV2).write({
+                events: existing.attempts.map(
+                  ({ nativeThreadId: _nativeThreadId, ...legacy }, index) => ({
+                    id: EventId.make(`resume-fallback-legacy-attempt:${index}`),
+                    type: "run-attempt.updated" as const,
+                    threadId,
+                    occurredAt: existing.thread.createdAt,
+                    payload: legacy,
+                  }),
+                ),
+              });
+            }
+            yield* Ref.set(failResumeOnce, true);
+            yield* runToCompletion(2);
+            yield* runToCompletion(3);
+
+            const turns = yield* Ref.get(capturedTurns);
+            assert.equal(turns.length, 3);
+            assert.equal(yield* Ref.get(generation), 2);
+            // The fallback binds a new native thread to a provider thread that
+            // already has a turn, so the provider must not resume it.
+            assert.notEqual(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+            assert.isAbove(turns[1]?.providerTurnOrdinal ?? 0, 1);
+            assert.isFalse(turns[1]?.nativeThreadHasTurns);
+            assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
+            assert.isTrue(turns[2]?.nativeThreadHasTurns);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "resume-fallback-native-turns",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live("keeps the native session after turns refused before reaching the provider", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const refuseStarts = yield* Ref.make(0);
+        const generation = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            refuseStarts,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`refused-start:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`refused-start:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("refused-start:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Refused start",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal(yield* run(1), "completed");
+          // Run 3 carries run 2's missed request as a handoff and is refused too.
+          yield* Ref.set(refuseStarts, 2);
+          assert.equal(yield* run(2), "failed");
+          assert.equal(yield* run(3), "failed");
+          assert.equal(yield* run(4), "completed");
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 2);
+          // Nothing reached the provider, so the next turn continues the same
+          // native session instead of replacing it with a summary.
+          assert.equal(yield* Ref.get(generation), 1);
+          assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.include(turns[1]?.text, "Request 2");
+          assert.include(turns[1]?.text, "Request 3");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "refused-start-keeps-native",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(
@@ -1256,7 +1505,7 @@ describe("orchestration v2 provider switching", () => {
         const targetSelection = returning ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
         const originalPrompt = "Keep the release marker violet and preserve the existing API.";
         const partialResponse = "I checked the API and found the release configuration.";
-        const registryLayer = ProviderAdapterRegistry.makeLayer(
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
           (
             [
               [CODEX_MODEL_SELECTION, CODEX_DRIVER, CodexProviderCapabilitiesV2],
@@ -1395,7 +1644,7 @@ describe("orchestration v2 provider switching", () => {
           assert.notInclude(back.text, partialResponse);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: `handoff-${status}-${queued}-${returning}`,
                 runtimePolicyOverride: {
@@ -1408,7 +1657,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -1428,7 +1677,7 @@ describe("orchestration v2 provider switching", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const started = yield* Deferred.make<void>();
           const scenarioThreadId = ThreadId.make(`thread:queued-capability:${key}`);
-          const registryLayer = ProviderAdapterRegistry.makeLayer([
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
               driver: CODEX_DRIVER,
@@ -1518,7 +1767,7 @@ describe("orchestration v2 provider switching", () => {
             assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: `queued-capability-${key}`,
                   runtimePolicyOverride: {
@@ -1531,7 +1780,7 @@ describe("orchestration v2 provider switching", () => {
                     },
                   },
                 },
-                registryLayer,
+                layerRegistry,
               ),
             ),
           );
@@ -1546,7 +1795,7 @@ describe("orchestration v2 provider switching", () => {
         const cwd = yield* checkpointWorkspace("queued-steer-provider-switch");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const started = yield* Deferred.make<void>();
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
             driver: CODEX_DRIVER,
@@ -1711,7 +1960,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* orchestrator.getThreadProjection(queuedThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "queued-steer-provider-switch",
                 runtimePolicyOverride: {
@@ -1724,7 +1973,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -1785,7 +2034,7 @@ describe("orchestration v2 provider switching", () => {
             capturedTurns,
           }),
         ];
-        const registryLayer = Layer.succeed(
+        const layerRegistry = Layer.succeed(
           ProviderAdapterRegistry.ProviderAdapterRegistryV2,
           ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
             get: (instanceId) => {
@@ -1902,7 +2151,7 @@ describe("orchestration v2 provider switching", () => {
           return delivered;
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "queued-account-switch",
                 runtimePolicyOverride: {
@@ -1915,7 +2164,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -1941,7 +2190,7 @@ describe("orchestration v2 provider switching", () => {
         const cwd = yield* checkpointWorkspace("queued-provider-switch");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const started = yield* Deferred.make<void>();
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
             driver: CODEX_DRIVER,
@@ -1965,8 +2214,8 @@ describe("orchestration v2 provider switching", () => {
           }),
         ]);
         const queuedThreadId = ThreadId.make("thread:queued-provider-switch");
-        const databaseLayer = SqlitePersistenceMemory;
-        const outboxProvided = EffectOutbox.layer.pipe(Layer.provide(databaseLayer));
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
         const projection = yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -2113,7 +2362,7 @@ describe("orchestration v2 provider switching", () => {
         }).pipe(
           Effect.provide(
             Layer.merge(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "queued-provider-switch",
                   runtimePolicyOverride: {
@@ -2126,10 +2375,10 @@ describe("orchestration v2 provider switching", () => {
                     },
                   },
                 },
-                registryLayer,
-                { databaseLayer },
+                layerRegistry,
+                { databaseLayer: layerDatabase },
               ),
-              outboxProvided,
+              layerOutboxProvided,
             ),
           ),
         );
@@ -2191,7 +2440,7 @@ describe("orchestration v2 provider switching", () => {
             canConsumeHandoffSummaries: false,
           },
         };
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
             driver: CODEX_DRIVER,
@@ -2340,7 +2589,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* orchestrator.getThreadProjection(rejectedThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "queued-handoff-rejection",
                 runtimePolicyOverride: {
@@ -2353,7 +2602,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -2399,7 +2648,7 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const firstTurnStarted = yield* Deferred.make<void>();
         const releaseFirstTurn = yield* Deferred.make<void>();
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
             driver: CODEX_DRIVER,
@@ -2419,22 +2668,24 @@ describe("orchestration v2 provider switching", () => {
             capturedTurns,
           }),
         ]);
-        const databaseLayer = SqlitePersistenceMemory;
-        const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
-        const projectionStoreProvided = ProjectionStore.layer.pipe(
-          Layer.provideMerge(databaseLayer),
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerEventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(layerDatabase));
+        const layerProjectionStoreProvided = ProjectionStore.layer.pipe(
+          Layer.provideMerge(layerDatabase),
         );
-        const storesProvided = Layer.mergeAll(
-          databaseLayer,
-          eventStoreProvided,
-          projectionStoreProvided,
+        const layerStoresProvided = Layer.mergeAll(
+          layerDatabase,
+          layerEventStoreProvided,
+          layerProjectionStoreProvided,
         );
-        const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
-        const importerProvided = LegacyV1ThreadImporter.layer.pipe(
-          Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+        const layerEventSinkProvided = EventSink.layer.pipe(Layer.provide(layerStoresProvided));
+        const layerImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+          Layer.provide(Layer.mergeAll(layerStoresProvided, layerEventSinkProvided)),
         );
-        const maintenanceProvided = ProjectionMaintenance.layer.pipe(Layer.provide(storesProvided));
-        const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
+        const layerMaintenanceProvided = ProjectionMaintenance.layer.pipe(
+          Layer.provide(layerStoresProvided),
+        );
+        const layerOrchestratorProvided = ProviderReplayHarness.layerWithRegistry(
           {
             name: "provider-switch-legacy-import",
             runtimePolicyOverride: {
@@ -2447,14 +2698,14 @@ describe("orchestration v2 provider switching", () => {
               },
             },
           },
-          registryLayer,
-          { databaseLayer },
+          layerRegistry,
+          { databaseLayer: layerDatabase },
         );
-        const testLayer = Layer.mergeAll(
-          storesProvided,
-          importerProvided,
-          maintenanceProvided,
-          orchestratorProvided,
+        const layerTest = Layer.mergeAll(
+          layerStoresProvided,
+          layerImporterProvided,
+          layerMaintenanceProvided,
+          layerOrchestratorProvided,
         );
 
         const projection = yield* Effect.gen(function* () {
@@ -2627,7 +2878,7 @@ describe("orchestration v2 provider switching", () => {
           const rebuilt = yield* orchestrator.getThreadProjection(importedThreadId);
           assert.deepEqual(rebuilt.attempts, beforeRebuild.attempts);
           return rebuilt;
-        }).pipe(Effect.provide(testLayer));
+        }).pipe(Effect.provide(layerTest));
 
         const turns = yield* Ref.get(capturedTurns);
         assert.deepEqual(
@@ -2685,7 +2936,7 @@ describe("orchestration v2 provider switching", () => {
         const cwd = yield* checkpointWorkspace("provider-switch");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const codexNativeThreadGeneration = yield* Ref.make(0);
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
             driver: CODEX_DRIVER,
@@ -2794,7 +3045,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(threadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "provider-switch",
                 runtimePolicyOverride: {
@@ -2807,7 +3058,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -2897,7 +3148,7 @@ describe("orchestration v2 provider switching", () => {
         const targetPrompt = "What release color did we choose?";
         const cwd = yield* checkpointWorkspace("cross-provider-fork");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
             driver: CODEX_DRIVER,
@@ -2976,7 +3227,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(targetThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "cross-provider-fork",
                 runtimePolicyOverride: {
@@ -2989,7 +3240,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -3037,7 +3288,7 @@ describe("orchestration v2 provider switching", () => {
         const targetPrompt = "What deployment marker did we choose?";
         const cwd = yield* checkpointWorkspace("cursor-portable-fork");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("cursor"),
             driver: CURSOR_DRIVER,
@@ -3112,7 +3363,7 @@ describe("orchestration v2 provider switching", () => {
           return yield* waitForIdle(targetThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "cursor-portable-fork",
                 runtimePolicyOverride: {
@@ -3125,7 +3376,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );
@@ -3172,7 +3423,7 @@ describe("orchestration v2 provider switching", () => {
           const mergePrompt = "Report all three remembered markers.";
           const cwd = yield* checkpointWorkspace("cross-provider-merge");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-          const registryLayer = ProviderAdapterRegistry.makeLayer([
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
               instanceId: ProviderInstanceId.make("codex"),
               driver: CODEX_DRIVER,
@@ -3324,7 +3575,7 @@ describe("orchestration v2 provider switching", () => {
             return yield* waitForIdle(sourceThreadId);
           }).pipe(
             Effect.provide(
-              makeOrchestratorV2ReplayLayerWithRegistry(
+              ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "cross-provider-merge",
                   runtimePolicyOverride: {
@@ -3337,7 +3588,7 @@ describe("orchestration v2 provider switching", () => {
                     },
                   },
                 },
-                registryLayer,
+                layerRegistry,
               ),
             ),
           );
@@ -3395,7 +3646,7 @@ describe("orchestration v2 provider switching", () => {
         } satisfies ModelSelection;
         const cwd = yield* checkpointWorkspace("custom-codex-instances");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const registryLayer = ProviderAdapterRegistry.makeLayer([
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: personalSelection.instanceId,
             driver: CODEX_DRIVER,
@@ -3454,7 +3705,7 @@ describe("orchestration v2 provider switching", () => {
           ]);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
+            ProviderReplayHarness.layerWithRegistry(
               {
                 name: "custom-codex-instances",
                 runtimePolicyOverride: {
@@ -3467,7 +3718,7 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
               },
-              registryLayer,
+              layerRegistry,
             ),
           ),
         );

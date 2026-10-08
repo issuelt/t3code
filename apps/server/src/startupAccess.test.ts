@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { layerMemory } from "./persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import {
@@ -84,9 +84,9 @@ it.effect("advertises the configured public URL for the headless pairing url", (
   }).pipe(
     Effect.provide(
       EnvironmentAuth.layer.pipe(
-        Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(layerMemory),
         Layer.provide(ServerSecretStore.layer),
-        Layer.provide(ServerEnvironment.identityLayer),
+        Layer.provide(ServerEnvironment.layerIdentity),
         Layer.provideMerge(makeServerConfigLayer({ publicUrl: "https://t3.rjmp.net" })),
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provideMerge(NodeServices.layer),

@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -47,6 +47,10 @@ vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({ persistence: mocks }),
 }));
 vi.mock("~/env", () => ({ isElectron: true }));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  useEnvironmentScope: () => true,
+}));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: [{ environmentId }] }),
 }));

@@ -3,6 +3,8 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderSession,
+  type ProviderSessionId,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
@@ -149,6 +151,15 @@ function resolveStaleBackgroundItemProviderInstanceId(
   return projection.providerThreads[0]?.providerInstanceId ?? projection.thread.providerInstanceId;
 }
 
+/** An open item closed by recovery. A secret card also closes its form, so it takes no answer. */
+const cancelledItem = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  now: DateTime.Utc,
+): OrchestrationV2ThreadProjection["turnItems"][number] =>
+  item.type === "secret_request" && item.secretStatus === "pending"
+    ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
+    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
+
 /**
  * A provider thread's latest started run: the last turn that provider saw.
  * Restart recovery records the thread's cancelled background work on it, and
@@ -181,6 +192,7 @@ export const make = Effect.gen(function* () {
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      sessionsBeforePass: ReadonlyMap<ProviderSessionId, OrchestrationV2ProviderSession>,
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -426,7 +438,7 @@ export const make = Effect.gen(function* () {
             ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+            payload: cancelledItem(item, now),
           });
         }
       }
@@ -456,7 +468,7 @@ export const make = Effect.gen(function* () {
           ...(item.nodeId === null || item.nodeId === undefined ? {} : { nodeId: item.nodeId }),
           providerInstanceId,
           occurredAt: now,
-          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          payload: cancelledItem(item, now),
         });
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(
@@ -639,9 +651,16 @@ export const make = Effect.gen(function* () {
           },
         });
       }
+      // Judge the session as it was before this pass: an earlier thread on a
+      // shared session (Codex) may already have stopped it above.
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? restartContinuationRun({
+              ...projection,
+              providerSessions: projection.providerSessions.map(
+                (session) => sessionsBeforePass.get(session.id) ?? session,
+              ),
+            })
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -727,6 +746,8 @@ export const make = Effect.gen(function* () {
       let stoppedSessions = 0;
       let closedRequests = 0;
       let retiredEffects = 0;
+      // Each session as this pass first read it, before any thread stopped it.
+      const sessionsBeforePass = new Map<ProviderSessionId, OrchestrationV2ProviderSession>();
       for (const threadId of threadIds) {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
           Effect.mapError(
@@ -738,11 +759,14 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        for (const session of projection.providerSessions) {
+          if (!sessionsBeforePass.has(session.id)) sessionsBeforePass.set(session.id, session);
+        }
         const enabled =
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const result = yield* reconcileProjection(projection, trigger, enabled, sessionsBeforePass);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;

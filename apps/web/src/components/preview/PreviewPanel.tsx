@@ -1,12 +1,18 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
-import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
+import {
+  AuthPreviewOperateScope,
+  type PreviewAnnotationPayload,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { isPreviewSupportedInRuntime, useThreadPreviewState } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
+import { usePreviewAvailable } from "~/browser/previewRuntime";
+import { useEnvironmentScope } from "~/state/session";
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
 import { BrowserCloneSurface } from "./BrowserCloneSurface";
@@ -98,9 +104,24 @@ function RemoteBrowserPanel({ threadRef, tabId: requestedTabId, visible }: Props
 }
 
 export function PreviewPanel(props: Props) {
+  const available = usePreviewAvailable(props.threadRef.environmentId);
+  const state = useThreadPreviewState(props.threadRef);
+  const tabId = props.tabId ?? state.activeTabId;
+  const snapshot = tabId ? state.sessions[tabId] : undefined;
+  const cloneDesktopTab =
+    !isPreviewSupportedInRuntime() && snapshot !== undefined && snapshot.runtime !== "server";
+  const canOperate = useEnvironmentScope(props.threadRef.environmentId, AuthPreviewOperateScope);
+  if (!canOperate)
+    return (
+      <PreviewPanelShell mode={props.mode}>
+        <p className="p-8 text-sm text-muted-foreground">
+          Pair this client again with preview access to control browser previews.
+        </p>
+      </PreviewPanelShell>
+    );
   return (
     <PreviewPanelShell mode={props.mode}>
-      {isPreviewSupportedInRuntime() ? (
+      {available && !cloneDesktopTab ? (
         <PreviewView
           threadRef={props.threadRef}
           {...(props.tabId !== undefined ? { tabId: props.tabId } : {})}

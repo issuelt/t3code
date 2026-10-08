@@ -42,8 +42,8 @@ import * as Scope from "effect/Scope";
 
 import { PtyAdapter, type PtyProcess } from "../terminal/PtyAdapter.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
-import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
+import { ProviderRegistry } from "./ProviderRegistry.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import { materializeCodexShadowHome, resolveCodexHomeLayout } from "./Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment, resolveClaudeHomePath } from "./Drivers/ClaudeHome.ts";
 import { CodexDeviceAuth } from "./CodexDeviceAuth.ts";
