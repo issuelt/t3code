@@ -223,11 +223,44 @@ export const make = Effect.gen(function* () {
   const antigravityCache = makeAntigravityUsageCache();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
-  /** Cursor account caches by credential source. */
+  const cursorUserHome =
+    (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) ||
+    NodeOS.homedir();
+  const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
+  const cursorHome =
+    platform === "darwin"
+      ? path.join(cursorUserHome, "Library", "Application Support")
+      : platform === "win32"
+        ? hostEnvironment["APPDATA"] || path.join(cursorUserHome, "AppData", "Roaming")
+        : configHome && path.isAbsolute(configHome)
+          ? configHome
+          : path.join(cursorUserHome, ".config");
+  const cursorAuthPath =
+    platform === "darwin"
+      ? path.join(cursorUserHome, ".cursor", "auth.json")
+      : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
+  const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
+  const loginUnavailable =
+    Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
+    Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
+    credentialStore === "memory";
+  const useKeychain = platform === "darwin" && credentialStore !== "file";
+  const cursorCredential: CursorCredentialSource = useKeychain
+    ? { kind: "keychain" }
+    : cursorAuthPath;
+  const cursorSourceKey = typeof cursorCredential === "string" ? cursorCredential : "keychain";
+  type ResolvedCursorCredential = Awaited<
+    ReturnType<typeof CursorUsageReader.readCursorCredential>
+  >;
+  const cursorCredentialKey = (resolved: ResolvedCursorCredential) =>
+    resolved.kind === "token" ? encodeUsageRecordKey([cursorSourceKey, resolved.fingerprint]) : "";
+
+  /** Cursor account caches by credential source and token fingerprint. */
   const cursorCaches = new Map<string, CursorAccountCache>();
+  let activeCursorCredentialKey: string | undefined;
   let cursorCacheDirty = false;
   /**
-   * The last failed refresh per credential source, standing for a TTL so a
+   * The last failed refresh per credential, standing for a TTL so a
    * client refetching a broken login does not refetch Cursor each time. A
    * `null` error means there is no login: no source to report.
    */
@@ -235,7 +268,7 @@ export const make = Effect.gen(function* () {
     string,
     { readonly atMs: number; readonly error: string | null }
   >();
-  /** The refresh in flight per credential source, which every read joins. */
+  /** The refresh in flight per credential, which every read joins. */
   const cursorRefreshes = new Map<string, Deferred.Deferred<void>>();
   const isWithinDirectory = (filePath: string, dir: string) => {
     const relative = path.relative(dir, filePath);
@@ -658,7 +691,7 @@ export const make = Effect.gen(function* () {
 
   /** Fetches what one account cache is missing, then persists it if anything changed. */
   const refreshCursorAccount = Effect.fn("UsageService.refreshCursorAccount")(function* (
-    credential: CursorCredentialSource,
+    credential: CursorUsageReader.CursorResolvedCredential,
     credentialKey: string,
     retentionStartMs: number,
   ) {
@@ -671,6 +704,7 @@ export const make = Effect.gen(function* () {
     };
     let base = cursorCaches.get(credentialKey);
     let fetched = yield* fetchMissing(base);
+    if (activeCursorCredentialKey !== credentialKey) return;
     // Another login's history replaces the cached account's, even if reading it fails.
     if (
       base !== undefined &&
@@ -681,6 +715,7 @@ export const make = Effect.gen(function* () {
       cursorCacheDirty = true;
       base = undefined;
       fetched = yield* fetchMissing(base);
+      if (activeCursorCredentialKey !== credentialKey) return;
     }
     const { range, result } = fetched;
     if (result.missing || result.error !== null || result.accountKey === null) {
@@ -711,7 +746,7 @@ export const make = Effect.gen(function* () {
 
   /** Joins the refresh in flight, or starts one. */
   const startCursorRefresh = (
-    credential: CursorCredentialSource,
+    credential: CursorUsageReader.CursorResolvedCredential,
     credentialKey: string,
     retentionStartMs: number,
   ) =>
@@ -727,9 +762,11 @@ export const make = Effect.gen(function* () {
         yield* refreshCursorAccount(credential, credentialKey, retentionStartMs).pipe(
           Effect.catchCause(() =>
             Clock.currentTimeMillis.pipe(
-              Effect.map((atMs) =>
-                cursorFailures.set(credentialKey, { atMs, error: CURSOR_ACCOUNT_READ_ERROR }),
-              ),
+              Effect.map((atMs) => {
+                if (activeCursorCredentialKey === credentialKey) {
+                  cursorFailures.set(credentialKey, { atMs, error: CURSOR_ACCOUNT_READ_ERROR });
+                }
+              }),
             ),
           ),
           Effect.ensuring(
@@ -744,26 +781,54 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const prepareCursorCredential = Effect.fnUntraced(function* (settings: ServerSettingsValue) {
+    if (loginUnavailable || (useKeychain && !settings.cursorKeychainUsageEnabled)) return null;
+    yield* ensureScanCacheLoaded;
+    const sourceKey = cursorSourceKey;
+    const resolved = yield* Effect.promise(() =>
+      CursorUsageReader.readCursorCredential(cursorCredential),
+    );
+    const credentialKey = cursorCredentialKey(resolved);
+    activeCursorCredentialKey = credentialKey;
+    const sourcePrefix = encodeUsageRecordKey([sourceKey]).slice(0, -1) + ",";
+    // Source-only keys from older servers cannot prove which login fetched them.
+    for (const key of cursorCaches.keys()) {
+      if (key !== credentialKey && (key === sourceKey || key.startsWith(sourcePrefix))) {
+        cursorCaches.delete(key);
+        cursorCacheDirty = true;
+      }
+    }
+    for (const key of cursorFailures.keys()) {
+      if (key !== credentialKey && (key === sourceKey || key.startsWith(sourcePrefix))) {
+        cursorFailures.delete(key);
+      }
+    }
+    return resolved;
+  });
+
   /**
    * The Cursor account source. A cache inside its TTL, or a refresh that failed
    * inside it, answers directly. Otherwise a refresh starts: `awaitRefresh`
    * waits for it, and anything else answers from the cache marked `refreshing`.
    */
   const cursorAccountSource = Effect.fn("UsageService.cursorAccountSource")(function* (
-    credential: CursorCredentialSource,
+    resolved: ResolvedCursorCredential,
     authPath: string,
     windowStartMs: number,
     retentionStartMs: number,
     awaitRefresh: boolean,
   ) {
-    // No saved login means there is no account source to report, not a setup error.
-    if (
-      typeof credential === "string" &&
-      !(yield* fileSystem.exists(credential).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return null;
+    const credentialKey = cursorCredentialKey(resolved);
+    if (resolved.kind === "unavailable") {
+      if (resolved.missing && resolved.error === null) return null;
+      return {
+        provider: "cursor",
+        dir: authPath,
+        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(authPath)),
+        files: null,
+        message: resolved.error ?? CURSOR_ACCOUNT_READ_ERROR,
+      } satisfies ScannedDir;
     }
-    const credentialKey = typeof credential === "string" ? credential : "keychain";
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = cursorFailures.get(credentialKey);
     let refreshing = false;
@@ -771,7 +836,7 @@ export const make = Effect.gen(function* () {
       (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
       !isCursorCacheFresh(cursorCaches.get(credentialKey), nowMs)
     ) {
-      const refresh = yield* startCursorRefresh(credential, credentialKey, retentionStartMs);
+      const refresh = yield* startCursorRefresh(resolved, credentialKey, retentionStartMs);
       if (awaitRefresh) yield* Deferred.await(refresh);
       else refreshing = true;
     }
@@ -817,6 +882,7 @@ export const make = Effect.gen(function* () {
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
+    cursorLogin: ResolvedCursorCredential | null,
   ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
@@ -930,27 +996,6 @@ export const make = Effect.gen(function* () {
     });
 
     const cursor = Effect.gen(function* () {
-      const cursorUserHome =
-        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-      const cursorHome =
-        platform === "darwin"
-          ? path.join(cursorUserHome, "Library", "Application Support")
-          : platform === "win32"
-            ? hostEnvironment["APPDATA"] || path.join(cursorUserHome, "AppData", "Roaming")
-            : configHome && path.isAbsolute(configHome)
-              ? configHome
-              : path.join(cursorUserHome, ".config");
-      const cursorAuthPath =
-        platform === "darwin"
-          ? path.join(cursorUserHome, ".cursor", "auth.json")
-          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-      const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-      const loginUnavailable =
-        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-        Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-        credentialStore === "memory";
-      const useKeychain = platform === "darwin" && credentialStore !== "file";
       if (useKeychain && !loginUnavailable && !settings.cursorKeychainUsageEnabled) {
         return [
           {
@@ -974,8 +1019,9 @@ export const make = Effect.gen(function* () {
           } satisfies ScannedDir,
         ];
       }
+      if (cursorLogin === null) return [];
       const source = yield* cursorAccountSource(
-        useKeychain ? { kind: "keychain" } : cursorAuthPath,
+        cursorLogin,
         cursorAuthPath,
         windowStartMs,
         retentionCutoffMs,
@@ -1008,14 +1054,8 @@ export const make = Effect.gen(function* () {
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
+    cursorLogin: ResolvedCursorCredential | null,
   ) {
-    if (input.sinceDay > input.untilDay) {
-      return yield* new UsageReadError({
-        reason: "invalidWindow",
-        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
-      });
-    }
-
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
     if (input.resolution === "hour") {
       const sinceTime =
@@ -1062,7 +1102,13 @@ export const make = Effect.gen(function* () {
     const [, scannedDirs] = yield* Effect.all(
       [
         ensureRates(false),
-        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+        collectDirs(
+          windowStartMs,
+          settings,
+          retentionCutoffMs,
+          input.awaitRefresh === true,
+          cursorLogin,
+        ),
       ],
       { concurrency: 2 },
     );
@@ -1187,7 +1233,7 @@ export const make = Effect.gen(function* () {
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
   const scanKey = (input: UsageSummaryInput, settings: ServerSettingsValue): string =>
-    JSON.stringify([
+    encodeUsageRecordKey([
       input.timeZone,
       input.sinceDay,
       input.untilDay,
@@ -1202,8 +1248,19 @@ export const make = Effect.gen(function* () {
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+
     const settings = yield* readSettings;
-    const key = scanKey(input, settings);
+    const cursorLogin = yield* prepareCursorCredential(settings);
+    const key = encodeUsageRecordKey([
+      scanKey(input, settings),
+      cursorLogin === null ? null : cursorCredentialKey(cursorLogin),
+    ]);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -1217,7 +1274,7 @@ export const make = Effect.gen(function* () {
         // the fibers awaiting it; a finished scan warms the cache either way.
         // The cache write is registered before the waiters resume, so they
         // can await it, but its fiber starts after they have the summary.
-        yield* scanSummary(input, settings).pipe(
+        yield* scanSummary(input, settings, cursorLogin).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

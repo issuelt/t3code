@@ -33,6 +33,11 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CursorUsageReader from "./cursorUsageReader.ts";
+import {
+  decodeCursorAccountCaches,
+  encodeCursorAccountCaches,
+  CURSOR_ACCOUNT_CACHE_FILE_NAME,
+} from "./cursorAccountCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 import * as UsageService from "./UsageService.ts";
 
@@ -221,11 +226,11 @@ function makeFakeCursor() {
   return { state, read };
 }
 
-const writeCursorLogin = (home: string) =>
+const writeCursorLogin = (home: string, accessToken = "token-a") =>
   Effect.promise(async () => {
     const authPath = NodePath.join(home, "config", "cursor", "auth.json");
     await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-    await NodeFSP.writeFile(authPath, "{}");
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
   });
 
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
@@ -500,6 +505,162 @@ describe("UsageService", () => {
         Effect.provide(layerService({ prefix: "usage-service-cursor-failure", home, settings })),
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live.each([null, "Old login failed."])(
+    "ignores an old Cursor refresh completing after a login switch with error %s",
+    (oldError) =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        yield* writeCursorLogin(home);
+        yield* TestClock.setTime(CURSOR_NOW);
+        const old = makeFakeCursor();
+        const current = makeFakeCursor();
+        const started = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        old.state.gate = gate;
+        old.state.error = oldError;
+        old.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 }];
+        current.state.accountKey = "account-b";
+        current.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 11 }];
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make.pipe(
+            Effect.provideService(CursorUsageReader.CursorAccountReader, {
+              read: (credential, sinceMs, untilMs) =>
+                Effect.gen(function* () {
+                  if (
+                    typeof credential !== "string" &&
+                    credential.kind === "token" &&
+                    credential.accessToken === "token-b"
+                  ) {
+                    return yield* current.read(credential, sinceMs, untilMs);
+                  }
+                  yield* Deferred.succeed(started, undefined);
+                  return yield* old.read(credential, sinceMs, untilMs);
+                }),
+            }),
+          );
+          const oldRead = yield* service
+            .readSummary({ ...WINDOW, awaitRefresh: true })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          yield* writeCursorLogin(home, "token-b");
+          const switched = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.strictEqual(totalOutputTokens(switched), 11);
+          yield* Deferred.succeed(gate, undefined);
+          yield* Fiber.join(oldRead);
+          const fresh = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.strictEqual(totalOutputTokens(fresh), 11);
+          assert.strictEqual(cursorSource(fresh)?.status, "ok");
+          yield* service.awaitPersisted;
+          const config = yield* ServerConfig.ServerConfig;
+          const persisted = yield* Effect.promise(() =>
+            NodeFSP.readFile(
+              NodePath.join(config.stateDir, "usage-cursor-account-cache-v1.json"),
+              "utf8",
+            ),
+          );
+          assert.notInclude(persisted, "account-a");
+          assert.notInclude(persisted, "token-a");
+          assert.notInclude(persisted, "token-b");
+        }).pipe(
+          Effect.provide(
+            layerService({ prefix: "usage-service-cursor-switch-inflight", home, settings }),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("does not reuse a Cursor failure or history after credentials change", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* writeCursorLogin(home);
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.error = "Old login failed.";
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(CursorUsageReader.CursorAccountReader, { read: cursor.read }),
+        );
+        assert.strictEqual(
+          cursorSource(yield* service.readSummary({ ...WINDOW, awaitRefresh: true }))?.message,
+          "Old login failed.",
+        );
+        yield* writeCursorLogin(home, "token-b");
+        cursor.state.error = null;
+        cursor.state.accountKey = "account-b";
+        cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 11 }];
+        assert.strictEqual(
+          totalOutputTokens(yield* service.readSummary({ ...WINDOW, awaitRefresh: true })),
+          11,
+        );
+        yield* replaceFile(NodePath.join(home, "config", "cursor", "auth.json"), "invalid json");
+        const invalid = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(invalid), 0);
+        assert.strictEqual(cursorSource(invalid)?.message, "Cursor credentials could not be read.");
+        yield* service.awaitPersisted;
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-cursor-switch-failure", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live.each([false, true, "legacy"])(
+    "discards fresh Cursor usage after a login switch with restart %s",
+    (restart) =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        yield* writeCursorLogin(home);
+        yield* TestClock.setTime(CURSOR_NOW);
+        const cursor = makeFakeCursor();
+        cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 }];
+        yield* Effect.gen(function* () {
+          const make = UsageService.make.pipe(
+            Effect.provideService(CursorUsageReader.CursorAccountReader, { read: cursor.read }),
+          );
+          const first = yield* make;
+          assert.strictEqual(
+            totalOutputTokens(yield* first.readSummary({ ...WINDOW, awaitRefresh: true })),
+            5,
+          );
+          yield* first.awaitPersisted;
+          if (restart === "legacy") {
+            const config = yield* ServerConfig.ServerConfig;
+            const cachePath = NodePath.join(config.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
+            const document = yield* Effect.promise(() => NodeFSP.readFile(cachePath, "utf8"));
+            const cache = [
+              ...decodeCursorAccountCaches(decodeUnknownJsonString(document)).values(),
+            ][0];
+            assert.isDefined(cache);
+            if (cache !== undefined) {
+              yield* Effect.promise(() =>
+                NodeFSP.writeFile(
+                  cachePath,
+                  encodeCursorAccountCaches(
+                    new Map([[NodePath.join(home, "config", "cursor", "auth.json"), cache]]),
+                  ),
+                ),
+              );
+            }
+          }
+
+          yield* writeCursorLogin(home, "token-b");
+          cursor.state.accountKey = "account-b";
+          cursor.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 11 }];
+          const service = restart ? yield* make : first;
+          const switched = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.strictEqual(totalOutputTokens(switched), 11);
+          assert.strictEqual(cursorSource(switched)?.fingerprint.volumeId, "account-b");
+          assert.strictEqual(cursor.state.calls.length, 2);
+          yield* service.awaitPersisted;
+        }).pipe(
+          Effect.provide(
+            layerService({ prefix: `usage-service-cursor-switch-${restart}`, home, settings }),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("restores the Cursor account cache after a restart", () =>

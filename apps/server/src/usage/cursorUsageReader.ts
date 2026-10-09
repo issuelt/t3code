@@ -69,14 +69,20 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
-/** Dashboard usage includes headless agents and reports fresh input separately from cache reads. */
-export async function readCursorAccountUsage(
+export type CursorResolvedCredential = {
+  readonly kind: "token";
+  readonly accessToken: string;
+  readonly fingerprint: string;
+};
+
+/** Captures the saved login so cache lookup and its refresh use the same credential. */
+export async function readCursorCredential(
   credentialSource: string | { readonly kind: "keychain" },
-  sinceMs: number,
-  endDate: number,
-  request: (url: string, init: RequestInit) => Promise<Response> = globalThis.fetch,
   keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
-): Promise<CursorAccountUsageReadResult> {
+): Promise<
+  | CursorResolvedCredential
+  | { readonly kind: "unavailable"; readonly missing: boolean; readonly error: string | null }
+> {
   let accessToken: unknown;
   try {
     accessToken =
@@ -86,8 +92,7 @@ export async function readCursorAccountUsage(
   } catch (cause) {
     const missing = typeof credentialSource === "string" && object(cause).code === "ENOENT";
     return {
-      accountKey: null,
-      records: [],
+      kind: "unavailable",
       missing,
       error: missing
         ? null
@@ -100,8 +105,7 @@ export async function readCursorAccountUsage(
   }
   if (typeof accessToken !== "string" || !accessToken) {
     return {
-      accountKey: null,
-      records: [],
+      kind: "unavailable",
       missing: true,
       error:
         typeof credentialSource === "string"
@@ -109,6 +113,25 @@ export async function readCursorAccountUsage(
           : "Cursor account history needs a macOS Keychain CLI login on this server.",
     };
   }
+  return { kind: "token", accessToken, fingerprint: accountHash(accessToken) };
+}
+
+/** Dashboard usage includes headless agents and reports fresh input separately from cache reads. */
+export async function readCursorAccountUsage(
+  credentialSource: string | { readonly kind: "keychain" } | CursorResolvedCredential,
+  sinceMs: number,
+  endDate: number,
+  request: (url: string, init: RequestInit) => Promise<Response> = globalThis.fetch,
+  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
+): Promise<CursorAccountUsageReadResult> {
+  const credential =
+    typeof credentialSource !== "string" && credentialSource.kind === "token"
+      ? credentialSource
+      : await readCursorCredential(credentialSource, keychainToken);
+  if (credential.kind === "unavailable") {
+    return { accountKey: null, records: [], missing: credential.missing, error: credential.error };
+  }
+  const { accessToken } = credential;
   let accountKey: string | null = null;
   const cancel = new AbortController();
   try {
@@ -299,7 +322,7 @@ export class CursorAccountReader extends Context.Service<
   CursorAccountReader,
   {
     readonly read: (
-      credentialSource: string | { readonly kind: "keychain" },
+      credentialSource: string | { readonly kind: "keychain" } | CursorResolvedCredential,
       sinceMs: number,
       untilMs: number,
     ) => Effect.Effect<CursorAccountUsageReadResult>;
