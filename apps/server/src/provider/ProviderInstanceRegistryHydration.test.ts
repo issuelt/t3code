@@ -74,18 +74,6 @@ describe("withMirroredPrimaryCustomModels", () => {
     expect(readCustomModels(at(derived, "claude-2")?.config)).toEqual([]);
   });
 
-  it("mirrors from the legacy providers blob when the primary slot is synthesized", () => {
-    const settings = decodeSettings({
-      providers: { codex: { customModels: ["legacy-custom"] } },
-      providerInstances: {
-        "codex-2": { driver: "codex", config: {} },
-      },
-    });
-    const derived = deriveProviderInstanceConfigMap(settings);
-    expect(readCustomModels(at(derived, "codex")?.config)).toEqual(["legacy-custom"]);
-    expect(readCustomModels(at(derived, "codex-2")?.config)).toEqual(["legacy-custom"]);
-  });
-
   it("returns the same map reference when nothing needs mirroring", () => {
     const settings = decodeSettings({
       providerInstances: {

@@ -1,7 +1,6 @@
 import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
@@ -73,62 +72,83 @@ export function mergeOlderHistoryIntoProjection(
     return projection;
   }
 
-  const existingKeys = new Set(projection.visibleTurnItems.map(projectedItemKey));
-  const turnItemById = new Map<string, OrchestrationV2TurnItem>();
-  for (const item of projection.turnItems) {
-    turnItemById.set(String(item.id), item);
-  }
-  const prepended: OrchestrationV2ProjectedTurnItem[] = [];
+  const currentByKey = new Map(
+    projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
+  );
+  const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
+  const pageKeys = new Set<string>();
+  const page: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
-    let row = pageRow;
-    const key = projectedItemKey(row);
-    if (existingKeys.has(key)) {
-      continue;
-    }
-    if (row.visibility === "local" || row.sourceThreadId === projection.thread.id) {
+    const key = projectedItemKey(pageRow);
+    if (pageKeys.has(key)) continue;
+    let row = currentByKey.get(key) ?? pageRow;
+    if (
+      !currentByKey.has(key) &&
+      (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
+    ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
+      // Hidden live items stay hidden. Cold snapshots also retain interrupt
+      // requests outside the visible window; paging may reveal those requests.
       if (currentItem !== undefined) {
-        // A live event may have hidden this item while the page was in flight.
-        // Do not resurrect the stale page copy. Retained interrupt requests are
-        // the exception: they intentionally exist outside the bounded visible
-        // window and should become visible when their history page arrives.
-        if (currentItem.type !== "run_interrupt_request") {
-          continue;
-        }
         if (
+          currentItem.type !== "run_interrupt_request" ||
           !isOrchestrationV2TurnItemVisible({
             item: currentItem,
             runs: projection.runs,
             attempts: projection.attempts,
             items: projection.turnItems,
           })
-        ) {
+        )
           continue;
-        }
         row = { ...row, item: currentItem };
       }
     }
-    existingKeys.add(key);
-    prepended.push(row);
+    pageKeys.add(key);
+    page.push(row);
+    if (
+      (row.visibility === "local" || row.sourceThreadId === projection.thread.id) &&
+      !turnItemById.has(String(row.sourceItemId))
+    )
+      turnItemById.set(String(row.sourceItemId), row.item);
   }
-  if (prepended.length === 0) {
-    return projection;
+  if (page.length === 0) return projection;
+  // Shared rows anchor a retry page inside a larger conversation-only load.
+  // Keep existing gaps and rows outside the page in their current order.
+  const pageIndexByKey = new Map<string, number>();
+  let lastOverlapIndex = -1;
+  for (const [index, row] of page.entries()) {
+    const key = projectedItemKey(row);
+    pageIndexByKey.set(key, index);
+    if (currentByKey.has(key)) lastOverlapIndex = index;
   }
-
-  const visibleTurnItems = renumberVisible([...prepended, ...projection.visibleTurnItems]);
-
-  for (const row of prepended) {
-    if (row.visibility === "local" || row.sourceThreadId === projection.thread.id) {
-      if (!turnItemById.has(String(row.sourceItemId))) {
-        turnItemById.set(String(row.sourceItemId), row.item);
-      }
+  const visible: OrchestrationV2ProjectedTurnItem[] = [];
+  let pageOffset = 0;
+  if (lastOverlapIndex === -1) {
+    for (const row of page) visible.push(row);
+    pageOffset = page.length;
+  }
+  for (const row of projection.visibleTurnItems) {
+    const pageIndex = pageIndexByKey.get(projectedItemKey(row));
+    if (pageIndex === undefined) {
+      visible.push(row);
+      continue;
+    }
+    for (const pageRow of page.slice(pageOffset, pageIndex + 1)) visible.push(pageRow);
+    pageOffset = pageIndex + 1;
+    if (pageIndex === lastOverlapIndex) {
+      for (const pageRow of page.slice(pageOffset)) visible.push(pageRow);
+      pageOffset = page.length;
     }
   }
-
+  if (
+    visible.length === projection.visibleTurnItems.length &&
+    visible.every((row, index) => row === projection.visibleTurnItems[index])
+  )
+    return projection;
   return {
     ...projection,
     turnItems: [...turnItemById.values()],
-    visibleTurnItems,
+    visibleTurnItems: renumberVisible(visible),
   };
 }
 
