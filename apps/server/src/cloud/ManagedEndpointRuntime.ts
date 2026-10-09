@@ -163,6 +163,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
+  const servingPreviousRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
   const tunnelConnections = yield* Queue.sliding<void>(1);
@@ -179,6 +180,11 @@ export const make = Effect.gen(function* () {
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
     yield* stopConnector(active);
+  });
+
+  const stopPrevious = Effect.gen(function* () {
+    const previous = yield* Ref.getAndSet(servingPreviousRef, null);
+    yield* stopConnector(previous);
   });
 
   const superviseConnector = (connector: ActiveConnector) =>
@@ -295,6 +301,7 @@ export const make = Effect.gen(function* () {
             });
             // Detach the old connector so the reconcile starts a new one beside it.
             const previous = yield* Ref.getAndSet(activeRef, null);
+            if (previous) yield* Ref.set(servingPreviousRef, previous);
             const status = yield* reconcileConfig(desiredConfig);
             const next = yield* Ref.get(activeRef);
             if (!next) {
@@ -306,20 +313,13 @@ export const make = Effect.gen(function* () {
                 ? yield* previous.child.isRunning.pipe(Effect.orElseSucceed(() => false))
                 : false;
               if (previous && previousRunning) {
+                yield* Ref.set(servingPreviousRef, null);
                 yield* Ref.set(activeRef, previous);
               } else {
-                yield* stopConnector(previous);
+                if (previous) yield* stopPrevious;
                 yield* Queue.offer(recoveryRequests, desiredConfig);
               }
               return;
-            }
-            // Runs in the new connector's scope: the old one stops when the new
-            // one registers, or as soon as the new one is stopped or replaced.
-            if (previous) {
-              yield* Deferred.await(next.registered).pipe(
-                Effect.ensuring(stopConnector(previous)),
-                Effect.forkIn(next.scope),
-              );
             }
           }),
         ),
@@ -461,12 +461,15 @@ export const make = Effect.gen(function* () {
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
     if (!config || config.providerKind !== "cloudflare_tunnel") {
       yield* stopActive;
+      yield* stopPrevious;
       return config
         ? { status: "unsupported", providerKind: config.providerKind }
         : { status: "disabled" };
     }
 
     const nextConfigKey = runtimeConfigKey(config);
+    const previous = yield* Ref.get(servingPreviousRef);
+    if (previous && previous.configKey !== nextConfigKey) yield* stopPrevious;
     const active = yield* Ref.get(activeRef);
     if (active?.configKey === nextConfigKey) {
       const isRunning = yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false));
@@ -568,6 +571,20 @@ export const make = Effect.gen(function* () {
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
       yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
+      // Each replacement owns its registration waiter; the runtime owns the
+      // serving connector until registration, a config change, or shutdown.
+      if (yield* Ref.get(servingPreviousRef)) {
+        yield* Deferred.await(connector.registered).pipe(
+          Effect.andThen(
+            reconcileSemaphore.withPermits(1)(
+              Effect.gen(function* () {
+                if ((yield* Ref.get(activeRef)) === connector) yield* stopPrevious;
+              }),
+            ),
+          ),
+          Effect.forkIn(connectorScope),
+        );
+      }
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",
