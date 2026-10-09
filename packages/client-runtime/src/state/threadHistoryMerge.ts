@@ -112,12 +112,34 @@ export function mergeOlderHistoryIntoProjection(
       turnItemById.set(String(row.sourceItemId), row.item);
   }
   if (page.length === 0) return projection;
-  // Server page order fills gaps between rows from a partial conversation load.
-  // Existing rows supply live values; rows outside this range keep their order.
-  const visible = [
-    ...page,
-    ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
-  ];
+  // Shared rows anchor a retry page inside a larger conversation-only load.
+  // Keep existing gaps and rows outside the page in their current order.
+  const pageIndexByKey = new Map<string, number>();
+  let lastOverlapIndex = -1;
+  for (const [index, row] of page.entries()) {
+    const key = projectedItemKey(row);
+    pageIndexByKey.set(key, index);
+    if (currentByKey.has(key)) lastOverlapIndex = index;
+  }
+  const visible: OrchestrationV2ProjectedTurnItem[] = [];
+  let pageOffset = 0;
+  if (lastOverlapIndex === -1) {
+    for (const row of page) visible.push(row);
+    pageOffset = page.length;
+  }
+  for (const row of projection.visibleTurnItems) {
+    const pageIndex = pageIndexByKey.get(projectedItemKey(row));
+    if (pageIndex === undefined) {
+      visible.push(row);
+      continue;
+    }
+    for (const pageRow of page.slice(pageOffset, pageIndex + 1)) visible.push(pageRow);
+    pageOffset = pageIndex + 1;
+    if (pageIndex === lastOverlapIndex) {
+      for (const pageRow of page.slice(pageOffset)) visible.push(pageRow);
+      pageOffset = page.length;
+    }
+  }
   if (
     visible.length === projection.visibleTurnItems.length &&
     visible.every((row, index) => row === projection.visibleTurnItems[index])
