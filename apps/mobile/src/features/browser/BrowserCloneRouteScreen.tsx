@@ -35,6 +35,7 @@ export function BrowserCloneRouteScreen({ route }: Props) {
   useEffect(() => {
     if (AsyncResult.isSuccess(event) && event.value.threadId === threadId) refreshList();
   }, [event, threadId, refreshList]);
+  const canOperate = useAtomValue(previewEnvironment.cloneInvoke.permissionAtom(environmentId));
   const invoke = useAtomCommand(previewEnvironment.cloneInvoke, { reportFailure: false });
   const [selectedTab, setSelectedTab] = useState<string | null>(null);
   const [frame, setFrame] = useState<PreviewAutomationFrame | null>(null);
@@ -58,7 +59,7 @@ export function BrowserCloneRouteScreen({ route }: Props) {
     setFrame(null);
     setError(null);
     failedRef.current = false;
-    if (!tabId || !active || !focused) return;
+    if (!tabId || !active || !focused || !canOperate) return;
     const session = createBrowserCloneSession(
       {
         environmentId,
@@ -95,7 +96,7 @@ export function BrowserCloneRouteScreen({ route }: Props) {
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [active, focused, environmentId, threadId, tabId, generation, invoke]);
+  }, [active, focused, environmentId, threadId, tabId, generation, invoke, canOperate]);
   const failed = useCallback((session: ReturnType<typeof createBrowserCloneSession>) => {
     if (sessionRef.current === session) {
       failedRef.current = true;
@@ -155,31 +156,33 @@ export function BrowserCloneRouteScreen({ route }: Props) {
       }}
     >
       <StatusBar barStyle="light-content" />
-      <View className="shrink-0 border-b border-white/10">
-        <ScrollView
-          horizontal
-          style={{ flexGrow: 0 }}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ padding: 8, gap: 8 }}
-        >
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.tabId}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: tab.tabId === tabId }}
-              onPress={() => setSelectedTab(tab.tabId)}
-              className={`max-w-64 border px-3 py-2 ${tab.tabId === tabId ? "border-white/50 bg-white/10" : "border-white/10"}`}
-            >
-              <AppText numberOfLines={1} className="text-white">
-                {tab.navStatus._tag === "Idle"
-                  ? "New tab"
-                  : tab.navStatus.title || tab.navStatus.url}
-              </AppText>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
-      {tab?.runtime === "server" && (
+      {canOperate && (
+        <View className="shrink-0 border-b border-white/10">
+          <ScrollView
+            horizontal
+            style={{ flexGrow: 0 }}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ padding: 8, gap: 8 }}
+          >
+            {tabs.map((tab) => (
+              <Pressable
+                key={tab.tabId}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: tab.tabId === tabId }}
+                onPress={() => setSelectedTab(tab.tabId)}
+                className={`max-w-64 border px-3 py-2 ${tab.tabId === tabId ? "border-white/50 bg-white/10" : "border-white/10"}`}
+              >
+                <AppText numberOfLines={1} className="text-white">
+                  {tab.navStatus._tag === "Idle"
+                    ? "New tab"
+                    : tab.navStatus.title || tab.navStatus.url}
+                </AppText>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+      {canOperate && tab?.runtime === "server" && (
         <Pressable
           accessibilityRole="button"
           onPress={() =>
@@ -194,7 +197,21 @@ export function BrowserCloneRouteScreen({ route }: Props) {
           <AppText className="text-center text-white">Open server browser</AppText>
         </Pressable>
       )}
-      {!tabId || error || AsyncResult.isFailure(list) ? (
+      {!canOperate ? (
+        <View className="flex-1 items-center justify-center gap-4 bg-screen px-8">
+          <AppText className="text-center text-base text-foreground">
+            Browser access is not permitted. Ask the environment owner to grant browser control, or
+            pair again with a link that allows it.
+          </AppText>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => navigation.goBack()}
+            className="px-5 py-3"
+          >
+            <AppText className="text-foreground">Done</AppText>
+          </Pressable>
+        </View>
+      ) : !tabId || error || AsyncResult.isFailure(list) ? (
         <View className="flex-1 items-center justify-center gap-4 bg-screen px-8">
           <AppText className="text-center text-base text-foreground">
             {AsyncResult.isFailure(list)

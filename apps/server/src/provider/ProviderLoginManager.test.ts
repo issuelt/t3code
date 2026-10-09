@@ -19,7 +19,7 @@ import {
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawnInput,
-} from "../terminal/PtyAdapter.ts";
+} from "@t3tools/shared/PtyAdapter";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
 import { CodexDeviceAuth, type CodexDeviceAuthStartInput } from "./CodexDeviceAuth.ts";

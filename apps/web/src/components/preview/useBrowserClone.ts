@@ -1,5 +1,7 @@
 "use client";
 
+import { useAtomValue } from "@effect/atom-react";
+
 import type {
   PreviewAutomationFrame,
   PreviewCloneInput,
@@ -18,6 +20,9 @@ export function useBrowserClone(
   tabId: string | null,
   visible: boolean,
 ) {
+  const canOperate = useAtomValue(
+    previewEnvironment.cloneInvoke.permissionAtom(threadRef.environmentId),
+  );
   const invoke = useAtomCommand(previewEnvironment.cloneInvoke, { reportFailure: false });
   const [generation, setGeneration] = useState(0);
   const [frame, setFrame] = useState<PreviewAutomationFrame | null>(null);
@@ -29,7 +34,7 @@ export function useBrowserClone(
     setFrame(null);
     setError(null);
     failedRef.current = false;
-    if (!visible || !tabId) return;
+    if (!visible || !tabId || !canOperate) return;
     const session = createBrowserCloneSession(
       { environmentId, threadId, tabId, cloneId: createPreviewAutomationClientId() },
       async (input) => {
@@ -73,7 +78,7 @@ export function useBrowserClone(
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
     };
-  }, [environmentId, threadId, tabId, visible, generation, invoke]);
+  }, [environmentId, threadId, tabId, visible, generation, invoke, canOperate]);
   const fail = useCallback((session: ReturnType<typeof createBrowserCloneSession>) => {
     if (sessionRef.current === session) {
       failedRef.current = true;

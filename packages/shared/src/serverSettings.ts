@@ -1,6 +1,6 @@
 import {
   isProviderAvailable,
-  isProviderDriverKind,
+  isUnconfiguredDefaultInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
   type ModelSelection,
@@ -8,7 +8,6 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
-  type ProviderDriverKind,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -123,14 +122,6 @@ export function resolveProjectAutoPull(
   );
 }
 
-type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
-
-const getLegacyProviderSettings = (
-  settings: ServerSettings,
-  provider: ProviderDriverKind,
-): LegacyProviderSettings | undefined =>
-  (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
-
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
   selection: ModelSelection,
@@ -140,10 +131,7 @@ export function isModelSelectionProviderEnabled(
     return resolveProviderInstanceEnabled(instanceConfig);
   }
 
-  return (
-    isProviderDriverKind(selection.instanceId) &&
-    getLegacyProviderSettings(settings, selection.instanceId)?.enabled === true
-  );
+  return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
 }
 
 export function resolveSourceControlWriterModelSelection(

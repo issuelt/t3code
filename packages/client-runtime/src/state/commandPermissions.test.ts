@@ -8,6 +8,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
+  AuthPreviewOperateScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -260,4 +262,39 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+it.effect.each([
+  { method: WS_METHODS.providerLoginWrite, requiredScope: AuthProvidersManageScope },
+  { method: WS_METHODS.providerLoginResize, requiredScope: AuthProvidersManageScope },
+  { method: WS_METHODS.providerLoginCancel, requiredScope: AuthProvidersManageScope },
+  { method: WS_METHODS.previewCloneInvoke, requiredScope: AuthPreviewOperateScope },
+  { method: WS_METHODS.previewAutomationRespond, requiredScope: AuthPreviewOperateScope },
+  { method: WS_METHODS.previewAutomationFocusHost, requiredScope: AuthPreviewOperateScope },
+] as const)("requires the destination grant for $method", ({ method, requiredScope }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const command = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      const denied = yield* command.authorize(registry, env).pipe(Effect.flip);
+      expect(denied.requiredPermission).toBe(requiredScope);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [requiredScope],
+          permissions: [requiredScope],
+        }),
+      );
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(other))).toBe(false);
+      expect((yield* command.authorize(registry, other).pipe(Effect.flip)).requiredPermission).toBe(
+        requiredScope,
+      );
+    }),
+  ),
 );

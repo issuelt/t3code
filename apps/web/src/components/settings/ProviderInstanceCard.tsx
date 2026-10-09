@@ -1,5 +1,8 @@
 "use client";
 
+import { useAtomValue } from "@effect/atom-react";
+import { providerLoginEnvironment } from "../../state/providerLogin";
+
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -48,7 +51,10 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
+import type {
+  ProviderClientDefinition,
+  ProviderEnvironmentField,
+} from "@t3tools/provider-core/client";
 import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -366,7 +372,7 @@ export function providerEnvironmentWithoutNames(
 
 export function nextProviderEnvironmentWithFieldValue(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
-  field: ProviderEnvironmentFieldDefinition,
+  field: ProviderEnvironmentField,
   value: string,
 ): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
   const trimmed = value.trim();
@@ -400,11 +406,11 @@ export function nextProviderEnvironmentWithFieldValue(
 }
 
 function ProviderEnvironmentFieldRow(props: {
-  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
   readonly idPrefix: string;
-  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
-  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+  readonly onCommit: (field: ProviderEnvironmentField, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentField) => void;
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
@@ -622,7 +628,7 @@ export function ProviderEnvironmentSection(props: {
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
-  readonly driverOption: DriverOption | undefined;
+  readonly driverOption: ProviderClientDefinition | undefined;
   readonly liveProvider: ServerProvider | undefined;
   readonly mode: "list" | "editor";
   readonly selected?: boolean | undefined;
@@ -770,6 +776,9 @@ export function ProviderInstanceCard({
   const rawHomePath = (instance.config as { readonly homePath?: unknown } | undefined)?.homePath;
   const homePathLine =
     typeof rawHomePath === "string" && rawHomePath.trim().length > 0 ? rawHomePath.trim() : null;
+  const canManageLogin = useAtomValue(
+    providerLoginEnvironment.write.permissionAtom(environmentId ?? null),
+  );
   const canLogin =
     DRIVERS_WITH_IN_APP_LOGIN.has(String(instance.driver)) &&
     environmentId !== undefined &&
@@ -903,10 +912,10 @@ export function ProviderInstanceCard({
     );
     updateEnvironment([...dedicatedEnvironment, ...environment]);
   };
-  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+  const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
     updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
   };
-  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+  const removeEnvironmentField = (field: ProviderEnvironmentField) => {
     updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
   };
 
@@ -1296,7 +1305,7 @@ export function ProviderInstanceCard({
           <SettingsRow
             title={isAuthenticated ? "Re-authenticate" : "Log in"}
             control={
-              <Button disabled={readOnly} onClick={() => setIsLoginOpen(true)}>
+              <Button disabled={readOnly || !canManageLogin} onClick={() => setIsLoginOpen(true)}>
                 <KeyRoundIcon className="size-3.5" />
                 {isAuthenticated ? "Re-authenticate" : "Log in"}
               </Button>

@@ -1,6 +1,9 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
+/** Inset of the card from the canvas edges; the find bar shares it to line up. */
+export const THREAD_DETAILS_CARD_GAP = 12;
+
 export function resolveThreadDetailsCardDensity(
   height: number,
   content: { full: number; compact: number },
@@ -19,28 +22,32 @@ export function resolveThreadDetailsCardLayout({
   lane,
   frame,
   overlapsDetailsCard = false,
+  topInset = 0,
 }: {
   container: { width: number; height: number };
   lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
+  /** Space taken above the card, such as the open find bar. */
+  topInset?: number;
 }) {
-  const gap = 12;
+  const gap = THREAD_DETAILS_CARD_GAP;
   // Keep in sync with --thread-details-panel-width, which sizes the popover.
   const width = 280;
   const x = container.width - width - gap;
   if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
-  const densityHeight = container.height - gap * 2;
-  // The player limits how tall the card's viewport is, never which controls it shows.
+  const y = gap + topInset;
+  const densityHeight = container.height - y - gap;
+  // The player limits the viewport height, never which controls it shows.
   const height =
     overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
-      ? Math.min(densityHeight, frame.y - gap * 2)
+      ? Math.min(densityHeight, frame.y - y - gap)
       : densityHeight;
   if (height < 160) return null;
   return {
     x,
     width,
-    y: gap,
+    y,
     height,
     densityHeight,
   } as const;

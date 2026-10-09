@@ -59,7 +59,11 @@ it("keeps full details when expanded content grows past an overlapping preview",
       disconnect() {}
     },
   );
-  const content = { offsetHeight: 300, closest: () => ({ offsetHeight: 0, clientHeight: 0 }) };
+  const content = {
+    offsetHeight: 300,
+    closest: () => ({ offsetHeight: 0, clientHeight: 0 }),
+    querySelector: () => null,
+  };
 
   await act(async () => {
     renderer = create(
