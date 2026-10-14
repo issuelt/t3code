@@ -1476,6 +1476,18 @@ export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
   return lastRunEnd(map, "md");
 }
 
+/** Smallest document offset whose Markdown offset reaches `mdOffset`; the inverse of `flatToMarkdown`. */
+export function markdownToFlat(map: RichDocMap, mdOffset: number): number {
+  let low = 0;
+  let high = map.docLength;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (flatToMarkdown(map, middle) < mdOffset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): number {
   for (const run of map.runs) {
     if (collapsedOffset < run.collapsedStart + run.collapsedLen) {

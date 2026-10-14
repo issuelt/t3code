@@ -92,6 +92,7 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { DictationRoutingSettings } from "./DictationSettings";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -4181,6 +4182,7 @@ export function ConnectionsSettings() {
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
+      <DictationRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
   );
 }

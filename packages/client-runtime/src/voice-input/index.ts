@@ -16,5 +16,6 @@ export {
   type PreparedVoiceTranscription,
   type VoiceTranscriber,
   type VoiceTranscriptionErrorCode,
+  type VoiceTranscript,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
