@@ -16,6 +16,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type DeviceOperationError,
+  type DictationError,
   EnvironmentHttpApi,
   type RepositoryIdentity,
   type ServerSettingsError,
@@ -1178,6 +1179,7 @@ export type RunServerError =
   | Config.ConfigError
   | DesktopTelemetryReceiver.DesktopTelemetryStreamFailed
   | DeviceOperationError
+  | DictationError
   | Cause.IllegalArgumentError
   | Migrator.MigrationError
   | PlatformError.PlatformError
