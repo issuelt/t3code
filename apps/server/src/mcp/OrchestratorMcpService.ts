@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   CommandId,
   type RunId,
   isProviderAvailable,
@@ -59,6 +60,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -203,7 +205,7 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
   return new OrchestratorMcpFailure({ code, message });
 }
 
-function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
+export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
     case "ThreadManagementThreadNotFoundError":
@@ -263,6 +265,48 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
   };
+}
+
+/** The provider list orchestrator_capabilities reports, also served to Home from other environments. */
+export function providerCapabilities(
+  providers: ReadonlyArray<ServerProvider>,
+  orchestrationCapableInstanceIds: ReadonlySet<string>,
+  modelPreferences: Readonly<
+    Record<string, { readonly hiddenModels: ReadonlyArray<string> } | undefined>
+  > = {},
+): OrchestratorMcpCapabilitiesResult["providers"] {
+  return providers.map((provider) => {
+    const constraints = providerConstraints(
+      provider,
+      orchestrationCapableInstanceIds.has(provider.instanceId),
+    );
+    return {
+      providerInstanceId: provider.instanceId,
+      driverKind: provider.driver,
+      displayName: provider?.displayName ?? null,
+      models:
+        provider?.models
+          .filter(
+            (model) =>
+              model.isCustom ||
+              !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
+          )
+          .map((model) => ({
+            id: model.slug,
+            label: model.name ?? null,
+            ...(model.capabilities?.optionDescriptors === undefined
+              ? {}
+              : { options: model.capabilities.optionDescriptors }),
+          })) ?? [],
+      ...(provider.supportedRuntimeModes === undefined ||
+      provider.supportedRuntimeModes.length === 0
+        ? {}
+        : { runtimeModes: [...provider.supportedRuntimeModes] }),
+      canRunChildTask: constraints.length === 0,
+      canRunCrossProviderChildTask: constraints.length === 0,
+      constraints: [...constraints],
+    };
+  });
 }
 
 function providerConstraints(
@@ -683,7 +727,7 @@ function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
 }
 
-function threadSettlement(
+export function threadSettlement(
   thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
 ): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
   const settled = thread.settledOverride === "settled";
@@ -705,12 +749,20 @@ function threadSnooze(
   };
 }
 
-function listItemFromShell(
+/** Where and when a thread is shown: the environment for its link, and the time for snooze state. */
+export interface ThreadViewContext {
+  readonly environmentId: EnvironmentId;
+  readonly nowMs: number;
+}
+
+export function listItemFromShell(
   shell: OrchestrationV2ThreadShell,
-  nowMs: number,
+  context: ThreadViewContext,
 ): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
+    link: formatThreadLink(shell.id, shell.title, context.environmentId),
+    projectId: shell.projectId,
     title: shell.title,
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
@@ -722,7 +774,7 @@ function listItemFromShell(
     interactionMode: shell.interactionMode,
     linkedPullRequest: shell.linkedPullRequest ?? null,
     ...threadSettlement(shell),
-    ...threadSnooze(shell, nowMs),
+    ...threadSnooze(shell, context.nowMs),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
     itemCount: shell.visibleItemCount,
@@ -734,18 +786,22 @@ function listItemFromShell(
 function threadDetail(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
-  shell: OrchestrationV2ThreadShell,
-  nowMs: number,
+  shell: Parameters<typeof threadSnooze>[0],
+  context: ThreadViewContext,
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
+  const status = active?.status ?? latest?.status ?? "idle";
+  const pendingRequest =
+    projection.runtimeRequests.find((request) => request.status === "pending") ?? null;
   return {
     threadId: projection.thread.id,
+    link: formatThreadLink(projection.thread.id, projection.thread.title, context.environmentId),
     projectId: projection.thread.projectId,
     title: projection.thread.title,
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
-    status: active?.status ?? latest?.status ?? "idle",
+    status,
     latestRunId: latest?.id ?? null,
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
@@ -773,7 +829,7 @@ function threadDetail(
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     // From the shell, like the list, so read and list agree on snooze state.
-    ...threadSnooze(shell, nowMs),
+    ...threadSnooze(shell, context.nowMs),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -900,6 +956,69 @@ function timelineItem(input: {
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
 }
+
+/**
+ * One page of a thread as t3_thread_read returns it. Home reads every
+ * environment through this; the MCP tool adds delegated-result
+ * acknowledgement on top.
+ */
+export const readThreadPage = Effect.fn("OrchestratorMcp.readThreadPage")(function* (
+  threadManagement: ThreadManagementService.ThreadManagementService["Service"],
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
+  shell: OrchestrationV2ThreadShell,
+  input: OrchestratorMcpThreadReadInput,
+  environmentId: EnvironmentId,
+) {
+  const nowMs = yield* Clock.currentTimeMillis;
+  const view = input.view ?? "messages";
+  const afterPosition = input.afterPosition ?? -1;
+  const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
+  const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+  const timeline = yield* threadManagement
+    .getTimelinePage(input.threadId, {
+      afterPosition,
+      limit,
+      view,
+      ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+    })
+    .pipe(Effect.mapError(threadManagementFailure));
+  const page = timeline.items;
+  const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
+  for (const row of page) {
+    if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
+    const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
+    ids.push(row.item.messageId);
+    messageIdsByThread.set(row.sourceThreadId, ids);
+  }
+  const sourceMessages = yield* Effect.forEach(
+    [...messageIdsByThread],
+    ([threadId, messageIds]) =>
+      threadManagement.getThreadRecords(threadId, ["messages"], { messageIds }).pipe(
+        Effect.map((records) => [threadId, records.messages] as const),
+        Effect.mapError(threadManagementFailure),
+      ),
+    { concurrency: 1 },
+  );
+  const messagesByThreadId = new Map(sourceMessages);
+  const result = {
+    thread: threadDetail(target, timeline.totalItems, shell, { environmentId, nowMs }),
+    recentRuns: target.runs
+      .toSorted((left, right) => right.ordinal - left.ordinal)
+      .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+      .map(threadRun),
+    items: page.map((row) =>
+      timelineItem({
+        row,
+        maxChars,
+        messagesByThreadId,
+        ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+      }),
+    ),
+    nextPosition: page.at(-1)?.position ?? null,
+    hasMore: timeline.hasMore,
+  } satisfies OrchestratorMcpThreadReadResult;
+  return { result, page };
+});
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -1912,38 +2031,11 @@ const make = Effect.gen(function* () {
           inheritedModel: parent?.thread.modelSelection.model ?? null,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
-          providers: providers.map((provider) => {
-            const constraints = providerConstraints(
-              provider,
-              orchestrationCapableInstanceIds.has(provider.instanceId),
-            );
-            return {
-              providerInstanceId: provider.instanceId,
-              driverKind: provider.driver,
-              displayName: provider?.displayName ?? null,
-              models:
-                provider?.models
-                  .filter(
-                    (model) =>
-                      model.isCustom ||
-                      !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
-                  )
-                  .map((model) => ({
-                    id: model.slug,
-                    label: model.name ?? null,
-                    ...(model.capabilities?.optionDescriptors === undefined
-                      ? {}
-                      : { options: model.capabilities.optionDescriptors }),
-                  })) ?? [],
-              ...(provider.supportedRuntimeModes === undefined ||
-              provider.supportedRuntimeModes.length === 0
-                ? {}
-                : { runtimeModes: [...provider.supportedRuntimeModes] }),
-              canRunChildTask: constraints.length === 0,
-              canRunCrossProviderChildTask: constraints.length === 0,
-              constraints: [...constraints],
-            };
-          }),
+          providers: providerCapabilities(
+            providers,
+            orchestrationCapableInstanceIds,
+            modelPreferences,
+          ),
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,
@@ -2474,7 +2566,9 @@ const make = Effect.gen(function* () {
         return {
           projectId,
           currentThreadId: parent?.thread.id ?? null,
-          threads: page.map((shell) => listItemFromShell(shell, nowMs)),
+          threads: page.map((shell) =>
+            listItemFromShell(shell, { environmentId: scope.environmentId, nowMs }),
+          ),
           nextCursor,
           total: filtered.length,
         } satisfies OrchestratorMcpThreadListResult;
@@ -2482,36 +2576,14 @@ const make = Effect.gen(function* () {
     readThread: (scope, input) =>
       Effect.gen(function* () {
         const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
-        const view = input.view ?? "messages";
-        const afterPosition = input.afterPosition ?? -1;
-        const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
-        const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-        const timeline = yield* threadManagement
-          .getTimelinePage(input.threadId, {
-            afterPosition,
-            limit,
-            view,
-            ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
-          })
-          .pipe(Effect.mapError(threadManagementFailure));
-        const page = timeline.items;
-        const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-        for (const row of page) {
-          if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
-          const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
-          ids.push(row.item.messageId);
-          messageIdsByThread.set(row.sourceThreadId, ids);
-        }
-        const sourceMessages = yield* Effect.forEach(
-          [...messageIdsByThread],
-          ([threadId, messageIds]) =>
-            threadManagement.getThreadRecords(threadId, ["messages"], { messageIds }).pipe(
-              Effect.map((records) => [threadId, records.messages] as const),
-              Effect.mapError(threadManagementFailure),
-            ),
-          { concurrency: 1 },
+        const { result, page } = yield* readThreadPage(
+          threadManagement,
+          target,
+          shell,
+          input,
+          scope.environmentId,
         );
-        const messagesByThreadId = new Map(sourceMessages);
+        const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
         const returnedRunIds = new Set(
           page
             .filter((row) => row.sourceThreadId === target.thread.id)
@@ -2556,23 +2628,7 @@ const make = Effect.gen(function* () {
             }
           }
         }
-        return {
-          thread: threadDetail(target, timeline.totalItems, shell, yield* Clock.currentTimeMillis),
-          recentRuns: target.runs
-            .toSorted((left, right) => right.ordinal - left.ordinal)
-            .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-            .map(threadRun),
-          items: page.map((row) =>
-            timelineItem({
-              row,
-              maxChars,
-              messagesByThreadId,
-              ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
-            }),
-          ),
-          nextPosition: page.at(-1)?.position ?? null,
-          hasMore: timeline.hasMore,
-        } satisfies OrchestratorMcpThreadReadResult;
+        return result;
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {

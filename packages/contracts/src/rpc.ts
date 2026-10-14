@@ -303,6 +303,17 @@ import {
   PreviewCloneInvokeInput,
 } from "./previewAutomation.ts";
 import {
+  FleetHostRegistration,
+  FleetHostRequest,
+  FleetHostResponse,
+  FleetInvokeInput,
+  HomeEnableInput,
+  HomeThreadResult,
+  HomeUnavailableError,
+  HomeWatchReport,
+} from "./home.ts";
+import { OrchestratorMcpFailure } from "./orchestratorMcp.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -486,6 +497,15 @@ export const WS_METHODS = {
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
   previewCloneInvoke: "previewClone.invoke",
+
+  // Home and fleet methods
+  homeEnable: "home.enable",
+  homeDisable: "home.disable",
+  homeStartFresh: "home.startFresh",
+  fleetInvoke: "fleet.invoke",
+  fleetConnect: "fleet.connect",
+  fleetRespond: "fleet.respond",
+  fleetReportWatchEvents: "fleet.reportWatchEvents",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -1619,6 +1639,47 @@ const WsPreviewCloneInvokeRpc = Rpc.make(WS_METHODS.previewCloneInvoke, {
   error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
 });
 
+const WsHomeEnableRpc = Rpc.make(WS_METHODS.homeEnable, {
+  payload: HomeEnableInput,
+  success: HomeThreadResult,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+const WsHomeDisableRpc = Rpc.make(WS_METHODS.homeDisable, {
+  payload: Schema.Struct({}),
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+const WsHomeStartFreshRpc = Rpc.make(WS_METHODS.homeStartFresh, {
+  payload: Schema.Struct({}),
+  success: HomeThreadResult,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+/** Runs one Home operation here. Results are decoded by the caller per operation. */
+const WsFleetInvokeRpc = Rpc.make(WS_METHODS.fleetInvoke, {
+  payload: FleetInvokeInput,
+  success: Schema.Unknown,
+  error: Schema.Union([OrchestratorMcpFailure, EnvironmentAuthorizationError]),
+});
+
+const WsFleetConnectRpc = Rpc.make(WS_METHODS.fleetConnect, {
+  payload: FleetHostRegistration,
+  success: FleetHostRequest,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsFleetRespondRpc = Rpc.make(WS_METHODS.fleetRespond, {
+  payload: FleetHostResponse,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsFleetReportWatchEventsRpc = Rpc.make(WS_METHODS.fleetReportWatchEvents, {
+  payload: HomeWatchReport,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -2117,6 +2178,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
   WsPreviewCloneInvokeRpc,
+  WsHomeEnableRpc,
+  WsHomeDisableRpc,
+  WsHomeStartFreshRpc,
+  WsFleetInvokeRpc,
+  WsFleetConnectRpc,
+  WsFleetRespondRpc,
+  WsFleetReportWatchEventsRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
