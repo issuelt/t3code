@@ -181,6 +181,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as Dictation from "./dictation/Dictation.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
@@ -1313,6 +1314,7 @@ const layerWsRpc = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const dictation = yield* Dictation.Dictation;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -3033,6 +3035,14 @@ const layerWsRpc = (
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
+        [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
+        [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
+        [WS_METHODS.dictationStart]: () => dictation.start,
+        [WS_METHODS.dictationWarm]: () => dictation.warm,
+        [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
+        [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),
+        [WS_METHODS.dictationCancel]: (input) => dictation.cancel(input),
+        [WS_METHODS.subscribeDictationState]: () => dictation.stateStream,
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

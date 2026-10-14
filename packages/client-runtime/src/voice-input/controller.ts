@@ -1,6 +1,10 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import type {
+  PreparedVoiceTranscription,
+  VoiceTranscriber,
+  VoiceTranscript,
+} from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -49,14 +53,18 @@ export type VoiceInputControllerDependencies = {
   readonly requestPermission: () => Promise<{
     readonly granted: boolean;
     readonly canAskAgain: boolean;
+    /** Replaces the generic denial message when the platform knows why access failed. */
+    readonly message?: string;
   }>;
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
   readonly readDraft: () => VoiceDraftSnapshot | null;
+  /** `inserted` is where the transcript landed in `text`, e.g. to highlight it. */
   readonly commitDraft: (
     text: string,
     selection: { readonly start: number; readonly end: number },
+    inserted: { readonly start: number; readonly end: number },
   ) => void;
   readonly onStateChange: (state: VoiceInputState) => void;
 };
@@ -66,9 +74,24 @@ type TranscriptCommitResult =
       readonly kind: "commit";
       readonly text: string;
       readonly selection: { readonly start: number; readonly end: number };
+      /** Where the transcript landed in `text`, including any boundary spaces. */
+      readonly inserted: { readonly start: number; readonly end: number };
     }
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
+
+function withFirstLetterCase(text: string, locale: string, upper: boolean): string {
+  const first = text.charAt(0);
+  let cased: string;
+  try {
+    const tag = locale.replaceAll("_", "-");
+    cased = upper ? first.toLocaleUpperCase(tag) : first.toLocaleLowerCase(tag);
+  } catch {
+    // An unknown locale tag; the default casing rules are close enough.
+    cased = upper ? first.toUpperCase() : first.toLowerCase();
+  }
+  return cased + text.slice(1);
+}
 
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
@@ -93,7 +116,27 @@ export function resolveTranscriptCommit(
   const isEmptySelection = captured.selection.start === captured.selection.end;
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
   const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
+  // Models transcribe each recording as its own sentence. Fit that sentence to
+  // where it lands: capitalize at the start of the draft, a line, or a
+  // sentence; mid-sentence, drop the leading capital (English only, where
+  // nouns are not capitalized). Drop a final period when the sentence goes on.
+  // A first word with other capitals ("iOS") or "I" is kept as spoken.
+  const atSentenceStart = /(^|[.!?]\s*|\n\s*)$/.test(
+    captured.text.slice(0, captured.selection.start),
+  );
+  const firstWord = /^\S+/.exec(replacement)?.[0] ?? "";
   let insertion = replacement;
+  if (atSentenceStart) {
+    if (!/\p{Lu}/u.test(firstWord)) insertion = withFirstLetterCase(insertion, locale, true);
+  } else {
+    const plainCapitalized = /^\p{Lu}\p{Ll}*\P{L}*$/u.test(firstWord) && !/^I\b/u.test(firstWord);
+    if (usesEnglishSpacing && plainCapitalized) {
+      insertion = withFirstLetterCase(insertion, locale, false);
+    }
+  }
+  if (/^\s*\p{Ll}/u.test(captured.text.slice(captured.selection.end))) {
+    insertion = insertion.replace(/[.!?]$/u, "");
+  }
   if (isEmptySelection && usesEnglishSpacing) {
     const left = captured.text[captured.selection.start - 1];
     const right = captured.text[captured.selection.start];
@@ -105,7 +148,7 @@ export function resolveTranscriptCommit(
       right !== undefined &&
       /[A-Za-z0-9([{'"]/.test(right) &&
       (left === undefined || /\s/.test(left));
-    insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
+    insertion = `${leftNeedsBoundary ? " " : ""}${insertion}${rightNeedsBoundary ? " " : ""}`;
   }
 
   const result = replaceTextRange(
@@ -118,6 +161,7 @@ export function resolveTranscriptCommit(
     kind: "commit",
     text: result.text,
     selection: { start: result.cursor, end: result.cursor },
+    inserted: { start: captured.selection.start, end: result.cursor },
   };
 }
 
@@ -132,8 +176,12 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const token = { abandoned: false, released: promise, release: resolve };
+  // Not Promise.withResolvers: web clients target browsers without it.
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const token = { abandoned: false, released, release };
   activeSession = token;
   return token;
 }
@@ -195,6 +243,8 @@ export class VoiceInputController {
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
+  /** `stop()` arrived while preparing; finish as soon as recording starts. */
+  private stopRequested = false;
 
   constructor(dependencies: VoiceInputControllerDependencies) {
     this.dependencies = dependencies;
@@ -213,6 +263,7 @@ export class VoiceInputController {
     }
     let sessionToken: VoiceInputSession | null = null;
     const operationToken = ++this.operationToken;
+    this.stopRequested = false;
     this.setState({ phase: "preparing", error: null, errorAction: null });
 
     try {
@@ -243,7 +294,7 @@ export class VoiceInputController {
       if (!this.isCurrent(operationToken)) return;
       if (!permission.granted) {
         this.setError(
-          "Microphone access is required for voice input.",
+          permission.message ?? "Microphone access is required for voice input.",
           permission.canAskAgain ? "retry" : "settings",
         );
         return;
@@ -275,6 +326,10 @@ export class VoiceInputController {
       this.capturedDraft = capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
+      if (this.stopRequested) {
+        this.stopRequested = false;
+        void this.finishRecording(false, null);
+      }
     } catch {
       if (this.isCurrent(operationToken))
         this.setError("Could not start voice recording.", "retry");
@@ -289,7 +344,13 @@ export class VoiceInputController {
     }
   }
 
+  /**
+   * Finishes the recording and inserts its transcript. During preparation it
+   * finishes as soon as recording starts, for recorders that capture audio
+   * before the controller reaches the recording phase.
+   */
   stop(): Promise<void> {
+    if (this.state.phase === "preparing") this.stopRequested = true;
     if (this.state.phase !== "recording") return Promise.resolve();
     return this.finishRecording(false, null);
   }
@@ -395,7 +456,7 @@ export class VoiceInputController {
       const transcription = this.transcription;
       const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
-      let transcript: string;
+      let transcript: string | VoiceTranscript;
       try {
         transcript = await runTranscriptionOperation(() =>
           transcription.transcribe(recordingUri, { signal }),
@@ -411,8 +472,8 @@ export class VoiceInputController {
       const result = resolveTranscriptCommit(
         capturedDraft,
         this.dependencies.readDraft(),
-        transcript,
-        transcription.locale,
+        typeof transcript === "string" ? transcript : transcript.text,
+        typeof transcript === "string" ? transcription.locale : transcript.locale,
       );
       if (result.kind === "stale") {
         this.setError(
@@ -426,7 +487,7 @@ export class VoiceInputController {
         return;
       }
 
-      this.dependencies.commitDraft(result.text, result.selection);
+      this.dependencies.commitDraft(result.text, result.selection, result.inserted);
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {
@@ -491,6 +552,7 @@ export class VoiceInputController {
 
   private invalidateOperation(): void {
     this.operationToken += 1;
+    this.stopRequested = false;
     if (this.sessionToken) this.sessionToken.abandoned = true;
     this.transcriptionAbortController?.abort();
   }

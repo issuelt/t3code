@@ -57,10 +57,11 @@ describe("global voice input", () => {
         createTarget("second", () => "other prompt", vi.fn(), { start: 12, end: 12 }),
       );
       await session.controller.stop();
-      expect(commit).toHaveBeenCalledWith(expected, {
-        start: cursor,
-        end: cursor,
-      });
+      expect(commit).toHaveBeenCalledWith(
+        expected,
+        { start: cursor, end: cursor },
+        expect.anything(),
+      );
     },
   );
 
@@ -134,7 +135,11 @@ describe("global voice input", () => {
       transcription.resolve("spoken text");
       await (stopping ?? session.controller.stop());
       expect(recorder.record).toHaveBeenCalledTimes(1);
-      expect(firstCommit).toHaveBeenCalledWith("first spoken text", { start: 17, end: 17 });
+      expect(firstCommit).toHaveBeenCalledWith(
+        "first spoken text",
+        { start: 17, end: 17 },
+        expect.anything(),
+      );
       expect(secondCommit).not.toHaveBeenCalled();
     },
   );
@@ -163,7 +168,11 @@ describe("global voice input", () => {
       error: null,
       url: recorder.uri,
     });
-    expect(commit).toHaveBeenCalledWith("first spoken text", { start: 17, end: 17 });
+    expect(commit).toHaveBeenCalledWith(
+      "first spoken text",
+      { start: 17, end: 17 },
+      expect.anything(),
+    );
     expect(session.controller.currentState.phase).toBe("idle");
   });
 
@@ -238,7 +247,11 @@ describe("global voice input", () => {
     expect(recorder.stop).not.toHaveBeenCalled();
     expect(session.controller.currentState.phase).toBe("recording");
     await session.controller.stop();
-    expect(commit).toHaveBeenCalledWith("hello spoken text", { start: 17, end: 17 });
+    expect(commit).toHaveBeenCalledWith(
+      "hello spoken text",
+      { start: 17, end: 17 },
+      expect.anything(),
+    );
   });
 
   it("waits for canceled native work before starting a recording for another draft", async () => {
@@ -267,6 +280,10 @@ describe("global voice input", () => {
     await session.controller.stop();
     expect(recorder.record).toHaveBeenCalledTimes(1);
     expect(oldCommit).not.toHaveBeenCalled();
-    expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
+    expect(nextCommit).toHaveBeenCalledWith(
+      "second spoken text",
+      { start: 18, end: 18 },
+      expect.anything(),
+    );
   });
 });

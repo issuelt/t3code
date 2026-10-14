@@ -75,6 +75,7 @@ import {
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
@@ -141,6 +142,11 @@ export interface ComposerPromptEditorHandle {
    * text.
    */
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
+  /**
+   * Briefly highlights a range of the prompt, in the same Markdown offsets as
+   * `readSelectionRange`, so inserted text such as a dictation is easy to spot.
+   */
+  flashRange: (range: { start: number; end: number }) => void;
 }
 
 export interface ComposerPromptEditorProps {
@@ -798,10 +804,35 @@ function decorationsForSelection(state: EditorState): DecorationSet {
   return DecorationSet.create(doc, decorations);
 }
 
+const FlashPluginKey = new PluginKey<DecorationSet>("composer-flash");
+/** Matches the `composer-flash` keyframes in index.css. */
+const FLASH_DURATION_MS = 900;
+
+/** Holds one short-lived highlight, set and cleared through transaction meta. */
+const ComposerFlashPlugin = new Plugin<DecorationSet>({
+  key: FlashPluginKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, old) => {
+      const meta = tr.getMeta(FlashPluginKey) as { from: number; to: number } | null | undefined;
+      if (meta === null) return DecorationSet.empty;
+      if (meta) {
+        return DecorationSet.create(tr.doc, [
+          Decoration.inline(meta.from, meta.to, { class: "composer-flash" }),
+        ]);
+      }
+      return old.map(tr.mapping, tr.doc);
+    },
+  },
+  props: {
+    decorations: (state) => FlashPluginKey.getState(state),
+  },
+});
+
 const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
   addProseMirrorPlugins() {
-    return [ComposerMarkerPlugin];
+    return [ComposerMarkerPlugin, ComposerFlashPlugin];
   },
 });
 
@@ -951,6 +982,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     contextIds: literalText ? [] : collectInlineContextIds(value),
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
+  const flashTimerRef = useRef<number | null>(null);
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
@@ -1734,6 +1766,22 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       readSelectionRange: () => {
         readSnapshot();
         return selectionRangeRef.current;
+      },
+      flashRange: ({ start, end }) => {
+        if (!editor || end <= start) return;
+        const map = serializeEditorDoc(editor.state.doc);
+        const from = flatToPm(map, markdownToFlat(map, start));
+        const to = flatToPm(map, markdownToFlat(map, end));
+        if (to <= from) return;
+        editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, { from, to }));
+        // A newer flash replaces the old one, so its timer must not clear the newer one early.
+        if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = window.setTimeout(() => {
+          flashTimerRef.current = null;
+          if (!editor.isDestroyed) {
+            editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, null));
+          }
+        }, FLASH_DURATION_MS);
       },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
