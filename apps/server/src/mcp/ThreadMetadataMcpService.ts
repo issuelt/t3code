@@ -107,7 +107,7 @@ function metadataCommand(input: {
   }
 }
 
-function resultFromThread(input: {
+export function resultFromThread(input: {
   readonly action: ThreadMetadataMcpAction;
   readonly commandId: CommandId;
   readonly sequence: number;
@@ -171,7 +171,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadLookupFailure));
     const requestKey =
       input.clientRequestId === undefined
-        ? yield* crypto.randomUUIDv4.pipe(Effect.orDie)
+        ? yield* crypto.randomUUIDv4().pipe(Effect.orDie)
         : input.clientRequestId;
     const updateCommandId = commandId({
       scope,

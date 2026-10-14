@@ -90,6 +90,12 @@ counts keep the full status path. Cached fetch failures share the existing backo
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
 identity so polling does not invalidate subscribers.
 
+Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
+Batching synchronous appends still stalls the server event loop on slow storage, especially on
+Windows. While a trace write is slow, producers keep up to one trace file of records, so the spans
+that time a stall survive it; records drop only while the disk stays stuck. Provider logging
+retains backpressure. Shutdown drains accepted writes before closing their scope.
+
 Relay awareness queues one pending publication per thread and retains a follow-up when the thread
 changes during a send. Transcript deltas and tool output do not enqueue awareness work. Run,
 request, and relevant thread metadata events do. Configuration is checked before shell reads, and
@@ -102,3 +108,14 @@ continuous traffic during an outage.
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
 `runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
 `ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+
+## Mobile looping animations
+
+`apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard
+avoiding animates on iOS. Reanimated commits each animation frame to the shadow tree, and without
+commit pausing those commits can starve React's: the JS thread keeps retrying its commit, the
+screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
+`ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
+heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
+updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
+`thread-work-log.tsx` is the example.

@@ -50,11 +50,24 @@ window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter. When you return to a large thread
-after more than an hour, the send button changes to **Compact and send**: Enter
-summarizes the history first, then sends your message. To keep the full history
-for that message, open the menu next to the button and choose **Send with full
-history**. See [commands and skills](./composer.md#commands-and-skills) for using
+after Claude's prompt cache expires, a **Compact** chip with the thread's token count shows
+next to the send button. While it is on, Enter summarizes the history first, then
+sends your message. Click the chip to switch it to **Full** and keep the full
+history for that message. The cache lasts about an hour on a Claude
+subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
+
+## Prompt suggestions
+
+Turn on **Prompt suggestions** in the Claude provider settings to have Claude
+suggest your next prompt when a turn finishes. On web and desktop the
+suggestion appears in the empty composer. Press **Right Arrow** or **Tab** to
+put it in the composer, where you can edit it before you send, or **Esc** to
+hide it. The suggestion disappears when you send your next message.
+
+Claude does not always have a suggestion, for example in plan mode, after an
+error, or when you are close to a usage limit. A thread where Claude is
+already running starts suggesting once Claude restarts for it.
 
 ## Usage limits
 

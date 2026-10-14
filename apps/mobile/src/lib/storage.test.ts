@@ -101,6 +101,7 @@ import {
   savePreferencesPatch,
 } from "../persistence/imperative";
 import { toStableSavedRemoteConnection } from "./connection";
+import { DEFAULT_WIDGET_CONFIGURATION } from "../widgets/subscriptionWidgetPreferences";
 
 const managedConnection = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -196,6 +197,31 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("retains independent usage widget profiles across preference reloads and other edits", async () => {
+    const subscriptionWidgets = {
+      defaults: DEFAULT_WIDGET_CONFIGURATION,
+      widgets: {
+        "12": {
+          ...DEFAULT_WIDGET_CONFIGURATION,
+          accountIds: ["codex:personal@example.com"],
+          resetDisplay: "remaining" as const,
+          quotaResetDisplays: { session: "both" as const },
+          showEnvironment: true,
+          theme: "dark" as const,
+        },
+        "13": {
+          ...DEFAULT_WIDGET_CONFIGURATION,
+          grouping: "pooled" as const,
+          showResetTimes: false,
+          showEnvironment: false,
+        },
+      },
+    };
+    await savePreferencesPatch({ subscriptionWidgets });
+    await savePreferencesPatch({ baseFontSize: 17 });
+    await expect(loadPreferences()).resolves.toEqual({ subscriptionWidgets, baseFontSize: 17 });
+  });
+
   it("persists Material You independently for each appearance", async () => {
     const themes = { lightThemeId: "material-you", darkThemeId: "ocean" } as const;
     await savePreferencesPatch(themes);
@@ -274,6 +300,32 @@ describe("mobile connection storage", () => {
     );
 
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+  });
+
+  it("keeps valid list filters and drops malformed ones", async () => {
+    const threadListFilters = { environmentId: "environment-1", projectKey: null };
+    const pullRequestListFilters = {
+      environmentId: null,
+      controls: {
+        "": {
+          state: "all",
+          involvement: "reviewing",
+          filters: { labels: [["size:S"]] },
+          sort: "oldest",
+        },
+      },
+    };
+    mocks.setPreferencesJson(JSON.stringify({ threadListFilters, pullRequestListFilters }), 10);
+    await expect(loadPreferences()).resolves.toEqual({ threadListFilters, pullRequestListFilters });
+
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        threadListFilters: { environmentId: 1, projectKey: null },
+        pullRequestListFilters: { environmentId: null, controls: { "": { sort: "newest" } } },
+      }),
+      11,
+    );
+    await expect(loadPreferences()).resolves.toEqual({});
   });
 
   it("reconciles fallback preferences after SQLite recovers", async () => {
