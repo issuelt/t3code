@@ -9,6 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import { DEFAULT_HOME_SETTINGS, HomeSettings } from "./home.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   EnvironmentId,
@@ -1269,6 +1270,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**
+   * Home, the fleet-wide agent thread. Only desktop-hosted servers turn it on.
+   * Server-managed: the WebSocket settings update drops client patches to it.
+   */
+  home: HomeSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_HOME_SETTINGS))),
+  /**
    * Null means inherit: the repository's t3.json, then "local". The old
    * default "local" was never persisted (defaults are stripped on write), so
    * it now decodes as inherit, which resolves the same way because the old
@@ -1627,6 +1633,8 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  /** Replaces Home's state whole. Only server code sends this. */
+  home: Schema.optionalKey(HomeSettings),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   autoFallbackBetweenAccounts: Schema.optionalKey(Schema.Boolean),

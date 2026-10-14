@@ -1,6 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type HomeSettings,
+  isHomeLaunchedThreadId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -26,6 +28,10 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as FleetBroker from "../../../home/FleetBroker.ts";
+import * as FleetService from "../../../home/FleetService.ts";
+import * as HomeService from "../../../home/HomeService.ts";
+import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -50,6 +56,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
+      notHomeLayer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         requestNamespace: "session",
@@ -71,7 +78,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId, modelSelection },
+              thread: { id: input.threadId, projectId, modelSelection, title: input.title },
               runs: [],
             },
             resumed: false,
@@ -96,7 +103,11 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const result = yield* toolkit
       .handle("t3_thread_launch", { title: "Audit", message: "Review the change" })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+    expect(result.at(-1)?.result).toMatchObject({
+      projectId,
+      modelSelection,
+      link: expect.stringMatching(/^\[Audit\]\(t3-thread:\/\/v1\/.+\?environmentId=environment/),
+    });
     expect(launchedSender).toBe(sourceThreadId);
   }),
 );
@@ -122,6 +133,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
+      notHomeLayer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         requestNamespace: "session",
@@ -143,7 +155,12 @@ it.effect("launches a scratch thread into the Scratch project", () =>
           return Effect.succeed({
             threadId: input.threadId,
             projection: {
-              thread: { id: input.threadId, projectId: input.projectId, modelSelection },
+              thread: {
+                id: input.threadId,
+                projectId: input.projectId,
+                modelSelection,
+                title: input.title,
+              },
               runs: [],
             },
             resumed: false,
@@ -189,6 +206,118 @@ it.effect("launches a scratch thread into the Scratch project", () =>
   }),
 );
 
+it.effect("makes Home name a project and watches the thread before launching it", () =>
+  Effect.gen(function* () {
+    const homeThreadId = ThreadId.make("home:current");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const caller = {
+      id: homeThreadId,
+      projectId: ProjectId.make("project:home"),
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as OrchestrationV2ThreadShell;
+    const steps: Array<string> = [];
+    const launched: Array<unknown> = [];
+    let home = { threadId: homeThreadId, watchAll: false, watches: [] } as HomeSettings;
+    const dependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.mock(HomeService.HomeService)({
+        available: true,
+        isHome: () => Effect.succeed(true),
+        updateWatches: (_homeThreadId, update) => {
+          home = update(home);
+          steps.push(`watch ${home.watches.map((watch) => watch.threadId).join()}`);
+          return Effect.succeed(home);
+        },
+      }),
+      Layer.mock(FleetService.FleetService)({
+        execute: ({ request }) => {
+          if (request.op !== "threads.launch") return Effect.die("Unexpected operation.");
+          steps.push(`launch ${request.input.threadId}`);
+          return Effect.succeed({
+            threadId: request.input.threadId!,
+            link: `[${request.input.title}](t3-thread://v1/environment/${request.input.threadId})`,
+            projectId: request.input.projectId!,
+            modelSelection: caller.modelSelection,
+            runId: null,
+            status: null,
+          });
+        },
+      }),
+      Layer.mock(FleetBroker.FleetBroker)({}),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      ServerSettings.layerTest(),
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: { threadId: homeThreadId, providerSessionId: "session", providerInstanceId },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed(caller),
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (input) => {
+          launched.push(input);
+          return Effect.die("Home launched without a project.");
+        },
+      }),
+      Layer.mock(Project.ProjectService)({
+        getById: (projectId) =>
+          Effect.succeed(
+            Option.some({
+              id: projectId,
+              workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
+            } as never),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isInHomeFolder: (candidate) => Effect.succeed(candidate.startsWith("/data/home")),
+      }),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-home-launch-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const handle = (params: Parameters<typeof toolkit.handle<"t3_thread_launch">>[1]) =>
+      toolkit
+        .handle("t3_thread_launch", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    const unnamed = yield* handle({ title: "Audit", message: "Review the change" });
+    expect(unnamed.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    const own = yield* handle({ title: "Audit", projectId: caller.projectId });
+    expect(own.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(steps).toEqual([]);
+
+    // The watch is saved before the launch, under the id the launch then uses.
+    const result = yield* handle({ title: "Audit", projectId: ProjectId.make("project:app") });
+    const { threadId } = result.at(-1)!.result as { threadId: string };
+    expect(isHomeLaunchedThreadId(threadId)).toBe(true);
+    expect(steps).toEqual([`watch ${threadId}`, `launch ${threadId}`]);
+    expect(launched).toHaveLength(0);
+
+    // Home archives and settles; it never deletes.
+    const deleted = yield* toolkit
+      .handle("t3_project_delete", { projectId: ProjectId.make("project:app"), force: true })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(deleted.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+  }),
+);
+
 it.effect("starts a project from just a title when workspaceRoot is omitted", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");
@@ -220,6 +349,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     const layerDependencies = Layer.mergeAll(
       ServerSettings.layerTest(),
       NodeCrypto.layer,
+      notHomeLayer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         requestNamespace: "session",
@@ -318,6 +448,7 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     ServerSettings.layerTest(),
     NodeCrypto.layer,
+    notHomeLayer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
@@ -342,6 +473,7 @@ const clientLaunchHarness = (input: {
               id: launch.threadId,
               projectId: launch.projectId,
               modelSelection: launch.modelSelection,
+              title: launch.title,
             },
             runs: [],
           },

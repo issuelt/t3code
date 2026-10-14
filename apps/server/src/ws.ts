@@ -103,6 +103,7 @@ import {
   type ProviderLoginStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  HomeUnavailableError,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -188,6 +189,9 @@ import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import { ProviderLoginManager } from "./provider/ProviderLoginManager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as FleetBroker from "./home/FleetBroker.ts";
+import * as FleetService from "./home/FleetService.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1229,6 +1233,9 @@ const layerWsRpc = (
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const home = yield* HomeService.HomeService;
+      const fleet = yield* FleetService.FleetService;
+      const fleetBroker = yield* FleetBroker.FleetBroker;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -1772,6 +1779,7 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...(home.available ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
           };
         });
 
@@ -2450,8 +2458,10 @@ const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
-        [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch: clientPatch, providerInstanceMutation }) =>
           Effect.gen(function* () {
+            // Home's state changes only through the Home RPCs and Home's tools.
+            const { home: _home, ...patch } = clientPatch;
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -2987,6 +2997,20 @@ const layerWsRpc = (
         [WS_METHODS.previewAutomationConnect]: (input) =>
           Stream.unwrap(previewAutomationBroker.connect(input)),
         [WS_METHODS.previewAutomationRespond]: (input) => previewAutomationBroker.respond(input),
+        [WS_METHODS.homeEnable]: (input) => home.enable(input),
+        [WS_METHODS.homeDisable]: (_input) => home.disable,
+        [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
+        [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
+        [WS_METHODS.fleetConnect]: (input) =>
+          home.available
+            ? Stream.unwrap(fleetBroker.connect(input))
+            : Stream.fail(
+                new HomeUnavailableError({
+                  message: "Home runs only on a server the T3 Code desktop app hosts.",
+                }),
+              ),
+        [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
+        [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
         [WS_METHODS.previewAutomationFocusHost]: (input) =>
           previewAutomationBroker.focusHost(input),
         [WS_METHODS.previewCloneInvoke]: (input) =>
@@ -3255,6 +3279,11 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
+    const homeLayer = Layer.mergeAll(
+      Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
+      Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
+      Layer.succeed(FleetBroker.FleetBroker, yield* FleetBroker.FleetBroker),
+    );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -3318,6 +3347,7 @@ export const layer = Layer.unwrap(
               // their defects, not the rest of the server's.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(homeLayer),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

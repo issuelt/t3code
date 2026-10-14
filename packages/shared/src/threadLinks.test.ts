@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatThreadLink, parseThreadLinkHref, relabelThreadLinks } from "./threadLinks.ts";
+import {
+  formatThreadLink,
+  parseThreadLinkEnvironmentId,
+  parseThreadLinkHref,
+  relabelThreadLinks,
+} from "./threadLinks.ts";
 
 describe("thread links", () => {
   it("takes the thread id verbatim, percent escapes included", () => {
@@ -71,5 +76,18 @@ describe("thread links", () => {
         (threadId) => titles.get(threadId),
       ),
     ).toBe("See [Fix the build now](t3-thread://v1/renamed) and [Gone](t3-thread://v1/deleted).");
+  });
+
+  it("round-trips a link to a thread in another environment", () => {
+    const link = formatThreadLink("home-launched:mcp:1", "Fix [the] build\nnow", "studio mac");
+    const href = /\]\((.+)\)$/.exec(link)![1]!;
+    expect(link.startsWith("[Fix the build now](")).toBe(true);
+    expect(parseThreadLinkHref(href)).toBe("home-launched:mcp:1");
+    expect(parseThreadLinkEnvironmentId(href)).toBe("studio mac");
+    expect(parseThreadLinkEnvironmentId("t3-thread://v1/mcp:1")).toBeNull();
+    expect(parseThreadLinkEnvironmentId("t3-thread://v1/mcp:1?environmentId=%E0%A4%A")).toBeNull();
+    expect(relabelThreadLinks(`[x](${href})`, () => "Renamed")).toBe(
+      "[Renamed](t3-thread://v1/home-launched:mcp:1?environmentId=studio%20mac)",
+    );
   });
 });
