@@ -28,7 +28,8 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import * as GitManager from "../git/GitManager.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -155,6 +156,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const git = yield* GitManager.GitManager;
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
@@ -245,7 +247,7 @@ export const make = Effect.gen(function* () {
         }
         const url = siblingPullRequestUrl(link.url, layer.number);
         if (url === null) continue;
-        const uuid = yield* crypto.randomUUIDv4;
+        const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({
           type: "thread.pull-request.link",
           commandId: CommandId.make(`server:pr-stack-link:${thread.id}:${uuid}`),
@@ -257,7 +259,7 @@ export const make = Effect.gen(function* () {
         linkedThisSweep.add(dedupeKey);
       }
       if (changed) {
-        const uuid = yield* crypto.randomUUIDv4;
+        const uuid = yield* crypto.randomUUIDv4();
         yield* engine.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
@@ -424,8 +426,12 @@ export const make = Effect.gen(function* () {
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
-    // A client reading a pull request can see it merge or close before the next sweep does.
-    const stateChanges = yield* pullRequests.subscribeStateChanges;
+    // A client reading a pull request, or its branch status, can see it merge or close before
+    // the next sweep does.
+    const stateChanges = Stream.merge(
+      yield* pullRequests.subscribeStateChanges,
+      yield* git.subscribePullRequestStateChanges,
+    );
     yield* forkParked(
       Stream.runForEach(stateChanges, requestSync).pipe(
         Effect.catchCause(logSkipped("pull request state change stream failed", {})),
@@ -434,6 +440,8 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(events, (event) => {
         switch (event.type) {
+          case "thread.pull-request-link-updated":
+            return event.payload.snapshot === null ? requestSync(event.payload) : Effect.void;
           case "thread.pull-request-synced":
             return Effect.forEach(
               visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(

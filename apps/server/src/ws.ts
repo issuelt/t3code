@@ -52,6 +52,7 @@ import {
   type AcpRegistrySetProviderInput,
   OrchestrationGetFullThreadDiffError,
   OrchestrationSearchThreadsError,
+  OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
@@ -123,7 +124,7 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
-import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
@@ -133,6 +134,7 @@ import {
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
+  loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -166,10 +168,10 @@ import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
-import * as AcpRegistrySupport from "./provider/acp/AcpRegistrySupport.ts";
-import * as AcpRegistryRuntimeCoordinator from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ModelManifest from "./provider/ModelManifest.ts";
-import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
@@ -177,6 +179,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import { ProviderLoginManager } from "./provider/ProviderLoginManager.ts";
@@ -186,7 +189,11 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
+} from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -225,17 +232,15 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
-import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
-import * as GitHubApi from "./sourceControl/GitHubApi.ts";
-import * as GitLabCli from "./sourceControl/GitLabCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
@@ -401,7 +406,10 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
           message: `Attachment ${attachment.name} size does not match its payload.`,
         });
       }
-      const rawId = createDeterministicAttachmentId(input.threadId, `${input.messageId}:${index}`);
+      const rawId = createDeterministicAttachmentId(
+        input.threadId,
+        chatAttachmentStableKey(input.messageId, index, bytes),
+      );
       if (rawId === null) {
         return yield* new PersistChatAttachmentsError({
           message: "Could not allocate an attachment identifier.",
@@ -801,6 +809,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
           throughSequence,
           limit: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every resubscribe. The live tail resumes from `highWater`, so a
+          // dropped row never hides later events.
+          skipUnknownEventTypes: true,
         })
         .pipe(
           Stream.map((stored) => ({
@@ -971,14 +983,12 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projects.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
+      const base = buildActiveShellSnapshot(
+        yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+          listProjects: projects.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
         }),
       );
       const enriched = yield* enrichProjectShells(base.projects);
@@ -1157,6 +1167,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         applicationEvents.readApplicationEvents({
           afterSequence: input.afterSequence,
           throughSequence: highWater,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every shell resubscribe. The live tail below resumes from
+          // highWater, so a dropped row never hides later events.
+          skipUnknownEventTypes: true,
         }),
       );
       return composeShellStreamWithEnrichment({
@@ -1204,6 +1218,7 @@ const layerWsRpc = (
         | ThreadLaunchService.ThreadLaunchService
         | FileSystem.FileSystem
         | ServerConfig.ServerConfig
+        | ServerSettings.ServerSettingsService
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -1231,6 +1246,7 @@ const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -1238,7 +1254,7 @@ const layerWsRpc = (
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
       const crypto = yield* Crypto.Crypto;
       const serverCommandId = (tag: string) =>
-        crypto.randomUUIDv4.pipe(
+        crypto.randomUUIDv4().pipe(
           Effect.orDie,
           Effect.map((id) => CommandId.make(`server:${tag}:${id}`)),
         );
@@ -1278,7 +1294,7 @@ const layerWsRpc = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
+      const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
@@ -1289,6 +1305,7 @@ const layerWsRpc = (
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+      const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -1312,6 +1329,7 @@ const layerWsRpc = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -1483,7 +1501,7 @@ const layerWsRpc = (
               provider?.models.find((candidate) => candidate.isDefault)?.slug ??
               provider?.models[0]?.slug ??
               "default";
-            const commandId = CommandId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+            const commandId = CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
             const launched = yield* Effect.result(
               startup.enqueueCommand(
                 threadLaunch.launch({
@@ -1739,6 +1757,8 @@ const layerWsRpc = (
             shellResumeCompletionMarker: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
+            threadFind: true,
+            threadFindProgressive: true,
             ...Option.match(scratchWorkspaceRoot, {
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
@@ -1752,32 +1772,33 @@ const layerWsRpc = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      const getOrchestrationV2ArchivedShellSnapshot = sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
-            return {
-              schemaVersion: threads.schemaVersion,
-              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-              projects: yield* projectStore.listShells(),
-              threads: threads.archivedThreads,
-            } as const;
-          }),
-        )
-        .pipe(
-          Effect.flatMap((snapshot) =>
-            enrichProjectShells(snapshot.projects).pipe(
-              Effect.map(({ projects }) => ({ ...snapshot, projects })),
-            ),
+      const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
+        const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "archive" }),
+          listProjects: projectStore.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
+        });
+        return {
+          schemaVersion: threads.schemaVersion,
+          snapshotSequence,
+          projects,
+          threads: threads.archivedThreads,
+        } as const;
+      }).pipe(
+        Effect.flatMap((snapshot) =>
+          enrichProjectShells(snapshot.projects).pipe(
+            Effect.map(({ projects }) => ({ ...snapshot, projects })),
           ),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationV2GetShellSnapshotError({
-                message: "Failed to load archived thread snapshot",
-                cause,
-              }),
-          ),
-        );
+        ),
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationV2GetShellSnapshotError({
+              message: "Failed to load archived thread snapshot",
+              cause,
+            }),
+        ),
+      );
 
       const subscribeOrchestrationV2ArchivedShell = Effect.fn(
         "ws.orchestrationV2.subscribeArchivedShell",
@@ -1872,6 +1893,7 @@ const layerWsRpc = (
                 ),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
@@ -1905,6 +1927,14 @@ const layerWsRpc = (
                 }),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.searchThread]: (input) =>
+          threadManagement
+            .searchThread(input)
+            .pipe(Effect.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
+        [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (input) =>
+          threadManagement
+            .searchThreadStream(input)
+            .pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
           threadSearch.search(input).pipe(
             Effect.mapError(
@@ -2024,6 +2054,13 @@ const layerWsRpc = (
                         commandId: input.commandId,
                         projectId: input.projectId,
                         message: "Failed to launch thread",
+                        cause,
+                      }),
+                    ThreadManagementProviderInstanceDisabledError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
                         cause,
                       }),
                   }),
@@ -2193,7 +2230,7 @@ const layerWsRpc = (
                       fresh: true,
                     });
                     if (maintenance.packageName)
-                      providerVersionCache.delete(maintenance.packageName);
+                      yield* providerLatestVersions.invalidate(maintenance.packageName);
                   }),
                 { concurrency: "unbounded", discard: true },
               );
@@ -2386,6 +2423,8 @@ const layerWsRpc = (
             const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
             return { keybindings: keybindingsConfig, issues: [] };
           }),
+        [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
+        [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
@@ -2416,6 +2455,7 @@ const layerWsRpc = (
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
+        [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
@@ -2486,6 +2526,10 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.checks(input)),
         [WS_METHODS.pullRequestsActivity]: (input) =>
           withPullRequestViewer(input, pullRequests.activity(input)),
+        [WS_METHODS.pullRequestsReviewGuide]: (input) =>
+          withPullRequestViewer(input, reviewGuides.get(input)),
+        [WS_METHODS.pullRequestsGenerateReviewGuide]: (input) =>
+          withPullRequestViewer(input, reviewGuides.generate(input)),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           withPullRequestViewer(input, pullRequests.threadComments(input)),
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
@@ -2518,6 +2562,7 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setThreadResolution(input)),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
           withPullRequestViewer(input, pullRequests.setReaction(input)),
+        [WS_METHODS.pullRequestsReportState]: (input) => pullRequests.reportState(input),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
           pullRequests.invalidate(input, { notifyReaders: true }).pipe(
             // A reader asking for fresh host state also wants the thread badges it feeds to
@@ -2680,6 +2725,7 @@ const layerWsRpc = (
             ),
           ),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
+        [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(
@@ -2909,6 +2955,7 @@ const layerWsRpc = (
         [WS_METHODS.previewClose]: (input) => previewManager.close(input),
         [WS_METHODS.previewList]: (input) => previewManager.list(input),
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
+        [WS_METHODS.previewReportProfiles]: (input) => serverBrowser.reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
@@ -3178,6 +3225,7 @@ export const layer = Layer.unwrap(
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3244,19 +3292,19 @@ export const layer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(OtlpEndpointCheck.layer),
+              // Shared like the pull request service, so concurrent generations single-flight.
+              Layer.provide(
+                Layer.succeed(
+                  PullRequestReviewGuideService.PullRequestReviewGuideService,
+                  reviewGuides,
+                ),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
                     SourceControlProviderRegistry.layer.pipe(
-                      Layer.provide(
-                        Layer.mergeAll(
-                          AzureDevOpsCli.layer,
-                          BitbucketApi.layer,
-                          GitHubApi.layerWithDependencies,
-                          GitLabCli.layer,
-                          ForgejoCli.layer,
-                        ),
-                      ),
+                      Layer.provide(SourceControlBuiltInDrivers.layer),
                       Layer.provideMerge(GitVcsDriver.layer),
                       Layer.provide(
                         VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
@@ -3270,7 +3318,17 @@ export const layer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            Effect.raceFirst(
+              rpcWebSocketHttpEffect,
+              sessions.awaitInvalidation(session.sessionId).pipe(
+                Effect.as(HttpServerResponse.empty()),
+                Effect.catchTags({
+                  SessionCredentialVerificationError: (error) =>
+                    failEnvironmentInternal("internal_error", error),
+                }),
+              ),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

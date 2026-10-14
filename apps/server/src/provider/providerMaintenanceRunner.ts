@@ -7,7 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -34,10 +34,10 @@ import {
   makeTargetedProviderUpdateAction,
   resolveLatestProviderVersion,
   type ProviderMaintenanceCommandAction,
-  ProviderVersionCache,
-} from "./providerMaintenance.ts";
-import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
@@ -103,8 +103,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // The Effect child-process spawner does not consistently perform PATH
         // lookup for maintenance commands on every host, which can otherwise
         // fail before npm has a chance to initialize or write its debug log.
-        const platform = yield* HostProcessPlatform;
-        const hostEnvironment = yield* HostProcessEnvironment;
+        const platform = yield* HostProcess.Platform;
+        const hostEnvironment = yield* HostProcess.Environment;
         const resolveExecutable = yield* SpawnExecutableResolution;
         const executable =
           resolveExecutable(input.command, platform, hostEnvironment) ?? input.command;
@@ -324,7 +324,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const manifestService = yield* ModelManifest.ModelManifest;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
-  const versionCache = yield* ProviderVersionCache;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -389,7 +389,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               maintenanceCapabilities,
             ).pipe(
               Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.provideService(ProviderVersionCache, versionCache),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             ),
           {
             concurrency: "unbounded",
@@ -496,7 +496,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               targetVersion ??
               (yield* resolveLatestProviderVersion(fresh).pipe(
                 Effect.provideService(HttpClient.HttpClient, httpClient),
-                Effect.provideService(ProviderVersionCache, versionCache),
+                Effect.provideService(
+                  ProviderLatestVersions.ProviderLatestVersions,
+                  latestVersions,
+                ),
               ));
             const advisory =
               resolveProviderCompatibility(manifest.compatibility, provider, candidateVersion) ??

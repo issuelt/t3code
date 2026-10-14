@@ -40,7 +40,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
-import { PtyAdapter, type PtyProcess } from "../terminal/PtyAdapter.ts";
+import { PtyAdapter, type PtyProcess } from "@t3tools/shared/PtyAdapter";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";

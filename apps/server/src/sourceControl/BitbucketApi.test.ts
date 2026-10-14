@@ -1,8 +1,10 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -11,11 +13,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { GitCommandError } from "@t3tools/contracts";
-import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
@@ -62,13 +66,16 @@ function makeLayer(input: {
   readonly requestFailure?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientError.HttpClientError;
+  readonly stall?: boolean;
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly env?: Record<string, string>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
-    input.requestFailure
-      ? Effect.fail(input.requestFailure(request))
-      : Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
+    input.stall
+      ? Effect.never
+      : input.requestFailure
+        ? Effect.fail(input.requestFailure(request))
+        : Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
   );
   const gitMock = {
     readConfigValue: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"]>(() =>
@@ -139,6 +146,8 @@ function makeLayer(input: {
   );
 
   const layer = BitbucketApi.layer.pipe(
+    Layer.provide(ServerSourceControlHost.layer),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -358,7 +367,7 @@ it.effect.each([false, true])(
               ? {
                   context: {
                     provider: {
-                      kind: "bitbucket" as const,
+                      kind: SourceControlProviderKind.make("bitbucket"),
                       name: "Bitbucket",
                       baseUrl: "https://bitbucket.org",
                     },
@@ -392,7 +401,11 @@ it.effect("prefers an explicit repository and uses context when the repository i
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
     const context = {
-      provider: { kind: "bitbucket" as const, name: "Bitbucket", baseUrl: "https://bitbucket.org" },
+      provider: {
+        kind: SourceControlProviderKind.make("bitbucket"),
+        name: "Bitbucket",
+        baseUrl: "https://bitbucket.org",
+      },
       remoteName: "origin",
       remoteUrl: "git@bitbucket.org:another/context.git",
     };
@@ -623,16 +636,22 @@ it.effect("prefers credentials saved in settings over the environment, without a
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
 
     yield* settings.updateSettings({
-      bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
+      sourceControlHosts: {
+        bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
+      },
     });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("saved@example.com", "saved-api-token"));
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), "Bearer saved-access-token");
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "", apiToken: "" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "", apiToken: "" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
   }).pipe(Effect.provide(layer));
@@ -649,7 +668,9 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 
     // Fetch would reject this header with an error quoting the token, and that error reaches
     // clients. The unusable token is ignored, so the environment credential is used instead.
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved\ntoken" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved\ntoken" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(
       execute.mock.calls.at(-1)?.[0].headers.authorization,
@@ -670,7 +691,9 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
     assert.deepStrictEqual(yield* bitbucket.probeAuth, {
       status: "unknown",
       account: Option.none(),
@@ -834,7 +857,7 @@ it.effect("checks out same-repository pull requests with the existing Bitbucket 
       cwd: "/repo",
       context: {
         provider: {
-          kind: "bitbucket",
+          kind: SourceControlProviderKind.make("bitbucket"),
           name: "Bitbucket",
           baseUrl: "https://bitbucket.org",
         },
@@ -1080,3 +1103,80 @@ it.effect("cuts a response short rather than reading an unbounded diff into memo
     ),
   ),
 );
+
+const stalledResponseBody = (status: number): Response =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+        // Deliberately never close: headers arrive before the body stalls.
+      },
+    }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+
+it.effect.each([200, 503])(
+  "times out a stalled Bitbucket JSON body after HTTP %s headers",
+  (status) => {
+    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const fiber = yield* Effect.forkChild(
+        Effect.flip(api.getPullRequest({ cwd: "/repo", reference: "42" })),
+      );
+      while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+      yield* TestClock.adjust("31 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+      assert.strictEqual(error.operation, "getPullRequest");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each([200, 503])(
+  "times out a stalled Bitbucket raw body after HTTP %s headers",
+  (status) => {
+    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const fiber = yield* Effect.forkChild(
+        Effect.flip(api.request({ method: "GET", url: "/user" })),
+      );
+      while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+      yield* TestClock.adjust("31 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+      assert.strictEqual(error.operation, "request");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("times out before JSON headers arrive", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const fiber = yield* Effect.forkChild(
+      Effect.flip(api.getPullRequest({ cwd: "/repo", reference: "42" })),
+    );
+    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(fiber);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "getPullRequest");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("times out before raw response headers arrive", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const fiber = yield* Effect.forkChild(
+      Effect.flip(api.request({ method: "GET", url: "/user" })),
+    );
+    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(fiber);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "request");
+  }).pipe(Effect.provide(layer));
+});
