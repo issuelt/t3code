@@ -1,6 +1,7 @@
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
   type ModelSelection,
@@ -143,6 +144,22 @@ const layerPausingAttachEventSink = (pause: {
             }
             return yield* delegate.write(input);
           }),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
+const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        writeIfProviderThreadUnchanged: (input) =>
+          Ref.getAndSet(before, Effect.void).pipe(
+            Effect.flatten,
+            Effect.andThen(delegate.writeIfProviderThreadUnchanged(input)),
+          ),
       });
     }),
   ).pipe(Layer.provide(layerTestEventSink));
@@ -318,6 +335,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    /** False models a runtime whose background tasks can outlive its process. */
+    readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
@@ -400,6 +419,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 }),
               )
             : Stream.fromQueue(events),
+          ...(options.backgroundTasksEndWithProcess === false
+            ? {}
+            : { backgroundTasksEndWithProcess: true as const }),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -458,6 +480,8 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
+  /** Runs once, right before the next provider-thread compare-and-set write. */
+  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
   /** Once armed, holds the next credential lookup until it is interrupted. */
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
@@ -465,6 +489,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -478,9 +503,11 @@ function layerTest(input: {
       ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
       : input.pauseAttachWrite !== undefined
         ? layerPausingAttachEventSink(input.pauseAttachWrite)
-        : input.failReleaseEventWrites
-          ? layerFailingReleaseEventSink
-          : layerTestEventSink;
+        : input.beforeUnchangedWrite !== undefined
+          ? layerBeforeUnchangedWriteEventSink(input.beforeUnchangedWrite)
+          : input.failReleaseEventWrites
+            ? layerFailingReleaseEventSink
+            : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -493,6 +520,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+      ...(input.backgroundTasksEndWithProcess === undefined
+        ? {}
+        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -1093,6 +1123,58 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 starts a thread's session without its last agent's OOM kill",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const owner = ThreadId.make("thread-provider-session-manager-oom-owner");
+      const joiner = ThreadId.make("thread-provider-session-manager-oom-joiner");
+      // Both threads' previous agents were OOM-killed. A new session may run
+      // without a scope (Cursor, OpenCode, a shared Codex session), so it must
+      // not inherit that answer.
+      const oomKilledThreads = new Set<string>([owner, joiner]);
+      const agentScope = {
+        ...AgentScope.defaultValue(),
+        oomKilled: (id: string) => Effect.sync(() => oomKilledThreads.has(id)),
+        clear: (id: string) => Effect.sync(() => void oomKilledThreads.delete(id)),
+      };
+
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: owner,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: joiner, now }),
+          ],
+        });
+        yield* manager.open({ threadId: owner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isFalse(yield* agentScope.oomKilled(owner));
+
+        yield* manager.open({ threadId: joiner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isFalse(yield* agentScope.oomKilled(joiner));
+
+        // Reopening a session the thread already uses keeps its answer.
+        oomKilledThreads.add(owner);
+        yield* manager.open({ threadId: owner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isTrue(yield* agentScope.oomKilled(owner));
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+        Effect.provideService(AgentScope, agentScope),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -1626,6 +1708,42 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
     );
 
     assert.equal((yield* Ref.get(state)).closeCount, 1);
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shutdown", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      for (const name of ["a", "b", "c"]) {
+        const threadId = ThreadId.make(`thread-provider-session-manager-parallel-shutdown-${name}`);
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          }),
+          modelSelection,
+          runtimePolicy,
+        });
+      }
+
+      // Every close hangs until its time box ends. One time box must cover all
+      // three sessions, or a busy server outlives the launcher's kill timer.
+      const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      assert.isDefined(stopping.pollUnsafe());
+    }).pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, hangSessionScopeClose: true })),
+    );
   }),
 );
 
@@ -2681,6 +2799,225 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   }),
 );
 
+// Seeds a thread with a background command on a provider thread of the
+// session it then opens, and one on a provider thread of another session.
+const openSessionWithBackgroundCommand = (fixtureName: string) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* idAllocator.allocate.thread({
+      fixtureName,
+      projectId: yield* idAllocator.allocate.project({ fixtureName }),
+    });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const otherProviderSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const pendingBackgroundTasks = [
+      { taskId: "dev-server", kind: "command", description: "python3 -m http.server" },
+    ] as const;
+    const providerThreads = [
+      {
+        ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+        pendingBackgroundTasks,
+      },
+      {
+        ...makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId: otherProviderSessionId,
+          now,
+          nativeThreadId: "native-thread-other-session",
+        }),
+        pendingBackgroundTasks,
+      },
+    ];
+    const writeProviderThread = (payload: OrchestrationV2ProviderThread) =>
+      Effect.gen(function* () {
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload,
+            },
+          ],
+        });
+      });
+    yield* eventSink.write({
+      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+    });
+    yield* Effect.forEach(providerThreads, writeProviderThread);
+    yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    // The task ids each seeded provider thread lists now.
+    const rosters = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return providerThreads.map((seeded) =>
+        (
+          projection.providerThreads.find((thread) => thread.id === seeded.id)
+            ?.pendingBackgroundTasks ?? []
+        ).map((task) => task.taskId),
+      );
+    });
+    return { threadId, providerSessionId, providerThreads, writeProviderThread, rosters };
+  });
+
+it.effect(
+  "ProviderSessionManagerV2 clears the background roster of a session a detach releases",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { threadId, providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+          "provider-session-manager-detach-roster",
+        );
+        assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+
+        // Settle and archive detach the thread, which releases an exclusive
+        // (Claude-like) session.
+        yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
+
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 clears the background roster of an idle-released session", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-idle-roster",
+      );
+      assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks can outlive it", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-outliving-roster",
+      );
+
+      // Like OpenCode, whose background subagents run on a shared server.
+      yield* manager.close(providerSessionId);
+
+      assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, backgroundTasksEndWithProcess: false }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps background tasks a replacement reports during release",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, providerThreads, writeProviderThread, rosters } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-replacement-roster");
+        const release = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+
+        // While the old process closes, a replacement session with the same id
+        // reports a task of its own next to the dead one.
+        yield* Deferred.await(scopeCloseReached);
+        yield* writeProviderThread({
+          ...providerThreads[0]!,
+          pendingBackgroundTasks: [
+            ...providerThreads[0]!.pendingBackgroundTasks,
+            { taskId: "replacement-task", kind: "command" },
+          ],
+        });
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(release);
+
+        assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps a provider update that lands while release clears", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, providerThreads, writeProviderThread, rosters } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
+      // A replacement reports a task after cleanup read the row, before it
+      // writes, without moving updatedAt (not every writer does).
+      const seeded = providerThreads[0]!;
+      yield* Ref.set(
+        beforeUnchangedWrite,
+        writeProviderThread({
+          ...seeded,
+          pendingBackgroundTasks: [
+            ...seeded.pendingBackgroundTasks,
+            { taskId: "replacement-task", kind: "command" },
+          ],
+        }).pipe(Effect.orDie),
+      );
+
+      yield* manager.close(providerSessionId);
+
+      assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -2771,6 +3108,73 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
       yield* TestClock.adjust("1 second");
       yield* Effect.yieldNow;
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          maxIdlePinMs: 3000,
+          hasPendingBackgroundWork: Effect.succeed(true),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps pinned work that reports progress", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-pin-progress",
+        projectId: yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-pin-progress",
+        }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+      const step = (duration: Parameters<typeof TestClock.adjust>[0]) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust(duration);
+          for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+        });
+
+      // A long workflow keeps reporting progress well past the pin cap.
+      for (let tick = 0; tick < 12; tick += 1) {
+        yield* step("1500 millis");
+        yield* Queue.offer(adapterQueue!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+      }
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      // Work that goes silent past the cap is still stopped.
+      for (let tick = 0; tick < 6; tick += 1) {
+        yield* step("1 second");
+      }
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
 

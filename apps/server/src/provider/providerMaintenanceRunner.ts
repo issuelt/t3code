@@ -7,7 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -103,8 +103,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // The Effect child-process spawner does not consistently perform PATH
         // lookup for maintenance commands on every host, which can otherwise
         // fail before npm has a chance to initialize or write its debug log.
-        const platform = yield* HostProcessPlatform;
-        const hostEnvironment = yield* HostProcessEnvironment;
+        const platform = yield* HostProcess.Platform;
+        const hostEnvironment = yield* HostProcess.Environment;
         const resolveExecutable = yield* SpawnExecutableResolution;
         const executable =
           resolveExecutable(input.command, platform, hostEnvironment) ?? input.command;

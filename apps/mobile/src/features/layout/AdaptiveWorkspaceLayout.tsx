@@ -23,7 +23,9 @@ import {
   type ReactNode,
 } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
+import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -32,6 +34,7 @@ import Animated, {
 import { AsyncResult } from "effect/reactivity";
 
 import {
+  ANDROID_LIST_PANE_MIN_WIDTH,
   deriveFileInspectorPaneLayout,
   deriveLayout,
   deriveWorkspacePaneLayout,
@@ -45,6 +48,7 @@ import {
   resolveThreadSelectionOverlayState,
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -54,7 +58,8 @@ import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
-import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
+import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
+import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -65,6 +70,8 @@ import {
   NativeWorkspaceModeContext,
   NativeWorkspaceInspectorContext,
 } from "../../native/v5-workspace-context";
+
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -87,6 +94,13 @@ interface AdaptiveWorkspaceContextValue {
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
+  /**
+   * Android split view while the thread composer has the soft keyboard: the
+   * sidebar steps aside and the thread header drops to one line.
+   */
+  readonly composerKeyboardActive: boolean;
+  /** The thread composer reports its focus so the layout can make room for typing. */
+  readonly setComposerEditing: (editing: boolean) => void;
 }
 
 const compactLayout = deriveLayout({ width: 0, height: 0 });
@@ -113,6 +127,8 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
+  composerKeyboardActive: false,
+  setComposerEditing: () => undefined,
 });
 
 export function useAdaptiveWorkspaceLayout(): AdaptiveWorkspaceContextValue {
@@ -209,6 +225,7 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
+  readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -224,6 +241,7 @@ export function AdaptiveWorkspaceLayout(props: {
     <AdaptiveWorkspaceLayoutContent
       {...props}
       projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+      savedThreadListFilters={preferencesResult.value.threadListFilters}
     />
   );
 }
@@ -233,18 +251,23 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
+    readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly savedThreadListFilters?: ThreadListFilters | undefined;
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
-  const { width, height } = useWindowDimensions();
+  const windowDimensions = useWindowDimensions();
+  const nativeMetrics = useNativeLayoutMetrics();
+  const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
+  const [composerEditing, setComposerEditing] = useState(false);
+  const softKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
     number | null
@@ -256,8 +279,22 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const baseLayout = useMemo(() => deriveLayout({ width, height }), [height, width]);
-  const layout = baseLayout;
+  const layout = useMemo(
+    () =>
+      deriveLayout({
+        width: viewportWidth,
+        height,
+        nativeMetrics,
+        listPaneMinWidth: Platform.OS === "android" ? ANDROID_LIST_PANE_MIN_WIDTH : undefined,
+      }),
+    [height, viewportWidth, nativeMetrics],
+  );
+  // Keyed on the soft keyboard, not focus alone: a hardware keyboard leaves room
+  // for the sidebar, and Back closes the keyboard while the editor keeps focus.
+  const composerKeyboardActive =
+    Platform.OS === "android" && layout.usesSplitView && composerEditing && softKeyboardVisible;
+  const showPrimarySidebar =
+    pathname === "/" || (primarySidebarPreferredVisible && !composerKeyboardActive);
   // In split layouts the sidebar IS the thread list — it renders on every
   // route, including Home (which shows an empty-detail pane instead of the
   // compact list).
@@ -266,12 +303,20 @@ function AdaptiveWorkspaceLayoutContent(
     () =>
       deriveFileInspectorPaneLayout({
         layout,
-        viewportWidth: width,
+        viewportWidth,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar ? (layout.listPaneWidth ?? 0) : 0,
+          shouldRenderPrimarySidebar && showPrimarySidebar
+            ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+            : 0,
       }),
-    [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
+    [
+      fileInspectorPreferredWidth,
+      layout,
+      showPrimarySidebar,
+      shouldRenderPrimarySidebar,
+      viewportWidth,
+    ],
   );
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
@@ -287,7 +332,7 @@ function AdaptiveWorkspaceLayoutContent(
     () =>
       deriveWorkspacePaneLayout({
         layout,
-        viewportWidth: width,
+        viewportWidth,
         primarySidebarPreferredVisible: showPrimarySidebar,
         auxiliaryPanePreferredVisible,
         auxiliaryPaneRole,
@@ -299,7 +344,7 @@ function AdaptiveWorkspaceLayoutContent(
       auxiliaryPanePreferredWidth,
       layout,
       showPrimarySidebar,
-      width,
+      viewportWidth,
     ],
   );
   const activeThread = parseActiveThreadPath(pathname);
@@ -359,19 +404,30 @@ function AdaptiveWorkspaceLayoutContent(
     if (pathname === "/") {
       return;
     }
+    // The sidebar returns with the keyboard; keep the user's preference intact.
+    if (composerKeyboardActive) {
+      void KeyboardController.dismiss();
+      return;
+    }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
       setPrimarySidebarPreferredVisible(true);
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible, pathname]);
+  }, [
+    composerKeyboardActive,
+    panes.primarySidebarSuppressedByAuxiliary,
+    panes.primarySidebarVisible,
+    pathname,
+  ]);
   const revealPrimarySidebar = useCallback(() => {
+    if (composerKeyboardActive) void KeyboardController.dismiss();
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
     setPrimarySidebarPreferredVisible(true);
-  }, [panes.primarySidebarSuppressedByAuxiliary]);
+  }, [composerKeyboardActive, panes.primarySidebarSuppressedByAuxiliary]);
   const handleToggleSidebarCommand = useCallback(() => {
     togglePrimarySidebar();
     return true;
@@ -469,16 +525,79 @@ function AdaptiveWorkspaceLayoutContent(
     [navigation],
   );
 
+  const inspectorColumnTargetWidth =
+    workspaceInspector !== null && workspaceInspector.active && panes.auxiliaryPaneVisible
+      ? (panes.auxiliaryPaneWidth ?? 0)
+      : 0;
+  const contentTargetWidth = layout.usesSplitView
+    ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth)
+    : null;
+  const [contentSizing, setContentSizing] = useState({
+    viewportWidth,
+    target: contentTargetWidth,
+    sidebarVisible: panes.primarySidebarVisible,
+    width: contentTargetWidth,
+    revision: 0,
+  });
+  if (
+    Platform.OS === "android" &&
+    (contentSizing.viewportWidth !== viewportWidth ||
+      contentSizing.target !== contentTargetWidth ||
+      contentSizing.sidebarVisible !== panes.primarySidebarVisible)
+  ) {
+    const openingSidebar =
+      Platform.OS === "android" &&
+      contentSizing.viewportWidth === viewportWidth &&
+      !contentSizing.sidebarVisible &&
+      panes.primarySidebarVisible &&
+      contentSizing.width !== null &&
+      contentTargetWidth !== null;
+    setContentSizing({
+      viewportWidth,
+      target: contentTargetWidth,
+      sidebarVisible: panes.primarySidebarVisible,
+      // Clip the wide navigator during expansion, then reflow once at the end.
+      // Narrowing it first exposes an empty strip before the sidebar arrives.
+      width: openingSidebar
+        ? Math.max(contentSizing.width ?? 0, contentTargetWidth ?? 0)
+        : contentTargetWidth,
+      revision: contentSizing.revision + 1,
+    });
+  }
+  const settleContentWidth = useCallback((revision: number) => {
+    setContentSizing((current) =>
+      current.revision !== revision || current.width === current.target
+        ? current
+        : { ...current, width: current.target },
+    );
+  }, []);
+  const contentSettledWidth = Platform.OS === "android" ? contentSizing.width : contentTargetWidth;
+  const contentRevision = contentSizing.revision;
+
   const renderedSidebarWidth = useSharedValue(
-    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
+    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
   );
   useEffect(() => {
     if (nativeWorkspace) return;
-    const targetWidth = panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0;
-    renderedSidebarWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
-  }, [nativeWorkspace, layout.listPaneWidth, panes.primarySidebarVisible, renderedSidebarWidth]);
+    const targetWidth = panes.primarySidebarVisible
+      ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+      : 0;
+    renderedSidebarWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING, (finished) => {
+      if (finished && Platform.OS === "android") runOnJS(settleContentWidth)(contentRevision);
+    });
+  }, [
+    nativeWorkspace,
+    layout.listPaneWidth,
+    layout.listPaneGap,
+    panes.primarySidebarVisible,
+    renderedSidebarWidth,
+    settleContentWidth,
+    contentRevision,
+  ]);
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, renderedSidebarWidth.value / 80),
+    // Fading a UIKit glass ancestor can leave remounted header effects missing.
+    // The clipped width already reveals and hides the iOS sidebar.
+    opacity: Platform.OS === "ios" ? 1 : Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,
   }));
 
@@ -488,24 +607,24 @@ function AdaptiveWorkspaceLayoutContent(
   // animating columns merely clip/reveal it over a matching background.
   // Continuously re-wrapping the chat feed was the main source of dropped
   // frames during sidebar/inspector transitions.
-  const inspectorColumnTargetWidth =
-    workspaceInspector !== null && workspaceInspector.active && panes.auxiliaryPaneVisible
-      ? (panes.auxiliaryPaneWidth ?? 0)
-      : 0;
-  const contentSettledWidth = layout.usesSplitView
-    ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth)
-    : null;
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
   const renderedContentWidth = useDerivedValue(() =>
-    Math.max(0, width - renderedSidebarWidth.value - renderedInspectorWidth.value),
+    Math.max(0, viewportWidth - renderedSidebarWidth.value - renderedInspectorWidth.value),
   );
 
+  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       const params = {
         environmentId: String(thread.environmentId),
         threadId: String(thread.id),
       };
+      if (Platform.OS === "android") {
+        // Selecting a sidebar row enters its base chat, including from that chat's nested screens.
+        setFileInspectorPreferredVisible(false);
+        selectAndroidWorkspace({ name: "Thread", params });
+        return;
+      }
       const navigationAction = resolveThreadSelectionNavigationAction({
         usesSplitView: layout.usesSplitView,
         pathname,
@@ -537,7 +656,14 @@ function AdaptiveWorkspaceLayoutContent(
       }
       navigation.navigate("Thread", params);
     },
-    [layout.usesSplitView, pathname, navigation, selectedThreadKey, props.workspaceRouteKey],
+    [
+      layout.usesSplitView,
+      pathname,
+      navigation,
+      selectedThreadKey,
+      props.workspaceRouteKey,
+      selectAndroidWorkspace,
+    ],
   );
 
   const contextValue = useMemo(
@@ -554,9 +680,12 @@ function AdaptiveWorkspaceLayoutContent(
       toggleAuxiliaryPane,
       togglePrimarySidebar,
       setAuxiliaryPaneWidth,
+      composerKeyboardActive,
+      setComposerEditing,
     }),
     [
       activateAuxiliaryPaneRole,
+      composerKeyboardActive,
       fileInspector,
       handleSelectThread,
       layout,
@@ -573,7 +702,10 @@ function AdaptiveWorkspaceLayoutContent(
 
   if (nativeWorkspace) {
     return (
-      <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+      <HomeListOptionsProvider
+        projectGroupingMode={projectGroupingMode}
+        savedFilters={props.savedThreadListFilters}
+      >
         <AdaptiveWorkspaceContext value={contextValue}>
           <NativeWorkspaceInspectorContext
             value={{ render: workspaceInspector?.render, visible: inspectorColumnTargetWidth > 0 }}
@@ -585,9 +717,15 @@ function AdaptiveWorkspaceLayoutContent(
     );
   }
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider
+      projectGroupingMode={projectGroupingMode}
+      savedFilters={props.savedThreadListFilters}
+    >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
+        <View
+          testID="adaptive-workspace-layout"
+          className={Platform.OS === "android" ? "flex-1 flex-row bg-header" : "flex-1 flex-row"}
+        >
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
             <Animated.View
               className="self-stretch overflow-hidden"
@@ -609,7 +747,10 @@ function AdaptiveWorkspaceLayoutContent(
                     />
                   )}
                 >
-                  <AndroidHomeFabLayout sidebar onStartNewTask={handleStartNewTask}>
+                  <AndroidWorkspaceSidebar
+                    onRequestVisibility={revealPrimarySidebar}
+                    selectedPullRequestKey={props.selectedPullRequestKey ?? null}
+                  >
                     <ThreadNavigationSidebar
                       width={layout.listPaneWidth}
                       visible={panes.primarySidebarVisible}
@@ -621,9 +762,10 @@ function AdaptiveWorkspaceLayoutContent(
                       onNewThreadOnBranch={handleNewThreadOnBranch}
                       onSelectThread={handleSelectThread}
                       onSearchQueryChange={setPrimarySidebarSearchQuery}
+                      onStartNewTask={handleStartNewTask}
                       searchQuery={primarySidebarSearchQuery}
                     />
-                  </AndroidHomeFabLayout>
+                  </AndroidWorkspaceSidebar>
                 </RenderErrorBoundary>
               </View>
             </Animated.View>

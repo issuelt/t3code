@@ -3,6 +3,8 @@ import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
 /** Inset of the card from the canvas edges; the find bar shares it to line up. */
 export const THREAD_DETAILS_CARD_GAP = 12;
+// Keep in sync with --thread-details-panel-width, which sizes the popover and the find bar.
+const THREAD_DETAILS_CARD_WIDTH = 280;
 
 export function resolveThreadDetailsCardDensity(
   height: number,
@@ -32,13 +34,12 @@ export function resolveThreadDetailsCardLayout({
   topInset?: number;
 }) {
   const gap = THREAD_DETAILS_CARD_GAP;
-  // Keep in sync with --thread-details-panel-width, which sizes the popover.
-  const width = 280;
+  const width = THREAD_DETAILS_CARD_WIDTH;
   const x = container.width - width - gap;
   if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
   const y = gap + topInset;
   const densityHeight = container.height - y - gap;
-  // The player limits the viewport height, never which controls it shows.
+  // The player limits how tall the card's viewport is, never which controls it shows.
   const height =
     overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
       ? Math.min(densityHeight, frame.y - y - gap)
@@ -46,6 +47,7 @@ export function resolveThreadDetailsCardLayout({
   if (height < 160) return null;
   return {
     x,
+    right: gap,
     width,
     y,
     height,

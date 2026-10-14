@@ -30,6 +30,7 @@ export function AndroidHeaderIconButton(props: {
 
 export function AndroidScreenHeader(props: {
   readonly title: string;
+  readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly leading?: ReactNode;
@@ -37,11 +38,14 @@ export function AndroidScreenHeader(props: {
   readonly onBack?: () => void;
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
+  /** One row: the subtitle follows the title, for screens short on height. */
+  readonly compact?: boolean;
 }) {
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
   const { height: materialToolbarHeight, ...headerPadding } = useMaterialToolbarLayout(
     props.embedded,
+    props.compact,
   );
   const [headerWidth, setHeaderWidth] = useState(0);
   const actions = props.actions ?? [];
@@ -70,15 +74,30 @@ export function AndroidScreenHeader(props: {
 
         {props.leading}
 
-        <View className={cn("min-w-0 flex-1", !props.onBack && "pl-1")}>
-          <Text numberOfLines={1} style={titleTypography} className="text-header-foreground">
-            {props.title}
-          </Text>
+        <View
+          className={cn(
+            "min-w-0 flex-1",
+            !props.onBack && "pl-1",
+            props.compact && "flex-row items-baseline gap-2",
+          )}
+        >
+          {props.titleContent ?? (
+            <Text
+              numberOfLines={1}
+              style={titleTypography}
+              className={cn("text-header-foreground", props.compact && "shrink")}
+            >
+              {props.title}
+            </Text>
+          )}
           {props.subtitle ? (
             <Text
               numberOfLines={1}
               style={subtitleTypography}
-              className="mt-px text-[13px] font-t3-medium text-foreground-muted"
+              className={cn(
+                "text-[13px] font-t3-medium text-foreground-muted",
+                props.compact ? "shrink-[2]" : "mt-px",
+              )}
             >
               {props.subtitle}
             </Text>

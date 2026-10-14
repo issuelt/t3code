@@ -40,6 +40,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  pullRequestMatchesSearchQuery,
   searchSidebarThreads,
   shouldClearThreadSelectionOnMouseDown,
   shouldShowSidebarV2Duration,
@@ -444,6 +445,25 @@ describe("sidebar thread lineage helpers", () => {
         new Set([`${environmentId}:${projectId}`]),
       ).map((thread) => thread.id),
     ).toEqual([parentId, fork.id]);
+  });
+
+  it("hides only the current Home thread, which has its own row", () => {
+    const environmentId = EnvironmentId.make("environment-primary");
+    const otherEnvironmentId = EnvironmentId.make("environment-remote");
+    const homeThreadId = ThreadId.make("home:current");
+    const current = makeThreadFixture({ id: homeThreadId, environmentId });
+    const older = makeThreadFixture({ id: ThreadId.make("home:older"), environmentId });
+    const sameIdElsewhere = makeThreadFixture({
+      id: homeThreadId,
+      environmentId: otherEnvironmentId,
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads([current, older, sameIdElsewhere], null, {
+        environmentId,
+        threadId: homeThreadId,
+      }).map((thread) => `${thread.environmentId}:${thread.id}`),
+    ).toEqual([`${environmentId}:home:older`, `${otherEnvironmentId}:${homeThreadId}`]);
   });
 
   it("identifies subagent threads so the sidebar can hide them", () => {
@@ -991,6 +1011,27 @@ describe("resolveSidebarThreadStatus", () => {
   it("keeps Waiting static while Working shows elapsed duration", () => {
     expect(shouldShowSidebarV2Duration("waiting")).toBe(false);
     expect(shouldShowSidebarV2Duration("working")).toBe(true);
+  });
+});
+
+describe("pullRequestMatchesSearchQuery", () => {
+  const branchPullRequest = {
+    projectId: ProjectId.make("project"),
+    repository: "pingdotgg/t3code",
+    number: 123,
+    url: "https://github.com/pingdotgg/t3code/pull/123",
+  };
+
+  it("matches when every query token appears in the PR's terms", () => {
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "123")).toBe(true);
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "pingdotgg/t3code #123")).toBe(
+      true,
+    );
+  });
+
+  it("rejects queries with a token the PR does not carry, and blank queries", () => {
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "rebase 123")).toBe(false);
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "   ")).toBe(false);
   });
 });
 

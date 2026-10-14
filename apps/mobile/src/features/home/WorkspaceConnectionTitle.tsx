@@ -1,7 +1,8 @@
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Animated, Platform, Pressable, View } from "react-native";
+import { Animated, Platform, Pressable, View } from "react-native";
 
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
@@ -103,6 +104,8 @@ export function WorkspaceConnectionTitle(props: {
   readonly statusOffset?: number;
   /** Space available beside the native header actions. */
   readonly maxWidth?: number;
+  /** Show only the status icon; the label stays as its accessibility label. */
+  readonly iconOnly?: boolean;
 }) {
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
@@ -134,7 +137,7 @@ export function WorkspaceConnectionTitle(props: {
         ]}
       >
         {status.showsProgress ? (
-          <ActivityIndicator
+          <AppActivityIndicator
             colorClassName={"accent-icon-muted"}
             size={Platform.OS === "android" ? Math.round(20 * scale) : "small"}
           />
@@ -146,13 +149,15 @@ export function WorkspaceConnectionTitle(props: {
             type="monochrome"
           />
         )}
-        <Text
-          className="font-t3-bold text-foreground-muted"
-          numberOfLines={1}
-          style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
-        >
-          {status.label}
-        </Text>
+        {props.iconOnly ? null : (
+          <Text
+            className="font-t3-bold text-foreground-muted"
+            numberOfLines={1}
+            style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
+          >
+            {status.label}
+          </Text>
+        )}
       </Pressable>
     </StatusFadeIn>
   );

@@ -394,6 +394,8 @@ export interface ProviderAdapterV2OpenSessionInput {
 
 export interface ProviderAdapterV2EnsureThreadInput {
   readonly threadId: ThreadId;
+  /** The app thread's title, for providers that name their native sessions. */
+  readonly title?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly providerSessionId?: ProviderSessionId;
@@ -529,6 +531,13 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+/** A terminal task outcome observed by the provider, not inferred from a stop timeout. */
+export type ProviderAdapterV2SubagentOutcome = {
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
+  readonly result: OrchestrationV2Subagent["result"];
+};
+
 export interface ProviderAdapterV2SessionRuntime {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
@@ -556,6 +565,14 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
+  /**
+   * Set when every background task this session lists on its provider threads
+   * runs inside the session's own process and ends when it closes. The session
+   * manager then clears those tasks when it releases the session (#15239).
+   * Leave unset when a task can outlive the session, for example on a shared
+   * server, so its thread keeps showing Waiting.
+   */
+  readonly backgroundTasksEndWithProcess?: true;
   /**
    * Capacity for the requested model/options, independent of native thread usage.
    * `cwd` is the thread's working directory, for providers whose project config
@@ -593,9 +610,20 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly stopTask?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly taskId: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Stops one native child through its owning runtime; the owner keeps running. */
+  readonly stopSubagent?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly nativeTaskId: string;
+    /** A delayed Stop must not interrupt a task resumed after this request. */
+    readonly requestedAt?: NonNullable<OrchestrationV2Subagent["startedAt"]>;
+  }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
   /**
    * Lets a runtime shared by several app threads unload one provider thread's
    * native state (and its MCP servers) when that app thread detaches, while

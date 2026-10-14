@@ -36,7 +36,8 @@ import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshot
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -116,9 +117,21 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   return Exit.isSuccess(result) ? result.value : undefined;
 }
 
+/**
+ * Formats OpenCode SDK and runtime failures, including errors with missing or
+ * non-string messages.
+ */
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
   if (isOpenCodeRuntimeError(cause)) return cause.detail;
-  if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
+  // Effect's TimeoutError can be constructed without a message, so `message`
+  // is not guaranteed to be a string on every Error that reaches here.
+  if (cause instanceof Error) {
+    const message = cause.message;
+    if (typeof message === "string") {
+      const trimmedMessage = message.trim();
+      if (trimmedMessage.length > 0) return trimmedMessage;
+    }
+  }
   if (cause && typeof cause === "object") {
     // SDK v2 throws { response, request, error? } shapes — extract what's useful
     const anyCause = cause as Record<string, unknown>;
@@ -456,7 +469,9 @@ export function openCodeQuestionId(
  * else (ZIP, binaries, image formats like BMP/AVIF/SVG that model APIs
  * reject, or files over the direct-attachment size limit) would make the turn
  * fail before it starts, so those ride only as the file path ProviderService
- * puts in the prompt.
+ * puts in the prompt. Text is native only as text/plain, which OpenCode reads
+ * itself; other text types (HTML, Markdown, CSV) reach the model API as raw
+ * file parts, which Anthropic and OpenAI reject.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
@@ -471,7 +486,7 @@ function isOpenCodeNativeFilePart(input: {
   const normalized = input.mimeType.trim().toLowerCase();
   return (
     OPENCODE_NATIVE_IMAGE_MIMES.has(normalized) ||
-    normalized.startsWith("text/") ||
+    normalized === "text/plain" ||
     normalized === "application/pdf"
   );
 }
@@ -595,8 +610,9 @@ function ensureRuntimeError(
 const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
+  const agentScope = yield* AgentScope;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, env ? { env } : {});
 
@@ -693,7 +709,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
-      const spawnCommand = yield* resolveCommand(input.binaryPath, args, input.environment);
+      // One server runs every session of the instance, so its scope has no thread.
+      const launch = yield* agentScope.wrap({
+        command: input.binaryPath,
+        args,
+        name: "opencode",
+        env: input.environment,
+      });
+      const spawnCommand = yield* resolveCommand(launch.command, launch.args, input.environment);
       const serverPassword = resolveOpenCodeServerPassword({
         external: false,
         ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),

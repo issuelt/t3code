@@ -1,5 +1,12 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
-import { Extension, InputRule, Node, wrappingInputRule, type JSONContent } from "@tiptap/core";
+import {
+  Extension,
+  findChildren,
+  InputRule,
+  Node,
+  wrappingInputRule,
+  type JSONContent,
+} from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -31,12 +38,14 @@ import {
   use,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -45,6 +54,7 @@ import {
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  pastedPathQueryLength,
 } from "~/composer-logic";
 import {
   collectComposerPromptInlineTokens,
@@ -65,6 +75,7 @@ import {
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
@@ -90,6 +101,7 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
+import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -105,6 +117,7 @@ import {
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
+import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
@@ -129,6 +142,11 @@ export interface ComposerPromptEditorHandle {
    * text.
    */
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
+  /**
+   * Briefly highlights a range of the prompt, in the same Markdown offsets as
+   * `readSelectionRange`, so inserted text such as a dictation is easy to spot.
+   */
+  flashRange: (range: { start: number; end: number }) => void;
 }
 
 export interface ComposerPromptEditorProps {
@@ -155,11 +173,15 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  /** Shown after the placeholder text, such as the key that uses a suggestion. */
+  placeholderHint?: ReactNode | undefined;
   ariaLabel?: string | undefined;
   /** Identifies an editor with suggestions, even while its list is closed. */
   suggestionListId?: string | undefined;
   /** References the highlighted option only while its list is rendered. */
   activeSuggestionId?: string | undefined;
+  /** Reads suggestion state at paste time, including Escape dismissal. */
+  isPathQueryActive?: () => boolean;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -176,6 +198,12 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
   onCitationSubmitAndSend?: () => void;
+  /**
+   * Called when a new controlled value replaces the document while a citation
+   * comment is unsaved. The comment is saved into `replacedValue`, giving
+   * `savedValue`, so the owner of `replacedValue` can keep it.
+   */
+  onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -200,8 +228,14 @@ type OpenCitationComment = {
 const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
+  onDraftChange: (citeKey: string, comment: string) => void;
   onSubmitAndSend: () => void;
-}>({ openComment: null, onOpenChange: () => {}, onSubmitAndSend: () => {} });
+}>({
+  openComment: null,
+  onOpenChange: () => {},
+  onDraftChange: () => {},
+  onSubmitAndSend: () => {},
+});
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
 
@@ -270,6 +304,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     >
       <FileTagChipContent
         path={path}
+        environmentId={actions.environmentId}
+        cwd={actions.cwd}
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
@@ -279,7 +315,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup side="top">{path}</TooltipPopup>
+        <TooltipPopup side="top">
+          <WorkspaceEntryTooltip
+            path={path}
+            environmentId={actions.environmentId}
+            cwd={actions.cwd}
+          />
+        </TooltipPopup>
       </Tooltip>
     </NodeViewWrapper>
   );
@@ -460,6 +502,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           },
           ...(removeOnCancel ? { onCancel: onRemove } : {}),
           onSave: onSaveComment,
+          onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
             commentContext.onSubmitAndSend();
@@ -761,10 +804,35 @@ function decorationsForSelection(state: EditorState): DecorationSet {
   return DecorationSet.create(doc, decorations);
 }
 
+const FlashPluginKey = new PluginKey<DecorationSet>("composer-flash");
+/** Matches the `composer-flash` keyframes in index.css. */
+const FLASH_DURATION_MS = 900;
+
+/** Holds one short-lived highlight, set and cleared through transaction meta. */
+const ComposerFlashPlugin = new Plugin<DecorationSet>({
+  key: FlashPluginKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, old) => {
+      const meta = tr.getMeta(FlashPluginKey) as { from: number; to: number } | null | undefined;
+      if (meta === null) return DecorationSet.empty;
+      if (meta) {
+        return DecorationSet.create(tr.doc, [
+          Decoration.inline(meta.from, meta.to, { class: "composer-flash" }),
+        ]);
+      }
+      return old.map(tr.mapping, tr.doc);
+    },
+  },
+  props: {
+    decorations: (state) => FlashPluginKey.getState(state),
+  },
+});
+
 const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
   addProseMirrorPlugins() {
-    return [ComposerMarkerPlugin];
+    return [ComposerMarkerPlugin, ComposerFlashPlugin];
   },
 });
 
@@ -817,9 +885,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    placeholderHint,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
+    isPathQueryActive,
     containerClassName,
     className,
     placeholderClassName,
@@ -830,6 +900,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     onPageScrollKeyUp,
     onPageScrollRelease,
     onCitationSubmitAndSend,
+    onCitationDraftSave,
     onPaste,
     editorRef,
   } = props;
@@ -855,6 +926,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
   const onCommandKeyDownRef = useRef(onCommandKeyDown);
+  const isPathQueryActiveRef = useRef(isPathQueryActive);
   const buildFragmentRef = useRef(buildContextClipboardFragment);
   const importFragmentRef = useRef(importContextFragment);
   const skillsRef = useRef(skills);
@@ -872,6 +944,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useEffect(() => {
     onCommandKeyDownRef.current = onCommandKeyDown;
   }, [onCommandKeyDown]);
+  useEffect(() => {
+    isPathQueryActiveRef.current = isPathQueryActive;
+  }, [isPathQueryActive]);
   useEffect(() => {
     buildFragmentRef.current = buildContextClipboardFragment;
   }, [buildContextClipboardFragment]);
@@ -907,16 +982,20 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     contextIds: literalText ? [] : collectInlineContextIds(value),
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
+  const flashTimerRef = useRef<number | null>(null);
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
+  // The open citation's unsaved comment, saved before a new value replaces the document.
+  const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
 
   const citationCommentActions = useMemo(
     () => ({
       openComment: openCitation,
       onOpenChange: (nodeKey: string, open: boolean) => {
+        if (!open && citationDraftRef.current?.key === nodeKey) citationDraftRef.current = null;
         setOpenCitation((current) => {
           if (open) {
             if (current?.key === nodeKey) return current;
@@ -924,6 +1003,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           return current?.key === nodeKey ? null : current;
         });
+      },
+      onDraftChange: (nodeKey: string, comment: string) => {
+        citationDraftRef.current = { key: nodeKey, comment };
       },
       onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
     }),
@@ -1412,6 +1494,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
             if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
           }
+          const { $from } = view.state.selection;
+          const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
+          const literalLength = literalText
+            ? 0
+            : pastedPathQueryLength(lineBefore, text, isPathQueryActiveRef.current?.());
           const editorInstance = editorHolder.current;
           if (editorInstance) {
             // Inside a list item or quote, pasted block markup has nowhere to
@@ -1424,7 +1511,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             insertMarkdownParagraphs(
               text,
               skillLabelFor,
-              { styling: richText, blocks: !nested, literalText },
+              { styling: richText, blocks: !nested, literalText, literalLength },
               (content) => {
                 // Tagged on the same transaction insertContent builds, so the
                 // paste is one undo step of its own.
@@ -1507,6 +1594,39 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     return next;
   }, [clampEditorCursor, editor, literalText]);
 
+  // A question or approval swaps the controlled value while a citation comment
+  // is open. Its node view unmounts with the old document, so save the comment
+  // the way dismissing the popover would, and hand the saved value back.
+  const saveCitationDraft = useEffectEvent((current: TiptapEditor, replacedValue: string) => {
+    const draft = citationDraftRef.current;
+    citationDraftRef.current = null;
+    if (!draft || !onCitationDraftSave) return;
+    const [target] = findChildren(
+      current.state.doc,
+      (node) => node.type.name === "composer-citation" && node.attrs.citeKey === draft.key,
+    );
+    if (!target) return;
+    const { node, pos } = target;
+    const citation = node.attrs.citation as AssistantCitation;
+    const dismissal = resolveAssistantCitationCommentDismissal({
+      reason: "none",
+      draft: draft.comment,
+      savedComment: citation.comment,
+    });
+    if (dismissal.kind !== "commit") return;
+    const next = withAssistantCitationComment(citation, dismissal.comment);
+    current.view.dispatch(
+      current.state.tr
+        .setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          citation: next,
+          source: serializeAssistantCitation(next),
+        })
+        .setMeta("addToHistory", false),
+    );
+    onCitationDraftSave(replacedValue, serializeEditorDoc(current.state.doc).value);
+  });
+
   // Controlled value/cursor from the store (history recall, chip insertion…).
   useLayoutEffect(() => {
     if (!editor) return;
@@ -1541,6 +1661,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     const pendingCitation =
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
     if (previousSnapshot.value !== value) {
+      saveCitationDraft(editor, previousSnapshot.value);
       editor.commands.setContent(
         buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
         {
@@ -1645,6 +1766,22 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       readSelectionRange: () => {
         readSnapshot();
         return selectionRangeRef.current;
+      },
+      flashRange: ({ start, end }) => {
+        if (!editor || end <= start) return;
+        const map = serializeEditorDoc(editor.state.doc);
+        const from = flatToPm(map, markdownToFlat(map, start));
+        const to = flatToPm(map, markdownToFlat(map, end));
+        if (to <= from) return;
+        editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, { from, to }));
+        // A newer flash replaces the old one, so its timer must not clear the newer one early.
+        if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = window.setTimeout(() => {
+          flashTimerRef.current = null;
+          if (!editor.isDestroyed) {
+            editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, null));
+          }
+        }, FLASH_DURATION_MS);
       },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
@@ -1796,6 +1933,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                 )}
               >
                 {placeholder}
+                {placeholderHint ? (
+                  <span className="ms-2 inline-flex align-middle">{placeholderHint}</span>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1815,7 +1955,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options: { styling: boolean; blocks?: boolean; literalText?: boolean },
+  options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);

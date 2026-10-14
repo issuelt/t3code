@@ -16,6 +16,7 @@ describe("workspace card", () => {
   it("pins to the top right at a fixed width", () => {
     expect(resolve(1600, 900)).toEqual({
       x: 1308,
+      right: 12,
       y: 12,
       width: 280,
       height: 876,
@@ -31,7 +32,7 @@ describe("workspace card", () => {
         frame: null,
         topInset: 48,
       }),
-    ).toEqual({ x: 1308, y: 60, width: 280, height: 828, densityHeight: 828 });
+    ).toEqual({ x: 1308, right: 12, y: 60, width: 280, height: 828, densityHeight: 828 });
   });
   it("hides when a readable chat lane cannot fit beside it", () => {
     expect(resolve(1012, 900)).toMatchObject({ x: 720 });
@@ -41,6 +42,7 @@ describe("workspace card", () => {
     for (const y of [12, 170, 250, 400, 648]) {
       expect(resolve(1600, 900, y)).toEqual({
         x: 1308,
+        right: 12,
         y: 12,
         width: 280,
         height: 876,

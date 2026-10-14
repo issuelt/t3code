@@ -127,9 +127,9 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
   }
 }
 
-// Covers the 120-second trial deadline and a final restart of the previous
-// version when the trial rolls back.
-const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(4);
+// Covers the service launcher's 30-minute trial deadline (PREPARED_TIMEOUT_MS)
+// and a final restart of the previous version when the trial rolls back.
+const SERVER_UPDATE_RESUME_TIMEOUT = Duration.minutes(32);
 
 export function matchesServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
@@ -983,6 +983,16 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    runStorageCleanup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-storage-cleanup",
+      tag: WS_METHODS.serverRunStorageCleanup,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    storageCleanupReport: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:storage-cleanup-report",
+      tag: WS_METHODS.serverGetStorageCleanupReport,
+      idleTtlMs: 0,
+    }),
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
@@ -1088,6 +1098,16 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
+    }),
+    /** Machines this environment may run task graph nodes on, with connection status. */
+    taskGraphPeersLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:task-graph-peers:live",
+      tag: WS_METHODS.taskGraphPeersSubscribe,
+    }),
+    /** A thread's task graphs: snapshot on subscribe, fresh list after every change. */
+    taskGraphsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:task-graphs:live",
+      tag: WS_METHODS.taskGraphsSubscribe,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
@@ -1321,6 +1341,48 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    addTaskGraphPeer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:add",
+      tag: WS_METHODS.taskGraphPeersAdd,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    removeTaskGraphPeer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:remove",
+      tag: WS_METHODS.taskGraphPeersRemove,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    issueTaskGraphPeerGrant: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:issue-grant",
+      tag: WS_METHODS.taskGraphPeersIssueGrant,
+    }),
+    setTaskGraphPeerWeight: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:set-weight",
+      tag: WS_METHODS.taskGraphPeersSetWeight,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    createTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:create",
+      tag: WS_METHODS.taskGraphsCreate,
+    }),
+    // One lane per graph so edits from the editor apply in the order they were made.
+    editTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:edit",
+      tag: WS_METHODS.taskGraphsEdit,
+      concurrency: { mode: "serial", key: ({ input }) => input.graphId },
+    }),
+    runTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:run",
+      tag: WS_METHODS.taskGraphsRun,
+      concurrency: { mode: "singleFlight", key: ({ input }) => input.graphId },
+    }),
+    cancelTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:cancel",
+      tag: WS_METHODS.taskGraphsCancel,
+      concurrency: { mode: "singleFlight", key: ({ input }) => input.graphId },
+    }),
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.
     answerSecretRequest: createEnvironmentRpcCommand(runtime, {
@@ -1339,6 +1401,10 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,
       },
+    }),
+    checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-otlp-endpoint",
+      tag: WS_METHODS.serverCheckOtlpEndpoint,
     }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
