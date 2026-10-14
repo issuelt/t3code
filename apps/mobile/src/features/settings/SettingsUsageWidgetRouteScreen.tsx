@@ -24,8 +24,8 @@ import {
   toggleWidgetSelection,
   type SubscriptionWidgetConfiguration,
 } from "../../widgets/subscriptionWidgetPreferences";
+import { ListRowLayout } from "../../components/ListRowLayout";
 import { SettingsActionRow } from "./components/SettingsActionRow";
-import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -54,36 +54,37 @@ function WidgetMenu<Value extends string>(props: {
   onChange: (value: Value) => void;
 }) {
   return (
-    <SettingsControlRow
+    <ListRowLayout
       icon="slider.horizontal.3"
       label={props.label}
-      subtitle={props.subtitle}
+      description={props.subtitle}
       disabled={props.disabled}
-    >
-      <ControlPillMenu
-        title={props.label}
-        actions={props.options.map((option) => ({
-          ...option,
-          state: option.id === props.value ? "on" : "off",
-        }))}
-        onPressAction={({ nativeEvent }) => {
-          if (props.disabled) return;
-          const option = props.options.find((option) => option.id === nativeEvent.event);
-          if (option) props.onChange(option.id);
-        }}
-      >
-        <Pressable
-          disabled={props.disabled}
-          accessibilityRole="button"
-          accessibilityLabel={props.subtitle ? `${props.subtitle} · ${props.label}` : props.label}
-          className="rounded-full bg-subtle px-3 py-2"
+      accessory={
+        <ControlPillMenu
+          title={props.label}
+          actions={props.options.map((option) => ({
+            ...option,
+            state: option.id === props.value ? "on" : "off",
+          }))}
+          onPressAction={({ nativeEvent }) => {
+            if (props.disabled) return;
+            const option = props.options.find((option) => option.id === nativeEvent.event);
+            if (option) props.onChange(option.id);
+          }}
         >
-          <Text className="text-sm text-foreground">
-            {props.options.find((option) => option.id === props.value)?.title}
-          </Text>
-        </Pressable>
-      </ControlPillMenu>
-    </SettingsControlRow>
+          <Pressable
+            disabled={props.disabled}
+            accessibilityRole="button"
+            accessibilityLabel={props.subtitle ? `${props.subtitle} · ${props.label}` : props.label}
+            className="rounded-full bg-subtle px-3 py-2"
+          >
+            <Text className="text-sm text-foreground">
+              {props.options.find((option) => option.id === props.value)?.title}
+            </Text>
+          </Pressable>
+        </ControlPillMenu>
+      }
+    />
   );
 }
 
