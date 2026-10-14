@@ -1,9 +1,4 @@
 /** Other clients own their workspace navigation chrome. */
-export function AndroidWorkspaceNavigation(_props: {
-  readonly rail?: boolean;
-  readonly onSelect?: () => void;
-}) {
+export function AndroidWorkspaceNavigation() {
   return null;
 }
-
-export const ANDROID_WORKSPACE_RAIL_WIDTH = 80;

@@ -14,7 +14,21 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  type DeviceOperationError,
+  EnvironmentHttpApi,
+  type RepositoryIdentity,
+  type ServerSettingsError,
+} from "@t3tools/contracts";
+import type * as Config from "effect/Config";
+import type * as Crypto from "effect/Crypto";
+import type * as FileSystem from "effect/FileSystem";
+import type * as HttpServerError from "effect/http/HttpServerError";
+import type * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as Migrator from "effect/sql/Migrator";
+import type * as SqlError from "effect/sql/SqlError";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -61,6 +75,7 @@ import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
+import * as PromptSuggestions from "./provider/PromptSuggestions.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProviderLoginManager from "./provider/ProviderLoginManager.ts";
@@ -126,6 +141,8 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import type * as SessionStore from "./auth/SessionStore.ts";
+import type * as InitializeV2Database from "./persistence/initializeV2Database.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
@@ -186,6 +203,10 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
+
+// Inferred here, before the deep route graph below, for the same reason as
+// `runServer`'s annotation: inferring it mid-graph widens it to `any`.
+const wsLayer = Ws.layer;
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
@@ -638,6 +659,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // hydration adds their default instances to `providerInstances` on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  Layer.provideMerge(PromptSuggestions.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       AntigravityInstallation.AntigravityInstallation.layer,
@@ -743,7 +765,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
-    Ws.layer,
+    wsLayer,
   ),
   // The MCP session registry is provided globally (shared with V2 provider
   // sessions) rather than inline here. The orchestrator toolkit resolves
@@ -1147,4 +1169,43 @@ const layerMakeServer = Layer.unwrap(
 ).pipe(Layer.provide(ProcessRunner.layer));
 
 // The CLI supplies configuration.
-export const runServer = Layer.launch(layerMakeServer);
+/**
+ * Spelled out so importers do not re-infer the whole server layer graph. The
+ * WebSocket RPC layer is large enough that inferring it from deep in the CLI
+ * import chain exceeds the checker's depth and silently widens to `any`.
+ */
+export type RunServerError =
+  | Config.ConfigError
+  | DesktopTelemetryReceiver.DesktopTelemetryStreamFailed
+  | DeviceOperationError
+  | Cause.IllegalArgumentError
+  | Migrator.MigrationError
+  | PlatformError.PlatformError
+  | ServerSecretStore.SecretStoreConcurrentReadError
+  | ServerSecretStore.SecretStoreDecodeError
+  | ServerSecretStore.SecretStoreEncodeError
+  | ServerSecretStore.SecretStorePersistError
+  | ServerSecretStore.SecretStoreRandomGenerationError
+  | ServerSecretStore.SecretStoreReadError
+  | ServerSecretStore.SecretStoreRemoveError
+  | ServerSecretStore.SecretStoreSecureError
+  | ServerSecretStore.SecretStoreTemporaryPathError
+  | HttpServerError.ServeError
+  | ServerOwnership.ServerAlreadyRunningError
+  | ServerEnvironment.ServerEnvironmentIdPersistenceError
+  | ServerOwnership.ServerOwnershipError
+  | ServerSettingsError
+  | ServiceLauncherClient.ServiceLauncherClientError
+  | SessionStore.SessionCredentialIssueError
+  | SqlError.SqlError
+  | InitializeV2Database.V2DatabaseImportError;
+
+export const runServer: Effect.Effect<
+  never,
+  RunServerError,
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | ServerConfig.ServerConfig
+> = Layer.launch(layerMakeServer);
