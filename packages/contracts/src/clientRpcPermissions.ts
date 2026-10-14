@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -47,6 +48,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.taskGraphsCreate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.taskGraphsEdit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.taskGraphsRun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.taskGraphsCancel]: AuthOrchestrationOperateScope,
+  // Pairing a peer stores a credential and lets this machine start work there.
+  [WS_METHODS.taskGraphPeersAdd]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.taskGraphPeersRemove]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.taskGraphPeersSetWeight]: AuthEnvironmentMaintainScope,
+  // The grant also needs every scope it hands out; the server checks that.
+  [WS_METHODS.taskGraphPeersIssueGrant]: AuthEnvironmentMaintainScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
