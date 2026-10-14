@@ -12,14 +12,20 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
-import { readCursorAccountUsage, type CursorAccountUsageReadResult } from "./accountUsage.ts";
+import {
+  readCursorAccountUsage,
+  readCursorCredential,
+  type CursorResolvedCredential,
+  type CursorAccountUsageReadResult,
+} from "./accountUsage.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
 
 export class CursorAccountReader extends Context.Service<
   CursorAccountReader,
   {
+    readonly resolve: (source: CursorCredentialSource) => Effect.Effect<CursorResolvedCredential>;
     readonly read: (
-      credentialSource: CursorCredentialSource,
+      credentialSource: CursorCredentialSource | CursorResolvedCredential,
       sinceMs: number,
       untilMs: number,
     ) => Effect.Effect<CursorAccountUsageReadResult>;
@@ -35,6 +41,10 @@ export const layer = Layer.effect(
       FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
     >();
     return CursorAccountReader.of({
+      resolve: (source) =>
+        readCursorCredential(source, CursorKeychain.freshAccessToken(keychain)).pipe(
+          Effect.provideContext(context),
+        ),
       // Only a Keychain login asks the Keychain. The dashboard reader turns
       // its outcome, a failure included, into the source's message.
       read: (credentialSource, sinceMs, untilMs) =>

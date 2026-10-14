@@ -1,3 +1,4 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeVM from "node:vm";
 import * as Schema from "effect/Schema";
 import { it as effectIt } from "@effect/vitest";
@@ -33,6 +34,98 @@ import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
 const encodePreviewManagerError = Schema.encodeSync(PreviewManager.PreviewManagerError);
 import * as PreviewPasskeys from "./Passkeys.ts";
+
+describe("copyToDownloads", () => {
+  effectIt.effect("preserves concurrent downloads with the same filename", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const downloads = directory + "/downloads";
+      yield* fs.makeDirectory(downloads);
+      const first = directory + "/first.csv";
+      const second = directory + "/second.csv";
+      yield* fs.writeFileString(first, "first export");
+      yield* fs.writeFileString(second, "second export");
+      const checked = yield* Deferred.make<void>();
+      let checks = 0;
+      const concurrentFs = FileSystem.FileSystem.of({
+        ...fs,
+        exists: (target) =>
+          target === downloads + "/export.csv"
+            ? Effect.gen(function* () {
+                checks += 1;
+                if (checks === 2) yield* Deferred.succeed(checked, undefined);
+                yield* Deferred.await(checked);
+                return false;
+              })
+            : fs.exists(target),
+      });
+      const targets = yield* Effect.all(
+        [
+          PreviewManager.copyToDownloads(downloads, first, "export.csv"),
+          PreviewManager.copyToDownloads(downloads, second, "export.csv"),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.provideService(FileSystem.FileSystem, concurrentFs));
+      expect((yield* fs.readDirectory(downloads)).sort()).toEqual(["export (1).csv", "export.csv"]);
+      const contents = yield* Effect.all([
+        fs.readFileString(downloads + "/export.csv"),
+        fs.readFileString(downloads + "/export (1).csv"),
+      ]);
+      expect(contents.sort()).toEqual(["first export", "second export"]);
+      expect(new Set(targets).size).toBe(2);
+    }).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, Path.layer)), Effect.scoped),
+  );
+  effectIt.effect("leaves existing downloads intact when all 100 names are occupied", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const downloads = directory + "/downloads";
+      yield* fs.makeDirectory(downloads);
+      const source = directory + "/source.csv";
+      yield* fs.writeFileString(source, "new export");
+      yield* Effect.forEach(
+        Array.from({ length: 100 }, (_, attempt) => attempt),
+        (attempt) =>
+          fs.writeFileString(
+            downloads + (attempt === 0 ? "/export.csv" : "/export (" + attempt + ").csv"),
+            "existing export",
+          ),
+      );
+      const exit = yield* Effect.exit(
+        PreviewManager.copyToDownloads(downloads, source, "export.csv"),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          cause: { code: "EEXIST" },
+        });
+      }
+      expect(yield* fs.readDirectory(downloads)).toHaveLength(100);
+      const contents = yield* Effect.forEach(yield* fs.readDirectory(downloads), (name) =>
+        fs.readFileString(downloads + "/" + name),
+      );
+      expect(new Set(contents)).toEqual(new Set(["existing export"]));
+    }).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, Path.layer)), Effect.scoped),
+  );
+
+  effectIt.effect("preserves non-collision copy errors without creating a download", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const exit = yield* Effect.exit(
+        PreviewManager.copyToDownloads(directory, directory + "/missing.csv", "export.csv"),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+          cause: { code: "ENOENT" },
+        });
+      }
+      expect(yield* fs.readDirectory(directory)).toEqual([]);
+    }).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, Path.layer)), Effect.scoped),
+  );
+});
 
 describe("fitPictureInPictureContentSize", () => {
   it("preserves the PiP content area across aspect-ratio changes", () => {

@@ -3,6 +3,8 @@ import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -12,6 +14,12 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.providerLoginWrite]: AuthProvidersManageScope,
+  [WS_METHODS.providerLoginResize]: AuthProvidersManageScope,
+  [WS_METHODS.providerLoginCancel]: AuthProvidersManageScope,
+  [WS_METHODS.previewCloneInvoke]: AuthPreviewOperateScope,
+  [WS_METHODS.previewAutomationRespond]: AuthPreviewOperateScope,
+  [WS_METHODS.previewAutomationFocusHost]: AuthPreviewOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Endpoint checks exist to configure exports, so they need the same grant as saving them.
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,

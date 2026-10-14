@@ -5,6 +5,10 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.copyFile has no exclusive-copy flag.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- COPYFILE_EXCL atomically prevents replacement by concurrent writers.
+import * as NodeFSP from "node:fs/promises";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
@@ -501,6 +505,7 @@ interface ExpectedAgentInput {
   readonly expiresAt: number;
 }
 type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<void>;
+
 /**
  * Protocols a preview page may open in a real popup window.
  *
@@ -3717,26 +3722,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // a page put a modal over the whole app. Downloads from a page the agent drove
   // last go to the artifact directory instead. Downloads the human starts keep
   // the Save dialog.
-  /** Puts a copy in Downloads under a name that never replaces a file already there. */
-  const copyToDownloads = Effect.fn("PreviewManager.copyToDownloads")(function* (
-    source: string,
-    fileName: string,
-  ) {
-    const directory = app.getPath("downloads");
-    const extension = path.extname(fileName);
-    const stem = path.basename(fileName, extension) || "download";
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const target = path.join(
-        directory,
-        attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
-      );
-      if (yield* fileSystem.exists(target)) continue;
-      yield* fileSystem.copyFile(source, target);
-      shell.showItemInFolder(target);
-      return;
-    }
-  });
-
   const installDownloadHandler = (session: Session) => {
     if (downloadHandlerSessions.has(session)) return;
     downloadHandlerSessions.add(session);
@@ -3749,7 +3734,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         item.once("done", (_doneEvent, state) => {
           if (state !== "completed") return;
           runFork(
-            copyToDownloads(item.getSavePath(), item.getFilename()).pipe(
+            copyToDownloads(app.getPath("downloads"), item.getSavePath(), item.getFilename()).pipe(
+              Effect.provideService(Path.Path, path),
+              Effect.tap((target) => Effect.sync(() => shell.showItemInFolder(target))),
               Effect.catch((error) =>
                 Effect.logWarning("preview download copy failed", { cause: error }),
               ),
@@ -5537,6 +5524,35 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
+
+/** Puts a copy in Downloads under a name that never replaces a file already there. */
+export const copyToDownloads = Effect.fn("PreviewManager.copyToDownloads")(function* (
+  directory: string,
+  source: string,
+  fileName: string,
+) {
+  const path = yield* Path.Path;
+  const extension = path.extname(fileName);
+  const stem = path.basename(fileName, extension) || "download";
+  for (let attempt = 0; ; attempt += 1) {
+    const target = path.join(
+      directory,
+      attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
+    );
+    const copied = yield* Effect.tryPromise(() =>
+      NodeFSP.copyFile(source, target, NodeFS.constants.COPYFILE_EXCL),
+    ).pipe(
+      Effect.as(true),
+      Effect.catch((error) => {
+        const cause = error.cause;
+        return attempt < 99 && cause instanceof Error && "code" in cause && cause.code === "EEXIST"
+          ? Effect.succeed(false)
+          : Effect.fail(error);
+      }),
+    );
+    if (copied) return target;
+  }
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {

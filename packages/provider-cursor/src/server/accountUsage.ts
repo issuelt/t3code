@@ -102,27 +102,20 @@ const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage
 /** The session cookie must never follow a redirect off cursor.com. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
-/**
- * Dashboard usage includes headless agents and reports fresh input separately
- * from cache reads. `keychainToken` is only run for a Keychain login.
- */
-export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
+export type CursorResolvedCredential =
+  | { readonly kind: "token"; readonly accessToken: string; readonly fingerprint: string }
+  | { readonly kind: "unavailable"; readonly missing: boolean; readonly error: string | null };
+
+export const readCursorCredential = Effect.fn("readCursorCredential")(function* (
   credentialSource: string | { readonly kind: "keychain" },
-  sinceMs: number,
-  endDate: number,
   keychainToken: Effect.Effect<
     string | null,
     | CursorKeychain.CursorKeychainTimeoutError
     | CursorKeychain.CursorKeychainReadError
     | CursorAccountUsageInvalidError
   > = invalid("No Keychain reader"),
-): Effect.fn.Return<
-  CursorAccountUsageReadResult,
-  never,
-  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
-> {
+): Effect.fn.Return<CursorResolvedCredential, never, FileSystem.FileSystem | Crypto.Crypto> {
   const fileSystem = yield* FileSystem.FileSystem;
-  const httpClient = yield* HttpClient.HttpClient;
   const credential = yield* Effect.result<
     unknown,
     | PlatformError.PlatformError
@@ -146,8 +139,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       PlatformError.isPlatformError(cause) &&
       cause.reason._tag === "NotFound";
     return {
-      accountKey: null,
-      records: [],
+      kind: "unavailable",
       missing,
       error: missing
         ? null
@@ -161,8 +153,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
   const accessToken = credential.success;
   if (typeof accessToken !== "string" || !accessToken) {
     return {
-      accountKey: null,
-      records: [],
+      kind: "unavailable",
       missing: true,
       error:
         typeof credentialSource === "string"
@@ -170,6 +161,39 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           : "Cursor account history needs a macOS Keychain CLI login on this server.",
     };
   }
+  const fingerprint = yield* Effect.result(accountHash(accessToken));
+  if (Result.isFailure(fingerprint))
+    return { kind: "unavailable", missing: false, error: "Cursor credentials could not be read." };
+  return { kind: "token", accessToken, fingerprint: fingerprint.success };
+});
+
+/**
+ * Dashboard usage includes headless agents and reports fresh input separately
+ * from cache reads. `keychainToken` is only run for a Keychain login.
+ */
+export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
+  credentialSource: string | { readonly kind: "keychain" } | CursorResolvedCredential,
+  sinceMs: number,
+  endDate: number,
+  keychainToken: Effect.Effect<
+    string | null,
+    | CursorKeychain.CursorKeychainTimeoutError
+    | CursorKeychain.CursorKeychainReadError
+    | CursorAccountUsageInvalidError
+  > = invalid("No Keychain reader"),
+): Effect.fn.Return<
+  CursorAccountUsageReadResult,
+  never,
+  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+> {
+  const httpClient = yield* HttpClient.HttpClient;
+  const resolved =
+    typeof credentialSource === "string" || credentialSource.kind === "keychain"
+      ? yield* readCursorCredential(credentialSource, keychainToken)
+      : credentialSource;
+  if (resolved.kind === "unavailable")
+    return { accountKey: null, records: [], missing: resolved.missing, error: resolved.error };
+  const accessToken = resolved.accessToken;
   let accountKey: string | null = null;
   const read = Effect.gen(function* () {
     const payload = Base64Url.decodeString(accessToken.split(".")[1] ?? "");

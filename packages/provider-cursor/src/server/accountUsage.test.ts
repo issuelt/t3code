@@ -11,7 +11,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Path from "effect/Path";
 
 import * as CursorKeychain from "./CursorKeychain.ts";
-import { readCursorAccountUsage } from "./accountUsage.ts";
+import { readCursorAccountUsage, readCursorCredential } from "./accountUsage.ts";
 
 /** A scoped temporary directory holding `auth.json` with `accessToken`. */
 const writeAuth = (accessToken: string) =>
@@ -68,6 +68,46 @@ const readAccountUsage = (
   );
 
 describe("Cursor account history", () => {
+  it.effect.each(["file", "keychain"] as const)(
+    "uses the snapshotted %s login even if credentials change before the API read",
+    (source) =>
+      Effect.gen(function* () {
+        const token = (subject: string) =>
+          "header." +
+          Buffer.from(JSON.stringify({ sub: subject })).toString("base64url") +
+          ".signature";
+        const first = token("auth|first");
+        let currentToken = first;
+        const { authPath } = yield* writeAuth(first);
+        const keychainToken = Effect.sync(() => currentToken);
+        const resolved = yield* readCursorCredential(
+          source === "file" ? authPath : { kind: "keychain" },
+          keychainToken,
+        );
+        currentToken = token("auth|second");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(authPath, JSON.stringify({ accessToken: currentToken }));
+        let requests = 0;
+        const result = yield* readAccountUsage(
+          resolved,
+          0,
+          1781000000000,
+          ({ headers }) => {
+            requests++;
+            assert.strictEqual(
+              headers.get("cookie"),
+              "WorkosCursorSessionToken=" + encodeURIComponent("first::" + first),
+            );
+            return Response.json({ totalUsageEventsCount: 0, usageEventsDisplay: [] });
+          },
+          keychainToken,
+        );
+        assert.strictEqual(requests, 1);
+        assert.isNull(result.error);
+        assert.isFalse(result.missing);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reads Cursor account history with the default macOS Keychain login", () =>
     Effect.gen(function* () {
       const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;

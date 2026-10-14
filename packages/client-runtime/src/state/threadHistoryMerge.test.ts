@@ -90,6 +90,74 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("fills an overlapping retry page in place without moving older conversation rows", () => {
+    const loaded = [row(1), row(3), row(5), row(7), row(9)];
+    const live = { ...row(5), item: { ...row(5).item, output: "live output" } };
+    const projection = {
+      ...v2Projection,
+      turnItems: loaded.map((entry) =>
+        entry.sourceItemId === live.sourceItemId ? live.item : entry.item,
+      ),
+      visibleTurnItems: loaded.map((entry) =>
+        entry.sourceItemId === live.sourceItemId ? live : entry,
+      ),
+    };
+    const merged = mergeOlderHistoryIntoProjection(projection, [
+      row(4),
+      row(5),
+      row(6),
+      row(7),
+      row(7),
+      row(8),
+    ]);
+    expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-1",
+      "item-3",
+      "item-4",
+      "item-5",
+      "item-6",
+      "item-7",
+      "item-8",
+      "item-9",
+    ]);
+    expect(merged.visibleTurnItems[3]?.item).toBe(live.item);
+    expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7,
+    ]);
+    expect(new Set(merged.turnItems.map((item) => item.id)).size).toBe(8);
+    expect(mergeOlderHistoryIntoProjection(merged, [row(4), row(5), row(6), row(7), row(8)])).toBe(
+      merged,
+    );
+  });
+
+  it("preserves existing gaps between overlap anchors", () => {
+    const loaded = [row(0), row(2), row(3), row(6), row(8)];
+    const projection = {
+      ...v2Projection,
+      turnItems: loaded.map((entry) => entry.item),
+      visibleTurnItems: loaded,
+    };
+    const merged = mergeOlderHistoryIntoProjection(projection, [
+      row(1),
+      row(2),
+      row(4),
+      row(5),
+      row(6),
+      row(7),
+    ]);
+    expect(merged.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+      "item-5",
+      "item-6",
+      "item-7",
+      "item-8",
+    ]);
+  });
+
   it("prepends older rows and dedupes by source identity", () => {
     const recent = [row(2), row(3)];
     const projection = {
@@ -155,6 +223,30 @@ describe("threadHistoryMerge", () => {
       "item-5",
       "item-6",
     ]);
+  });
+
+  it("anchors an inherited retry by source identity while retaining its older prefix", () => {
+    const inherited = (index: number) => ({
+      ...row(index),
+      visibility: "inherited" as const,
+      sourceThreadId: "fork-source" as never,
+    });
+    const local = row(1);
+    const projection = {
+      ...v2Projection,
+      turnItems: [local.item],
+      visibleTurnItems: [inherited(0), inherited(2), local],
+    };
+    const merged = mergeOlderHistoryIntoProjection(projection, [inherited(1), inherited(2)]);
+    expect(
+      merged.visibleTurnItems.map((entry) => [entry.sourceThreadId, entry.sourceItemId]),
+    ).toEqual([
+      ["fork-source", "item-0"],
+      ["fork-source", "item-1"],
+      ["fork-source", "item-2"],
+      [v2ThreadId, "item-1"],
+    ]);
+    expect(merged.turnItems).toEqual([local.item]);
   });
 
   it("does not resurrect a local item hidden while an older page was in flight", () => {

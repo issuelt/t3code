@@ -179,6 +179,19 @@ export type ProviderUsageReader<Config, R> =
   | {
       readonly kind: "scan";
       readonly provider: UsageProviderKind;
+      /** Snapshots mutable account identity before the server shares an in-flight scan. */
+      readonly prepare?: (
+        input: Pick<ProviderUsageScanInput<Config>, "instances" | "settings">,
+      ) => Effect.Effect<
+        {
+          readonly cacheKey: string;
+          readonly scan: (
+            input: ProviderUsageScanInput<Config>,
+          ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError, R>;
+        },
+        UsageReadError,
+        R
+      >;
       /** Fails only when the whole usage read cannot go on; an unreadable source is a status. */
       readonly scan: (
         input: ProviderUsageScanInput<Config>,

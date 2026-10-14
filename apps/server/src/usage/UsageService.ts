@@ -647,42 +647,64 @@ export const make = Effect.gen(function* () {
     } satisfies ScannedDir;
   });
 
+  const prepareScans = (settings: ServerSettingsValue) =>
+    Effect.forEach(
+      scanReaders,
+      ({ driver, reader }) =>
+        usageInstances(driver, settings).pipe(
+          Effect.flatMap((instances) =>
+            (reader.prepare
+              ? reader.prepare({ instances, settings })
+              : Effect.succeed({ cacheKey: "", scan: reader.scan })
+            ).pipe(
+              Effect.map((snapshot) => ({
+                provider: reader.provider,
+                cacheKey: snapshot.cacheKey,
+                scan: (input: {
+                  windowStartMs: number;
+                  retentionCutoffMs: number;
+                  awaitRefresh: boolean;
+                }) => snapshot.scan({ ...input, instances, settings }),
+              })),
+            ),
+          ),
+          Effect.provideContext(readerContext),
+        ),
+      { concurrency: "unbounded" },
+    );
+  type PreparedScans = Effect.Success<ReturnType<typeof prepareScans>>;
+
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
+    preparedScans: PreparedScans,
   ) {
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideContext(readerContext),
     );
 
     const scans = Effect.forEach(
-      scanReaders,
-      ({ driver, reader }) =>
-        usageInstances(driver, settings)
-          .pipe(
-            Effect.flatMap((instances) =>
-              reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
-            ),
-          )
-          .pipe(
-            Effect.flatMap((sources) =>
-              Effect.forEach(sources, ({ volumeId, ...source }) =>
-                Effect.map(
-                  volumeId === undefined
-                    ? Effect.promise(() => readDirectoryVolumeId(source.dir))
-                    : Effect.succeed(volumeId),
-                  (resolved): ScannedDir => ({
-                    ...source,
-                    provider: reader.provider,
-                    volumeId: resolved,
-                  }),
-                ),
+      preparedScans,
+      ({ provider, scan }) =>
+        scan({ windowStartMs, retentionCutoffMs, awaitRefresh }).pipe(
+          Effect.flatMap((sources) =>
+            Effect.forEach(sources, ({ volumeId, ...source }) =>
+              Effect.map(
+                volumeId === undefined
+                  ? Effect.promise(() => readDirectoryVolumeId(source.dir))
+                  : Effect.succeed(volumeId),
+                (resolved): ScannedDir => ({
+                  ...source,
+                  provider,
+                  volumeId: resolved,
+                }),
               ),
             ),
-            Effect.provideContext(readerContext),
           ),
+          Effect.provideContext(readerContext),
+        ),
       { concurrency: "unbounded" },
     );
 
@@ -700,14 +722,8 @@ export const make = Effect.gen(function* () {
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
+    preparedScans: PreparedScans,
   ) {
-    if (input.sinceDay > input.untilDay) {
-      return yield* new UsageReadError({
-        reason: "invalidWindow",
-        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
-      });
-    }
-
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
     if (input.resolution === "hour") {
       const sinceTime =
@@ -754,7 +770,13 @@ export const make = Effect.gen(function* () {
     const [, scannedDirs] = yield* Effect.all(
       [
         ensureRates(false),
-        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+        collectDirs(
+          windowStartMs,
+          settings,
+          retentionCutoffMs,
+          input.awaitRefresh === true,
+          preparedScans,
+        ),
       ],
       { concurrency: 2 },
     );
@@ -896,8 +918,19 @@ export const make = Effect.gen(function* () {
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+
     const settings = yield* readSettings;
-    const key = scanKey(input, settings);
+    const preparedScans = yield* prepareScans(settings);
+    const key = encodeUsageRecordKey([
+      scanKey(input, settings),
+      preparedScans.map((scan) => scan.cacheKey),
+    ]);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -911,7 +944,7 @@ export const make = Effect.gen(function* () {
         // the fibers awaiting it; a finished scan warms the cache either way.
         // The cache write is registered before the waiters resume, so they
         // can await it, but its fiber starts after they have the summary.
-        yield* scanSummary(input, settings).pipe(
+        yield* scanSummary(input, settings, preparedScans).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

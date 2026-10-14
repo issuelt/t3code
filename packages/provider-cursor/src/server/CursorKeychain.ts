@@ -23,6 +23,14 @@ import * as Schema from "effect/Schema";
 const CACHE_MS = 5 * 60_000;
 const DEFAULT_TIMEOUT = Duration.seconds(30);
 
+const FreshAccessToken = Context.Reference<boolean>("CursorKeychain/FreshAccessToken", {
+  defaultValue: () => false,
+});
+
+/** Bypasses the saved token while still joining an outstanding Keychain prompt. */
+export const freshAccessToken = (keychain: CursorKeychain["Service"]) =>
+  keychain.accessToken.pipe(Effect.provideService(FreshAccessToken, true));
+
 const requireForKeyring = NodeModule.createRequire(import.meta.url);
 
 /** Nobody answered the macOS Keychain prompt in time. */
@@ -104,8 +112,9 @@ export const make = (
   );
 
   const accessToken = Effect.gen(function* () {
+    const fresh = yield* FreshAccessToken;
     const nowMs = yield* Clock.currentTimeMillis;
-    if (cached !== null && cached.untilMs > nowMs) return cached.token;
+    if (!fresh && cached !== null && cached.untilMs > nowMs) return cached.token;
     const done = yield* startRead;
     const token = yield* Deferred.await(done).pipe(Effect.timeoutOption(timeout));
     if (Option.isNone(token)) return yield* new CursorKeychainTimeoutError();

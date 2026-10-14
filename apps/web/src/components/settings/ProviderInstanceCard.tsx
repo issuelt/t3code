@@ -1,5 +1,8 @@
 "use client";
 
+import { useAtomValue } from "@effect/atom-react";
+import { providerLoginEnvironment } from "../../state/providerLogin";
+
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -904,6 +907,9 @@ export function ProviderInstanceCard({
   const rawHomePath = (instance.config as { readonly homePath?: unknown } | undefined)?.homePath;
   const homePathLine =
     typeof rawHomePath === "string" && rawHomePath.trim().length > 0 ? rawHomePath.trim() : null;
+  const canManageLogin = useAtomValue(
+    providerLoginEnvironment.write.permissionAtom(environmentId ?? null),
+  );
   const canLogin =
     DRIVERS_WITH_IN_APP_LOGIN.has(String(instance.driver)) &&
     environmentId !== undefined &&
@@ -1448,7 +1454,7 @@ export function ProviderInstanceCard({
           <SettingsRow
             title={isAuthenticated ? "Re-authenticate" : "Log in"}
             control={
-              <Button disabled={readOnly} onClick={() => setIsLoginOpen(true)}>
+              <Button disabled={readOnly || !canManageLogin} onClick={() => setIsLoginOpen(true)}>
                 <KeyRoundIcon className="size-3.5" />
                 {isAuthenticated ? "Re-authenticate" : "Log in"}
               </Button>

@@ -79,6 +79,10 @@ export const CursorDriver: ProviderDriver<
   usage: {
     kind: "scan",
     provider: "cursor",
+    prepare: ({ settings }) =>
+      CursorUsageAccounts.CursorUsageAccounts.pipe(
+        Effect.flatMap((accounts) => accounts.prepare(settings.cursorKeychainUsageEnabled)),
+      ),
     scan: ({ settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
       CursorUsageAccounts.CursorUsageAccounts.pipe(
         Effect.flatMap((accounts) =>
