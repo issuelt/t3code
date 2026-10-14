@@ -6,10 +6,17 @@ import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { AndroidWorkspaceTabSwitch } from "../workspace/AndroidWorkspaceTabSwitch";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 
-/** PR search shares the thread list's native Android header placement. */
-export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility?: () => void }) {
+/**
+ * PR search shares the thread list's native Android header placement. The split-view
+ * sidebar shows the Chats/PRs switch in place of the brand.
+ */
+export function MaterialPullRequestToolbar(props: {
+  readonly onRequestVisibility?: () => void;
+  readonly sidebar?: boolean;
+}) {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
@@ -36,6 +43,11 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
   }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+  const openEnvironments = () =>
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: { screen: "SettingsEnvironments" },
+    });
   useEffect(() => {
     if (!searching || !listFocused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -62,6 +74,12 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
+        ) : props.sidebar ? (
+          // Cancel the header's title inset so the switch matches the Chats header.
+          <View className="-ml-1 flex-row items-center">
+            <AndroidWorkspaceTabSwitch />
+            <WorkspaceConnectionTitle iconOnly brand={null} onPress={openEnvironments} />
+          </View>
         ) : (
           <View className="min-w-0 flex-1 pl-3">
             <WorkspaceConnectionTitle
@@ -72,12 +90,7 @@ export function MaterialPullRequestToolbar(props: { readonly onRequestVisibility
                   accessibilityLabel="T3 Code, Pull requests"
                 />
               }
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                })
-              }
+              onPress={openEnvironments}
             />
           </View>
         )
