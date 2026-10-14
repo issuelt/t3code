@@ -21,6 +21,10 @@ import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../l
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
+import {
+  resolveWidgetPreferences,
+  type SubscriptionWidgetPreferences,
+} from "../widgets/subscriptionWidgetPreferences";
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
@@ -55,6 +59,7 @@ const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
+  readonly subscriptionWidgets?: SubscriptionWidgetPreferences;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
@@ -138,6 +143,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     pullRequestHideTestFiles?: boolean;
     pullRequestMergeMethod?: PullRequestMergeMethod;
+    subscriptionWidgets?: SubscriptionWidgetPreferences;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
@@ -175,6 +181,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.pullRequestMergeMethod === "rebase"
   ) {
     preferences.pullRequestMergeMethod = parsed.pullRequestMergeMethod;
+  }
+
+  if (parsed.subscriptionWidgets !== undefined) {
+    preferences.subscriptionWidgets = resolveWidgetPreferences(parsed.subscriptionWidgets);
   }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
