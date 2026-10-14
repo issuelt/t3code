@@ -696,9 +696,20 @@ const make = Effect.gen(function* () {
       return EnvironmentId.make(chosen);
     });
 
+  /** Whether a cancel or edit since `advance` took the node back. */
+  const launchWithdrawn = (graph: TaskGraph, node: TaskGraphNode) =>
+    requireGraph(graph.id).pipe(
+      Effect.map((current) => {
+        const latest = current.nodes.find((candidate) => candidate.key === node.key);
+        return latest?.status !== "running" || latest.threadId !== node.threadId;
+      }),
+    );
+
   const launchNode = (graph: TaskGraph, node: TaskGraphNode) =>
     Effect.gen(function* () {
       const threadId = node.threadId!;
+      // Cancelling stops a node's run, but one still launching has none yet.
+      if (yield* locked(launchWithdrawn(graph, node))) return;
       const parent = yield* threads.getThreadProjection(graph.threadId);
       const firstDependency = graph.nodes.find((candidate) => candidate.key === node.dependsOn[0]);
       const prompt = buildTaskGraphNodePrompt(graph, node);
@@ -730,26 +741,29 @@ const make = Effect.gen(function* () {
           runtimeMode: parent.thread.runtimeMode,
           delivery: peerDelivery(graph, node),
         });
-        return;
+      } else {
+        yield* launcher.launch({
+          commandId: CommandId.make(`task-graph-launch:${threadId}`),
+          threadId,
+          projectId: graph.projectId,
+          title: node.title,
+          modelSelection,
+          runtimeMode: parent.thread.runtimeMode,
+          interactionMode: "default",
+          workspaceStrategy,
+          initialMessage: {
+            messageId: MessageId.make(`task-graph-message:${threadId}`),
+            senderThreadId: graph.threadId,
+            text: prompt,
+            attachments: [],
+          },
+          createdBy: "agent",
+          creationSource: "server",
+        });
       }
-      yield* launcher.launch({
-        commandId: CommandId.make(`task-graph-launch:${threadId}`),
-        threadId,
-        projectId: graph.projectId,
-        title: node.title,
-        modelSelection,
-        runtimeMode: parent.thread.runtimeMode,
-        interactionMode: "default",
-        workspaceStrategy,
-        initialMessage: {
-          messageId: MessageId.make(`task-graph-message:${threadId}`),
-          senderThreadId: graph.threadId,
-          text: prompt,
-          attachments: [],
-        },
-        createdBy: "agent",
-        creationSource: "server",
-      });
+      // A cancel that landed while launching found no run to stop; stop the one just started.
+      if (yield* locked(launchWithdrawn(graph, node)))
+        yield* stopNodes(graph, [node], "task-graph-launch-stop");
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
@@ -886,7 +900,12 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const stopNodes = (graph: TaskGraph, nodes: ReadonlyArray<TaskGraphNode>) =>
+  const stopNodes = (
+    graph: TaskGraph,
+    nodes: ReadonlyArray<TaskGraphNode>,
+    // A distinct id for a second stop of the same thread, or its receipt replays the first.
+    stopCommand = "task-graph-stop",
+  ) =>
     Effect.forEach(
       nodes,
       (node) => {
@@ -915,7 +934,7 @@ const make = Effect.gen(function* () {
           threads
             .interruptThread({
               projectId: graph.projectId,
-              commandId: CommandId.make(`task-graph-stop:${node.threadId}`),
+              commandId: CommandId.make(`${stopCommand}:${node.threadId}`),
               threadId: node.threadId,
               reason: "The task graph branch was cancelled.",
             })
@@ -1132,7 +1151,12 @@ const make = Effect.gen(function* () {
         threads.getThreadProjection(node.threadId!).pipe(
           Effect.matchEffect({
             onFailure: () => launchNode(graph, node),
-            onSuccess: () => finishLocalNode(graph.id, node.key, node.threadId!),
+            // A thread without a run stopped between creating it and sending its prompt;
+            // replaying the launch under the same command ids finishes it.
+            onSuccess: (projection) =>
+              ThreadManagement.latestRun(projection) === undefined
+                ? launchNode(graph, node)
+                : finishLocalNode(graph.id, node.key, node.threadId!),
           }),
         ),
       { discard: true },

@@ -11,6 +11,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -55,6 +56,10 @@ interface Harness {
     launch: ThreadLaunch.ThreadLaunchInput,
     result: { readonly reply: string; readonly branch: string; readonly status?: string },
   ) => Effect.Effect<void>;
+  /** Holds every launch until the returned effect runs. */
+  readonly holdLaunches: () => Effect.Effect<void>;
+  /** Launches and interrupts in the order they happened, as `launch:<thread>` or `interrupt:<thread>`. */
+  readonly calls: Array<string>;
   /** Makes the next git deliveries fail in `phase`, or succeed again with null. */
   readonly failGitIn: (phase: "commit" | "push" | "pr" | null) => void;
 }
@@ -87,6 +92,20 @@ const withService = <A, E>(
     harness: Harness,
   ) => Effect.Effect<A, E>,
   peers: Layer.Layer<TaskGraphPeers.TaskGraphPeers> = TaskGraphPeers.layerNone,
+  threadsAtStart: ReadonlyArray<OrchestrationV2ThreadProjection> = [],
+) =>
+  withServiceOnDatabase(body, peers, threadsAtStart).pipe(
+    Effect.provide(SqlitePersistence.layerMemory),
+  );
+
+/** Like `withService`, on the caller's database, so a second call restarts the service. */
+const withServiceOnDatabase = <A, E>(
+  body: (
+    service: TaskGraphService.TaskGraphService["Service"],
+    harness: Harness,
+  ) => Effect.Effect<A, E>,
+  peers: Layer.Layer<TaskGraphPeers.TaskGraphPeers> = TaskGraphPeers.layerNone,
+  threadsAtStart: ReadonlyArray<OrchestrationV2ThreadProjection> = [],
 ) =>
   Effect.gen(function* () {
     const launches = yield* Queue.unbounded<ThreadLaunch.ThreadLaunchInput>();
@@ -94,7 +113,10 @@ const withService = <A, E>(
     const report = yield* Deferred.make<string>();
     const projections = new Map<ThreadId, OrchestrationV2ThreadProjection>([
       [PARENT, projection({ id: PARENT, branch: "main", worktreePath: null })],
+      ...threadsAtStart.map((thread) => [thread.thread.id, thread] as const),
     ]);
+    const calls: Array<string> = [];
+    let launchGate: Deferred.Deferred<void> | null = null;
     const gitActions: Array<GitRunStackedActionInput> = [];
     const interrupted: Array<ThreadId> = [];
     const settled = yield* Queue.unbounded<ThreadId>();
@@ -105,6 +127,14 @@ const withService = <A, E>(
       failGitIn: (phase) => {
         gitFailurePhase = phase;
       },
+      holdLaunches: () => {
+        const gate = Deferred.makeUnsafe<void>();
+        launchGate = gate;
+        return Effect.sync(() => {
+          launchGate = null;
+        }).pipe(Effect.andThen(Deferred.succeed(gate, undefined)), Effect.asVoid);
+      },
+      calls,
       launches,
       gitActions,
       interrupted,
@@ -146,7 +176,15 @@ const withService = <A, E>(
         Layer.mergeAll(
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
             launch: (input) =>
-              Queue.offer(launches, input).pipe(
+              Effect.suspend(() =>
+                launchGate === null ? Effect.void : Deferred.await(launchGate),
+              ).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    calls.push(`launch:${input.threadId}`);
+                  }),
+                ),
+                Effect.andThen(Queue.offer(launches, input)),
                 Effect.as({
                   threadId: input.threadId!,
                   projection: projection({ id: input.threadId!, branch: null, worktreePath: null }),
@@ -175,6 +213,7 @@ const withService = <A, E>(
             interruptThread: (input) =>
               Effect.sync(() => {
                 interrupted.push(input.threadId);
+                calls.push(`interrupt:${input.threadId}`);
                 return { type: "no_active_run" as const };
               }),
           }),
@@ -230,7 +269,7 @@ const withService = <A, E>(
       Effect.flatMap((service) => body(service, harness)),
       Effect.provide(layer),
     );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory));
+  });
 
 const node = (key: string, dependsOn: ReadonlyArray<string> = []) => ({
   key,
@@ -329,6 +368,65 @@ it.effect("cutting off a running branch stops its thread and skips what depends 
       assert.include(yield* Deferred.await(harness.report), "finished: cancelled");
     }),
   ),
+);
+
+it.effect("cancelling while a node is launching stops the thread the launch creates", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      const release = harness.holdLaunches();
+      const graph = yield* service.create({
+        threadId: PARENT,
+        title: "Features",
+        nodes: [node("a")],
+        run: false,
+      });
+      const running = yield* Effect.forkChild(service.run(graph.id));
+      // Wait until the node is marked running and its launch is held.
+      while ((yield* service.get(graph.id)).nodes[0]!.status !== "running") {
+        yield* Effect.yieldNow;
+      }
+      yield* service.cancel(graph.id);
+      yield* release;
+      yield* Fiber.join(running);
+
+      const threadId = (yield* service.get(graph.id)).nodes[0]!.threadId!;
+      assert.equal((yield* service.get(graph.id)).nodes[0]!.status, "cancelled");
+      // Whatever the launch started is interrupted after it, not only before.
+      const launchedAt = harness.calls.indexOf(`launch:${threadId}`);
+      if (launchedAt !== -1) {
+        assert.include(harness.calls.slice(launchedAt + 1), `interrupt:${threadId}`);
+      }
+    }),
+  ),
+);
+
+it.effect("a launch cut off after its thread was created is replayed on restart", () =>
+  Effect.gen(function* () {
+    const first = yield* withServiceOnDatabase((service, harness) =>
+      Effect.gen(function* () {
+        const graph = yield* service.create({
+          threadId: PARENT,
+          title: "Features",
+          nodes: [node("a")],
+          run: true,
+        });
+        return { graphId: graph.id, launch: yield* Queue.take(harness.launches) };
+      }),
+    );
+    // The server stopped after creating the thread, before its first message started a run.
+    const created = projection({ id: first.launch.threadId!, branch: null, worktreePath: null });
+    yield* withServiceOnDatabase(
+      (service, harness) =>
+        Effect.gen(function* () {
+          const replayed = yield* Queue.take(harness.launches);
+          assert.equal(replayed.threadId, first.launch.threadId);
+          assert.equal(replayed.commandId, first.launch.commandId);
+          assert.equal((yield* service.get(first.graphId)).nodes[0]!.status, "running");
+        }),
+      TaskGraphPeers.layerNone,
+      [created],
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a draft waits for run, and edits before it starts change what launches", () =>
