@@ -2014,7 +2014,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2196,14 +2196,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
-  WsDictationInstallRpc,
-  WsDictationRemoveRpc,
-  WsDictationStartRpc,
-  WsDictationWarmRpc,
-  WsDictationAppendRpc,
-  WsDictationFinishRpc,
-  WsDictationCancelRpc,
-  WsSubscribeDictationStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
@@ -2225,3 +2217,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 ).middleware(RpcScopeAuthorization);
+
+// Kept as its own group so the server can build these handlers separately: the
+// core group's handler object is at TypeScript's instantiation-depth limit.
+export const WsDictationRpcGroup = RpcGroup.make(
+  WsDictationInstallRpc,
+  WsDictationRemoveRpc,
+  WsDictationStartRpc,
+  WsDictationWarmRpc,
+  WsDictationAppendRpc,
+  WsDictationFinishRpc,
+  WsDictationCancelRpc,
+  WsSubscribeDictationStateRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsDictationRpcGroup);

@@ -103,6 +103,8 @@ import {
   type ProviderLoginStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCoreRpcGroup,
+  WsDictationRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -554,6 +556,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerWsDictationRpcGroup = WsDictationRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1202,6 +1206,23 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// Served from a separate group; see WsDictationRpcGroup in contracts.
+const layerDictationRpc = ServerWsDictationRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const dictation = yield* Dictation.Dictation;
+    return {
+      [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
+      [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
+      [WS_METHODS.dictationStart]: () => dictation.start,
+      [WS_METHODS.dictationWarm]: () => dictation.warm,
+      [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
+      [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),
+      [WS_METHODS.dictationCancel]: (input) => dictation.cancel(input),
+      [WS_METHODS.subscribeDictationState]: () => dictation.stateStream,
+    };
+  }),
+);
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1209,7 +1230,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1308,7 +1329,6 @@ const layerWsRpc = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const dictation = yield* Dictation.Dictation;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1845,7 +1865,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3013,14 +3033,6 @@ const layerWsRpc = (
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
-        [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
-        [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
-        [WS_METHODS.dictationStart]: () => dictation.start,
-        [WS_METHODS.dictationWarm]: () => dictation.warm,
-        [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
-        [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),
-        [WS_METHODS.dictationCancel]: (input) => dictation.cancel(input),
-        [WS_METHODS.subscribeDictationState]: () => dictation.stateStream,
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
@@ -3284,12 +3296,15 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            layerWsRpc(
-              session,
-              clientOrigin,
-              clientAnalyticsProps,
-              previewAutomationBroker,
-              serverBrowser,
+            Layer.merge(
+              layerWsRpc(
+                session,
+                clientOrigin,
+                clientAnalyticsProps,
+                previewAutomationBroker,
+                serverBrowser,
+              ),
+              layerDictationRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
