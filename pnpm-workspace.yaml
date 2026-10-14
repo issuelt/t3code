@@ -20,7 +20,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.11.tgz(patch_hash=26c7e98bb0103e5b9592ad797f7cdb2e485ea3bc03146ab29cb7dfca2fc7f008)": true
   sharp: true
   tsc-rs: true
   utf-8-validate: false
@@ -297,6 +297,8 @@ patchedDependencies:
   "@effect/vitest@4.0.4": patches/@effect__vitest@4.0.4.patch
   "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch
   expo-sharing@58.0.13: patches/expo-sharing@58.0.13.patch
+  # Use the app's AGP/Kotlin instead of resolving a pinned AGP 8.7.2 per subproject, which fails on Gradle 9.
+  react-native-enriched-markdown@1.2.0-t3.11: patches/react-native-enriched-markdown@1.2.0-t3.11.patch
   expo-widgets@58.0.11: patches/expo-widgets@58.0.11.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
