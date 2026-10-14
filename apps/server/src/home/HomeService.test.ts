@@ -147,7 +147,7 @@ it.effect("wakes Home only for watched threads and ends watches on settle", () =
     });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ threadId, mode: "auto", createdBy: "system" });
-    expect(sent[0]!.text).toContain("[Thread watched](t3-thread://v1/hub/watched)");
+    expect(sent[0]!.text).toContain("[Thread watched](t3-thread://v1/watched?environmentId=hub)");
     expect(sent[0]!.text).not.toContain("unwatched");
     const after = yield* home.updateWatches(threadId, (current) => current);
     expect(after.watches.map((watch) => watch.threadId)).toEqual(["watched"]);

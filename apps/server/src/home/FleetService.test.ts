@@ -135,7 +135,7 @@ it.effect("lists threads from every project, newest first, with snooze state", (
       threads: [
         {
           threadId: "newer",
-          link: "[newer](t3-thread://v1/studio/newer)",
+          link: "[newer](t3-thread://v1/newer?environmentId=studio)",
           projectId: "b",
           snoozed: false,
           snoozedUntil: null,
