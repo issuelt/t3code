@@ -1097,6 +1097,7 @@ import {
   PencilRulerIcon,
   PlayIcon,
   ShieldIcon,
+  WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
@@ -1553,6 +1554,8 @@ export interface ChatComposerProps {
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  /** Starts a task graph on this thread, creating the thread first on a new chat. */
+  onNewTaskGraph: (() => void) | null;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -1667,7 +1670,7 @@ export interface ChatComposerProps {
   onPageScrollKeyUp: (key: string) => void;
   onPageScrollRelease: () => void;
 
-  // Queued runs strip rendered above the composer (v2 queue/steer).
+  // Attachments rendered above the composer: task graphs and the queued runs strip.
   queuedRunsControl?: ReactNode;
   // Queued-message edit mode: attachments already stored on the message being
   // edited. Rendered in the attachment strip with a remove control; removal is
@@ -1747,6 +1750,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptHistoryMessages,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
+    onNewTaskGraph,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -7807,6 +7811,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {onNewTaskGraph ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onPointerDown={(event) => event.preventDefault()}
+                            onClick={onNewTaskGraph}
+                            aria-label="New task graph"
+                          />
+                        }
+                      >
+                        <WorkflowIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>New task graph</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
