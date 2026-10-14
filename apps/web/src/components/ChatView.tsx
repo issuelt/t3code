@@ -84,6 +84,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   RuntimeMode,
   TerminalOpenInput,
+  type TaskGraphNode,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -492,6 +493,8 @@ import {
   type QueuedRunsControlHandle,
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
+import { DraftTaskGraphDialog, TaskGraphCards } from "./chat/TaskGraphCard";
+import { useNewTaskGraph } from "./chat/useTaskGraphCommands";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
@@ -561,6 +564,7 @@ import {
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
+  waitForServerThreadShell,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -10835,6 +10839,91 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
   ]);
 
+  const newTaskGraph = useNewTaskGraph(environmentId);
+  // On a new chat the graph is drafted in the client; its thread and the
+  // graph are only created when the user runs it.
+  const [draftTaskGraphOpen, setDraftTaskGraphOpen] = useState(false);
+  // The composer's model when the draft opened: shown as the graph default and used on Run.
+  const [draftTaskGraphModel, setDraftTaskGraphModel] = useState<ModelSelection | null>(null);
+  const onNewTaskGraph = useCallback(async () => {
+    if (!activeThread) return;
+    if (!isServerThread) {
+      setDraftTaskGraphModel(composerRef.current?.getSendContext()?.selectedModelSelection ?? null);
+      setDraftTaskGraphOpen(true);
+      return;
+    }
+    const error = await newTaskGraph.start(activeThread.id);
+    if (error !== null) {
+      toastManager.add({
+        type: "error",
+        title: "Could not start a task graph",
+        description: error,
+      });
+    }
+  }, [activeThread, composerRef, isServerThread, newTaskGraph]);
+  const onRunDraftTaskGraph = useCallback(
+    async (nodes: ReadonlyArray<TaskGraphNode>): Promise<string | null> => {
+      const modelSelection = draftTaskGraphModel;
+      if (!activeThread || !activeProject || !modelSelection) {
+        return "Pick a project and model before running the graph.";
+      }
+      const nextThreadId = newThreadId();
+      const createResult = await createThread({
+        environmentId,
+        input: {
+          threadId: nextThreadId,
+          projectId: activeProject.id,
+          title: "New task graph",
+          modelSelection,
+          runtimeMode,
+          interactionMode: "default",
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (createResult._tag === "Failure") {
+        const failure = squashAtomCommandFailure(createResult);
+        return failure instanceof Error ? failure.message : "Could not create the thread.";
+      }
+      const created = await newTaskGraph.createAndRun(nextThreadId, nodes);
+      if (created.outcome === "failed") {
+        await deleteThread({ environmentId, input: { threadId: nextThreadId } });
+        return created.error;
+      }
+      // An interrupted request may have started the graph: keep its thread and open it
+      // rather than risk running the same tasks twice from the draft.
+      if (created.outcome === "uncertain") {
+        toastManager.add({
+          type: "warning",
+          title: "The task graph request was interrupted",
+          description: "Check the new chat to see whether the graph started.",
+        });
+      }
+      // The graph is running now, so its thread stays even if the shell is slow to arrive;
+      // waiting only keeps the route from opening before the thread is known.
+      await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId));
+      setDraftTaskGraphOpen(false);
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: nextThreadId },
+      });
+      return null;
+    },
+    [
+      activeProject,
+      activeThread,
+      activeThreadBranch,
+      createThread,
+      deleteThread,
+      draftTaskGraphModel,
+      environmentId,
+      navigate,
+      newTaskGraph,
+      runtimeMode,
+    ],
+  );
+
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
       if (!activeThread) {
@@ -11014,21 +11103,24 @@ export default function ChatView(props: ChatViewProps) {
   const queuedRunsControl = useMemo(
     () =>
       isServerThread && activeThread ? (
-        <QueuedRunsControl
-          ref={queuedRunsControlRef}
-          steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
-            context: { terminalFocus: false },
-          })}
-          editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
-            context: { composerFocus: true },
-          })}
-          environmentId={activeThread.environmentId}
-          threadId={activeThread.id}
-          optimisticMessages={optimisticUserMessages}
-          editingRunId={editingQueuedRun?.runId ?? null}
-          onEditQueuedRun={beginEditingQueuedRun}
-          onCancelEdit={cancelEditingQueuedRun}
-        />
+        <>
+          <TaskGraphCards environmentId={activeThread.environmentId} threadId={activeThread.id} />
+          <QueuedRunsControl
+            ref={queuedRunsControlRef}
+            steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
+              context: { terminalFocus: false },
+            })}
+            editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
+              context: { composerFocus: true },
+            })}
+            environmentId={activeThread.environmentId}
+            threadId={activeThread.id}
+            optimisticMessages={optimisticUserMessages}
+            editingRunId={editingQueuedRun?.runId ?? null}
+            onEditQueuedRun={beginEditingQueuedRun}
+            onCancelEdit={cancelEditingQueuedRun}
+          />
+        </>
       ) : null,
     [
       activeThread,
@@ -11827,6 +11919,11 @@ export default function ChatView(props: ChatViewProps) {
                               promptHistoryMessages={timelineMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
+                              onNewTaskGraph={
+                                newTaskGraph.canCreate && canOperateThread
+                                  ? () => void onNewTaskGraph()
+                                  : null
+                              }
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState
                               }
@@ -12281,6 +12378,18 @@ export default function ChatView(props: ChatViewProps) {
         </AlertDialogPopup>
       </AlertDialog>
       <LinkPullRequestDialogHost />
+      {!isServerThread && activeThread && activeProject ? (
+        <DraftTaskGraphDialog
+          environmentId={environmentId}
+          projectId={activeProject.id}
+          threadId={activeThread.id}
+          baseRef={activeThreadBranch}
+          modelSelection={draftTaskGraphModel}
+          open={draftTaskGraphOpen}
+          onOpenChange={setDraftTaskGraphOpen}
+          onRun={onRunDraftTaskGraph}
+        />
+      ) : null}
       {expandedImage && (
         <ExpandedImageDialog
           key={expandedImageKey(expandedImage)}

@@ -91,6 +91,7 @@ import {
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
+import { TaskGraphMachinesSettings } from "./TaskGraphMachinesSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { DictationRoutingSettings } from "./DictationSettings";
 import { Input } from "../ui/input";
@@ -4181,6 +4182,10 @@ export function ConnectionsSettings() {
         />
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
+      <TaskGraphMachinesSettings
+        environment={primaryEnvironment}
+        environments={loadBalancingEnvironments}
+      />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
       <DictationRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
