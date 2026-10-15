@@ -76,6 +76,43 @@ describe("applyUsageLimitsUpdate", () => {
       resetCredits,
     });
   });
+
+  it("preserves Claude usage-credit details when a streamed window changes", () => {
+    const extraUsage = {
+      checkedAt,
+      isEnabled: true,
+      usedCredits: 3.42,
+      monthlyLimit: 25,
+      currency: "USD",
+    };
+    const next = applyUsageLimitsUpdate({
+      previous: { ...published, extraUsage },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session, usedPercent: 55 }] },
+    });
+
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [{ ...session, usedPercent: 55 }, weekly],
+      extraUsage,
+    });
+  });
+
+  it("pins legacy credit data to its original read through repeated stream updates", () => {
+    const extraUsage = { isEnabled: true, usedCredits: 20, monthlyLimit: 200 };
+    const first = applyUsageLimitsUpdate({
+      previous: { ...published, extraUsage },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session, usedPercent: 55 }] },
+    });
+    const second = applyUsageLimitsUpdate({
+      previous: first,
+      checkedAt: "2026-09-03T12:00:10.000Z",
+      update: { windows: [{ ...session, usedPercent: 60 }] },
+    });
+    expect(second?.checkedAt).toBe("2026-09-03T12:00:10.000Z");
+    expect(second?.extraUsage).toEqual({ ...extraUsage, checkedAt });
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {

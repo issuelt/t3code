@@ -53,6 +53,19 @@ const ClaudeWindow = Schema.Struct({
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
+  extra_usage: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        is_enabled: Schema.Boolean,
+        monthly_limit: Schema.optional(Schema.NullOr(Schema.Number)),
+        used_credits: Schema.optional(Schema.NullOr(Schema.Number)),
+        utilization: Schema.optional(Schema.NullOr(Schema.Number)),
+        currency: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        decimal_places: Schema.optional(Schema.Number),
+        disabled_reason: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
   limits: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -244,6 +257,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
               rate_limits: {
                 five_hour: usage.five_hour ?? null,
                 seven_day: usage.seven_day ?? null,
+                ...(usage.extra_usage !== undefined ? { extra_usage: usage.extra_usage } : {}),
                 model_scoped,
               },
             },

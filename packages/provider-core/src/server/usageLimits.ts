@@ -94,6 +94,14 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(previous?.extraUsage !== undefined
+      ? {
+          extraUsage: {
+            ...previous.extraUsage,
+            checkedAt: previous.extraUsage.checkedAt ?? previous.checkedAt,
+          },
+        }
+      : {}),
   };
 }
 

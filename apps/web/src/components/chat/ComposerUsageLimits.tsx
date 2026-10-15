@@ -1,5 +1,5 @@
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { limitsNotice, usageCreditSummary } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -88,6 +88,9 @@ function UsageLimitsBannerBody({
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const notice = limitsNotice(account.limits);
           const externalUsage = account.limits.externalUsage;
+          const credits = account.limits.extraUsage
+            ? usageCreditSummary(account.limits.extraUsage)
+            : null;
           return (
             <div key={account.id} className="flex min-w-0 flex-col gap-1">
               {report.accounts.length > 1 ? (
@@ -105,6 +108,12 @@ function UsageLimitsBannerBody({
                   now={now}
                 />
               )}
+              {credits ? (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  Usage credits: {credits.amount}
+                  {credits.remainingPercent !== null ? " left" : ""} · {credits.description}
+                </span>
+              ) : null}
               {externalUsage ? (
                 <Button
                   size="sm"
