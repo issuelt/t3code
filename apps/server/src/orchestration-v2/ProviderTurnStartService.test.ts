@@ -765,6 +765,7 @@ effectIt.effect(
       expect(harness.events).toHaveLength(0);
       expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
     }),
+);
 
 effectIt.effect.each(["cleanup-first", "startup-first"])(
   "coordinates provider startup with %s",

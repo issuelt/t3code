@@ -7332,8 +7332,7 @@ export default function ChatView(props: ChatViewProps) {
       (ref) => ref.environmentId === environmentId && ref.threadId === threadId,
     )
       ? environmentId
-      : (serverThreadRefs.find((ref) => ref.threadId === threadId)?.environmentId ??
-        environmentId);
+      : (serverThreadRefs.find((ref) => ref.threadId === threadId)?.environmentId ?? environmentId);
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(owner, threadId)),
@@ -10585,7 +10584,7 @@ export default function ChatView(props: ChatViewProps) {
   const [draftTaskGraphOpen, setDraftTaskGraphOpen] = useState(false);
   // The composer's model when the draft opened: shown as the graph default and used on Run.
   const [draftTaskGraphModel, setDraftTaskGraphModel] = useState<ModelSelection | null>(null);
-  const onNewTaskGraph = useCallback(async () => {
+  const onNewTaskGraph = async () => {
     if (!activeThread) return;
     if (!isServerThread) {
       setDraftTaskGraphModel(composerRef.current?.getSendContext()?.selectedModelSelection ?? null);
@@ -10600,69 +10599,57 @@ export default function ChatView(props: ChatViewProps) {
         description: error,
       });
     }
-  }, [activeThread, composerRef, isServerThread, newTaskGraph]);
-  const onRunDraftTaskGraph = useCallback(
-    async (nodes: ReadonlyArray<TaskGraphNode>): Promise<string | null> => {
-      const modelSelection = draftTaskGraphModel;
-      if (!activeThread || !activeProject || !modelSelection) {
-        return "Pick a project and model before running the graph.";
-      }
-      const nextThreadId = newThreadId();
-      const createResult = await createThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-          projectId: activeProject.id,
-          title: "New task graph",
-          modelSelection,
-          runtimeMode,
-          interactionMode: "default",
-          branch: activeThreadBranch,
-          worktreePath: activeThread.worktreePath,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (createResult._tag === "Failure") {
-        const failure = squashAtomCommandFailure(createResult);
-        return failure instanceof Error ? failure.message : "Could not create the thread.";
-      }
-      const created = await newTaskGraph.createAndRun(nextThreadId, nodes);
-      if (created.outcome === "failed") {
-        await deleteThread({ environmentId, input: { threadId: nextThreadId } });
-        return created.error;
-      }
-      // An interrupted request may have started the graph: keep its thread and open it
-      // rather than risk running the same tasks twice from the draft.
-      if (created.outcome === "uncertain") {
-        toastManager.add({
-          type: "warning",
-          title: "The task graph request was interrupted",
-          description: "Check the new chat to see whether the graph started.",
-        });
-      }
-      // The graph is running now, so its thread stays even if the shell is slow to arrive;
-      // waiting only keeps the route from opening before the thread is known.
-      await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId));
-      setDraftTaskGraphOpen(false);
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: { environmentId, threadId: nextThreadId },
-      });
-      return null;
-    },
-    [
-      activeProject,
-      activeThread,
-      activeThreadBranch,
-      createThread,
-      deleteThread,
-      draftTaskGraphModel,
+  };
+  const onRunDraftTaskGraph = async (
+    nodes: ReadonlyArray<TaskGraphNode>,
+  ): Promise<string | null> => {
+    const modelSelection = draftTaskGraphModel;
+    if (!activeThread || !activeProject || !modelSelection) {
+      return "Pick a project and model before running the graph.";
+    }
+    const nextThreadId = newThreadId();
+    const createResult = await createThread({
       environmentId,
-      navigate,
-      newTaskGraph,
-      runtimeMode,
-    ],
-  );
+      input: {
+        threadId: nextThreadId,
+        projectId: activeProject.id,
+        title: "New task graph",
+        modelSelection,
+        runtimeMode,
+        interactionMode: "default",
+        branch: activeThreadBranch,
+        worktreePath: activeThread.worktreePath,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    if (createResult._tag === "Failure") {
+      const failure = squashAtomCommandFailure(createResult);
+      return failure instanceof Error ? failure.message : "Could not create the thread.";
+    }
+    const created = await newTaskGraph.createAndRun(nextThreadId, nodes);
+    if (created.outcome === "failed") {
+      await deleteThread({ environmentId, input: { threadId: nextThreadId } });
+      return created.error;
+    }
+    // An interrupted request may have started the graph: keep its thread and open it
+    // rather than risk running the same tasks twice from the draft.
+    if (created.outcome === "uncertain") {
+      toastManager.add({
+        type: "warning",
+        title: "The task graph request was interrupted",
+        description: "Check the new chat to see whether the graph started.",
+      });
+    }
+    // The graph is running now, so its thread stays even if the shell is slow to arrive;
+    // waiting only keeps the route from opening before the thread is known.
+    await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId));
+    setDraftTaskGraphOpen(false);
+    await navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId, threadId: nextThreadId },
+    });
+    return null;
+  };
 
   const getModelDisabledReason = useMemo(
     () =>
