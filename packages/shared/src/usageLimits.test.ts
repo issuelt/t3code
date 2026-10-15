@@ -20,6 +20,8 @@ import {
   displayLimitWindows,
   elapsedShare,
   formatResetsIn,
+  formatUsageCreditAmount,
+  usageCreditSummary,
   limitsNotice,
   paceOf,
   providersWithLimits,
@@ -109,6 +111,53 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+  });
+});
+
+describe("usageCreditSummary", () => {
+  it("shows the amount left under the monthly cap and labels the spend", () => {
+    const summary = usageCreditSummary({
+      isEnabled: true,
+      usedCredits: 99.67,
+      monthlyLimit: 200,
+      currency: "USD",
+    });
+    expect(summary.amount).toBe("$100.33");
+    expect(summary.remainingPercent).toBeCloseTo(50.165);
+    expect(summary.description).toBe("$99.67 of $200.00 spent this month");
+  });
+
+  it("does not invent a balance for unlimited, missing, or disabled spend data", () => {
+    expect(usageCreditSummary({ isEnabled: true, monthlyLimit: null })).toEqual({
+      amount: "No cap",
+      remainingPercent: null,
+      description: "Monthly spend data unavailable",
+    });
+    expect(usageCreditSummary({ isEnabled: true, monthlyLimit: 200, currency: "USD" })).toEqual({
+      amount: "On",
+      remainingPercent: null,
+      description: "$200.00 monthly limit · spend unavailable",
+    });
+    expect(usageCreditSummary({ isEnabled: false, monthlyLimit: 200 })).toEqual({
+      amount: "Off",
+      remainingPercent: null,
+      description: "Usage credits are disabled.",
+    });
+  });
+
+  it("clamps exhausted and zero caps to zero remaining", () => {
+    for (const monthlyLimit of [0, 100]) {
+      const summary = usageCreditSummary({ isEnabled: true, monthlyLimit, usedCredits: 150 });
+      expect(summary.amount).toBe("0");
+      expect(summary.remainingPercent).toBe(0);
+    }
+  });
+});
+
+describe("formatUsageCreditAmount", () => {
+  it("uses the reported currency and keeps an unknown code visible", () => {
+    expect(formatUsageCreditAmount(3.42, "USD")).toBe("$3.42");
+    expect(formatUsageCreditAmount(3.42, "not-a-currency")).toBe("3.42 not-a-currency");
   });
 });
 
@@ -286,7 +335,75 @@ describe("pools", () => {
     expect(collectLimitAccounts(input)).toHaveLength(1);
   });
 
-  it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
+  it.each([false, true])(
+    "uses the money read time rather than stream time (reverse=%s)",
+    (reverse) => {
+      const makeProvider = (checkedAt: string, creditCheckedAt: string, usedCredits: number) =>
+        provider({
+          driver: claude,
+          instanceId: ProviderInstanceId.make("claude"),
+          auth: { status: "authenticated", email: "same@example.com" },
+          usageLimits: {
+            checkedAt,
+            windows: [window],
+            extraUsage: {
+              checkedAt: creditCheckedAt,
+              isEnabled: true,
+              monthlyLimit: 200,
+              usedCredits,
+              currency: "USD",
+            },
+          },
+        });
+      const streamed = makeProvider("2026-09-03T12:00:00.000Z", "2026-09-03T10:00:00.000Z", 0);
+      const probed = makeProvider("2026-09-03T11:00:00.000Z", "2026-09-03T11:00:00.000Z", 100);
+      const reports = [streamed, probed];
+      if (reverse) reports.reverse();
+      const accounts = collectLimitAccounts(
+        new Map(
+          reports.map((report, index) => [
+            EnvironmentId.make(`env-${index}`),
+            { ...laptop, serverConfig: { providers: [report] } },
+          ]),
+        ),
+      );
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.limits.checkedAt).toBe("2026-09-03T12:00:00.000Z");
+      expect(accounts[0]?.limits.extraUsage).toEqual(probed.usageLimits?.extraUsage);
+      expect(usageCreditSummary(accounts[0]!.limits.extraUsage!).amount).toBe("$100.00");
+    },
+  );
+
+  it.each(["native", "source"])("keeps credit-only accounts from a %s report", (kind) => {
+    const extraUsage = { isEnabled: true, usedCredits: 99.67, monthlyLimit: 200, currency: "USD" };
+    const usageLimits = { checkedAt, windows: [], extraUsage };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: kind === "native" ? [provider({ driver: claude, usageLimits })] : [],
+            usageLimitSources:
+              kind === "source"
+                ? [{ ...source, accounts: [{ id: "claude.json", driver: claude, usageLimits }] }]
+                : [],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(limitsNotice(usageLimits)).toBeNull();
+    expect(collectLimitNotices(input)).toEqual([]);
+    expect(accounts).toHaveLength(1);
+    const pools = collectLimitPools(accounts, now);
+    expect(pools).toHaveLength(1);
+    expect(pools[0]?.windows).toEqual([]);
+    expect(pools[0]?.accounts[0]?.limits.extraUsage).toEqual(extraUsage);
+  });
+
+  it("takes fresh windows from a hub but keeps native account details when the hub omits them", () => {
+    const extraUsage = { isEnabled: true, usedCredits: 3.42, monthlyLimit: 25, currency: "USD" };
     const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claude"),
@@ -295,6 +412,7 @@ describe("pools", () => {
         checkedAt,
         windows: [{ ...window, usedPercent: 40 }],
         resetCredits: { availableCount: 2 },
+        extraUsage,
       },
     });
     const input = new Map([
@@ -327,6 +445,7 @@ describe("pools", () => {
     const [account] = collectLimitAccounts(input);
     expect(account?.limits.windows[0]?.usedPercent).toBe(55);
     expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.limits.extraUsage).toEqual(extraUsage);
     expect(account?.redeem).toEqual({ environmentId: "env-a", input: { instanceId: "claude" } });
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });

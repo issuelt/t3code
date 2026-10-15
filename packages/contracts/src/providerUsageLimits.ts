@@ -40,6 +40,18 @@ export const ServerProviderResetCredits = Schema.Struct({
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
+/** Optional paid-plan usage-credit details reported by Claude. */
+export const ServerProviderExtraUsage = Schema.Struct({
+  checkedAt: Schema.optional(IsoDateTime),
+  isEnabled: Schema.Boolean,
+  usedCredits: Schema.optional(Schema.Union([Schema.Number, Schema.Null])),
+  monthlyLimit: Schema.optional(Schema.Union([Schema.Number, Schema.Null])),
+  utilization: Schema.optional(Schema.Union([Schema.Number, Schema.Null])),
+  currency: Schema.optional(Schema.Union([TrimmedNonEmptyString, Schema.Null])),
+  disabledReason: Schema.optional(Schema.Union([TrimmedNonEmptyString, Schema.Null])),
+});
+export type ServerProviderExtraUsage = typeof ServerProviderExtraUsage.Type;
+
 /**
  * Subscription usage the provider knows about the signed-in account.
  *
@@ -53,6 +65,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  extraUsage: Schema.optional(ServerProviderExtraUsage),
   /** Provider-owned usage settings when quota windows are not available to the client. */
   externalUsage: Schema.optional(
     Schema.Struct({

@@ -13,6 +13,7 @@
 import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ProviderUsageLimitsUpdate,
+  ServerProviderExtraUsage,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -29,6 +30,15 @@ import {
 
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
+
+type ClaudeUsageResponse = {
+  readonly rate_limits_available: SDKControlGetUsageResponse["rate_limits_available"];
+  readonly rate_limits:
+    | (Omit<NonNullable<SDKControlGetUsageResponse["rate_limits"]>, "extra_usage"> & {
+        readonly extra_usage?: unknown;
+      })
+    | null;
+};
 
 /**
  * The account-wide windows, keyed by the SDK's `rateLimitType`. Model-scoped
@@ -100,6 +110,54 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
+function readExtraUsage(
+  rateLimits: object,
+  checkedAt: string,
+): ServerProviderExtraUsage | undefined {
+  const raw = (rateLimits as { readonly extra_usage?: unknown }).extra_usage;
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (typeof record["is_enabled"] !== "boolean") return undefined;
+
+  const decimalPlaces = record["decimal_places"];
+  const divisor =
+    typeof decimalPlaces === "number" &&
+    Number.isInteger(decimalPlaces) &&
+    decimalPlaces >= 0 &&
+    decimalPlaces <= 6
+      ? 10 ** decimalPlaces
+      : 100;
+  const toAmount = (value: unknown) => {
+    const amount = readNullableNumber(value);
+    return typeof amount === "number" ? amount / divisor : amount;
+  };
+  const usedCredits = toAmount(record["used_credits"]);
+  const monthlyLimit = toAmount(record["monthly_limit"]);
+  const utilization = readNullableNumber(record["utilization"]);
+  const currency = readNullableString(record["currency"]);
+  const disabledReason = readNullableString(record["disabled_reason"]);
+
+  return {
+    checkedAt,
+    isEnabled: record["is_enabled"],
+    ...(usedCredits !== undefined ? { usedCredits } : {}),
+    ...(monthlyLimit !== undefined ? { monthlyLimit } : {}),
+    ...(utilization !== undefined ? { utilization } : {}),
+    ...(currency !== undefined ? { currency } : {}),
+    ...(disabledReason !== undefined ? { disabledReason } : {}),
+  };
+}
+
+function readNullableNumber(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function readNullableString(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
@@ -155,7 +213,7 @@ export function claudeRateLimitEventToUpdate(
  * scoped-bucket names the response carried, for the event mapper to reuse.
  */
 export function claudeUsageResponseToLimits(input: {
-  readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  readonly response: ClaudeUsageResponse;
   readonly checkedAt: string;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
@@ -166,6 +224,7 @@ export function claudeUsageResponseToLimits(input: {
     };
   }
   const windows: ServerProviderUsageWindow[] = [];
+  const extraUsage = readExtraUsage(response.rate_limits, checkedAt);
   for (const id of Object.keys(WINDOWS)) {
     const window = response.rate_limits[id as "five_hour" | "seven_day"];
     if (!window || typeof window.utilization !== "number") continue;
@@ -184,7 +243,10 @@ export function claudeUsageResponseToLimits(input: {
     overageIncluded ??= entry.display_name;
   }
   return {
-    limits: makeUsageLimits({ checkedAt, windows }),
+    limits: {
+      ...makeUsageLimits({ checkedAt, windows }),
+      ...(extraUsage ? { extraUsage } : {}),
+    },
     names: { overageIncluded },
   };
 }

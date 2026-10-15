@@ -15,6 +15,7 @@ import {
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderExtraUsage,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -34,6 +35,45 @@ export function limitAccountDisplayId(account: LimitAccount) {
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+export const CLAUDE_USAGE_URL = "https://claude.ai/settings/usage";
+
+export function formatUsageCreditAmount(
+  amount: number,
+  currency: string | null | undefined,
+): string {
+  if (!currency) return new Intl.NumberFormat().format(amount);
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
+  } catch {
+    return `${new Intl.NumberFormat().format(amount)} ${currency}`;
+  }
+}
+
+export function usageCreditSummary(credits: ServerProviderExtraUsage) {
+  const format = (amount: number) => formatUsageCreditAmount(amount, credits.currency);
+  const spent = credits.usedCredits;
+  const cap = credits.monthlyLimit;
+  if (!credits.isEnabled) {
+    return { amount: "Off", remainingPercent: null, description: "Usage credits are disabled." };
+  }
+  if (typeof cap === "number" && typeof spent === "number") {
+    return {
+      amount: format(Math.max(0, cap - spent)),
+      remainingPercent: cap > 0 ? Math.max(0, Math.min(100, (1 - spent / cap) * 100)) : 0,
+      description: `${format(spent)} of ${format(cap)} spent this month`,
+    };
+  }
+  return {
+    amount: cap === null ? "No cap" : "On",
+    remainingPercent: null,
+    description:
+      typeof spent === "number"
+        ? `${format(spent)} spent this month`
+        : typeof cap === "number"
+          ? `${format(cap)} monthly limit · spend unavailable`
+          : "Monthly spend data unavailable",
+  };
+}
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
@@ -216,6 +256,7 @@ export function collectLimitAccounts(
 ): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const extraUsageSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // Redeeming through a hub also clears the routing cooldown that hub holds
@@ -239,6 +280,17 @@ export function collectLimitAccounts(
     ) {
       creditSources.set(key, next);
     }
+    const previousExtraUsage = extraUsageSources.get(key);
+    if (
+      next.limits.extraUsage &&
+      (!previousExtraUsage ||
+        Date.parse(next.limits.extraUsage.checkedAt ?? next.limits.checkedAt) >
+          Date.parse(
+            previousExtraUsage.limits.extraUsage?.checkedAt ?? previousExtraUsage.limits.checkedAt,
+          ))
+    ) {
+      extraUsageSources.set(key, next);
+    }
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
@@ -257,6 +309,7 @@ export function collectLimitAccounts(
     // Credits and their redemption target travel together. A failed credit
     // probe must not erase a successful read from another environment.
     const creditSource = creditSources.get(key);
+    const extraUsageSource = extraUsageSources.get(key);
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -273,6 +326,9 @@ export function collectLimitAccounts(
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
+        ...(extraUsageSource?.limits.extraUsage
+          ? { extraUsage: extraUsageSource.limits.extraUsage }
+          : { extraUsage: undefined }),
       },
     });
   };
@@ -569,7 +625,7 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "probeFailed") {
     return limits.unavailable.message ?? "Could not read limits.";
   }
-  return limits.windows.length === 0 ? "No limits reported." : null;
+  return limits.windows.length === 0 && !limits.extraUsage ? "No limits reported." : null;
 }
 
 /** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */

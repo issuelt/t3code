@@ -5,12 +5,15 @@ import {
   type ProviderConsumeResetCreditOutcome,
   type ProviderConsumeResetCreditInput,
   type ServerProvider,
+  type ServerProviderExtraUsage,
   type ServerProviderResetCredits,
   type ServerProviderUsageWindow,
   type UsageProviderKind,
 } from "@t3tools/contracts";
 import {
   elapsedShare,
+  CLAUDE_USAGE_URL,
+  formatUsageCreditAmount,
   formatDuration,
   formatResetsIn,
   limitsNotice,
@@ -100,7 +103,7 @@ function WindowRow(props: {
   );
 }
 
-function AccountInstanceLabel({ value }: { readonly value: string }) {
+export function AccountInstanceLabel({ value }: { readonly value: string }) {
   const [revealed, setRevealed] = useState(false);
   if (!value.includes("@")) {
     return (
@@ -174,6 +177,7 @@ export function AccountLimits(props: {
           ))}
         </View>
       )}
+      {limits.extraUsage ? <ExtraUsageDetails extraUsage={limits.extraUsage} /> : null}
       {externalUsage ? (
         <Pressable
           accessibilityRole="link"
@@ -184,6 +188,49 @@ export function AccountLimits(props: {
         </Pressable>
       ) : null}
       {props.footer}
+    </View>
+  );
+}
+
+function ExtraUsageDetails({ extraUsage }: { readonly extraUsage: ServerProviderExtraUsage }) {
+  const spent =
+    typeof extraUsage.usedCredits === "number"
+      ? formatUsageCreditAmount(extraUsage.usedCredits, extraUsage.currency)
+      : undefined;
+  const monthlyLimit =
+    typeof extraUsage.monthlyLimit === "number"
+      ? formatUsageCreditAmount(extraUsage.monthlyLimit, extraUsage.currency)
+      : extraUsage.monthlyLimit === null
+        ? "No monthly cap"
+        : undefined;
+
+  return (
+    <View className="gap-1 border-t border-border-subtle pt-3">
+      <Text className="text-sm font-t3-medium text-foreground">Usage credits</Text>
+      <Text className="text-sm text-foreground-muted">{extraUsage.isEnabled ? "On" : "Off"}</Text>
+      {extraUsage.isEnabled && spent ? (
+        <Text className="text-sm text-foreground-muted">
+          Spent {spent}
+          {monthlyLimit && monthlyLimit !== "No monthly cap" ? ` of ${monthlyLimit}` : ""} this
+          month
+        </Text>
+      ) : null}
+      {extraUsage.isEnabled && monthlyLimit === "No monthly cap" ? (
+        <Text className="text-sm text-foreground-muted">No monthly spend cap</Text>
+      ) : null}
+      {extraUsage.isEnabled && !spent && monthlyLimit && monthlyLimit !== "No monthly cap" ? (
+        <Text className="text-sm text-foreground-muted">Monthly cap: {monthlyLimit}</Text>
+      ) : null}
+      {extraUsage.isEnabled && !spent && !monthlyLimit ? (
+        <Text className="text-sm text-foreground-muted">Spend data unavailable</Text>
+      ) : null}
+      <Pressable
+        accessibilityRole="link"
+        className="min-h-11 justify-center"
+        onPress={() => void Linking.openURL(CLAUDE_USAGE_URL).catch(() => undefined)}
+      >
+        <Text className="text-sm font-t3-medium text-primary">Manage in Claude</Text>
+      </Pressable>
     </View>
   );
 }

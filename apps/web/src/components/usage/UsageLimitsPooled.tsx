@@ -1,5 +1,7 @@
+import { type ServerProviderExtraUsage } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_URL,
+  CLAUDE_USAGE_URL,
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -7,6 +9,8 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  formatUsageCreditAmount,
+  usageCreditSummary,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
@@ -132,6 +136,49 @@ function Row({ label, children }: { readonly label: string; readonly children: R
   );
 }
 
+function ExtraUsageDetails({ extraUsage }: { readonly extraUsage: ServerProviderExtraUsage }) {
+  const spent =
+    typeof extraUsage.usedCredits === "number"
+      ? formatUsageCreditAmount(extraUsage.usedCredits, extraUsage.currency)
+      : undefined;
+  const monthlyLimit =
+    typeof extraUsage.monthlyLimit === "number"
+      ? formatUsageCreditAmount(extraUsage.monthlyLimit, extraUsage.currency)
+      : extraUsage.monthlyLimit === null
+        ? "No monthly cap"
+        : undefined;
+
+  return (
+    <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
+      <Row label="Usage credits">{extraUsage.isEnabled ? "On" : "Off"}</Row>
+      {extraUsage.isEnabled && spent ? (
+        <Row label="Spent">
+          {spent}
+          {monthlyLimit && monthlyLimit !== "No monthly cap" ? ` of ${monthlyLimit}` : ""} this
+          month
+        </Row>
+      ) : null}
+      {extraUsage.isEnabled && monthlyLimit === "No monthly cap" ? (
+        <Row label="Monthly cap">No cap</Row>
+      ) : null}
+      {extraUsage.isEnabled && !spent && monthlyLimit && monthlyLimit !== "No monthly cap" ? (
+        <Row label="Monthly cap">{monthlyLimit}</Row>
+      ) : null}
+      {extraUsage.isEnabled && !spent && !monthlyLimit ? (
+        <Row label="Spend data">Unavailable</Row>
+      ) : null}
+      <a
+        href={CLAUDE_USAGE_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-1 w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+      >
+        Manage usage credits in Claude
+      </a>
+    </div>
+  );
+}
+
 /**
  * Everything about one account in one window: plan, where it is signed in,
  * the email on request, reset time and share of the pool it restores, and the
@@ -199,6 +246,9 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
+      {account.limits.extraUsage ? (
+        <ExtraUsageDetails extraUsage={account.limits.extraUsage} />
+      ) : null}
       {credits && redeem ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
           <span className="flex items-center gap-3">
@@ -533,6 +583,79 @@ function PoolWindowCard({
   );
 }
 
+function UsageCreditsCard({
+  account,
+  credits,
+  color,
+  showAccountName,
+}: {
+  readonly account: LimitAccount;
+  readonly credits: ServerProviderExtraUsage;
+  readonly color: string;
+  readonly showAccountName: boolean;
+}) {
+  const summary = usageCreditSummary(credits);
+  return (
+    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+      <div className="flex flex-col gap-1">
+        <span className="text-sm font-medium text-foreground">Usage credits</span>
+        <span className="flex items-baseline gap-2">
+          <span className="text-3xl font-semibold text-foreground tabular-nums">
+            {summary.amount}
+          </span>
+          {summary.remainingPercent !== null ? (
+            <span className="text-sm text-muted-foreground">left</span>
+          ) : null}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2">
+        {showAccountName ? (
+          account.email && !account.displayName ? (
+            <RedactedSensitiveText
+              key={account.email}
+              value={account.email}
+              ariaLabel="Toggle credit account email visibility"
+              revealTooltip="Click to reveal account"
+              hideTooltip="Click to hide account"
+              className="w-fit break-all text-xs"
+            />
+          ) : (
+            <AccountName account={account} className="text-xs font-medium text-foreground" />
+          )
+        ) : null}
+        {summary.remainingPercent !== null ? (
+          <div
+            role="progressbar"
+            aria-label="Usage credits remaining under monthly limit"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={summary.remainingPercent}
+            aria-valuetext={`${summary.amount} left. ${summary.description}`}
+            className="relative h-8 overflow-hidden rounded-lg bg-muted/50"
+          >
+            <div
+              className="h-full opacity-35"
+              style={{ width: `${summary.remainingPercent}%`, backgroundColor: color }}
+            />
+            <span className="absolute inset-0 flex items-center px-2 text-xs font-medium text-foreground tabular-nums">
+              {Math.round(summary.remainingPercent)}%
+            </span>
+          </div>
+        ) : null}
+        <span className="text-xs text-muted-foreground tabular-nums">{summary.description}</span>
+        <a
+          href={CLAUDE_USAGE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          Manage usage credits
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
@@ -562,6 +685,17 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+      {pool.accounts.map((account) =>
+        account.limits.extraUsage ? (
+          <UsageCreditsCard
+            key={`credits:${account.key}`}
+            account={account}
+            credits={account.limits.extraUsage}
+            color={color}
+            showAccountName={pool.accounts.length > 1}
+          />
+        ) : null,
+      )}
     </section>
   );
 }

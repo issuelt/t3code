@@ -1,7 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerProviderExtraUsage } from "@t3tools/contracts";
 import {
+  CLAUDE_USAGE_URL,
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -10,6 +11,7 @@ import {
   displayLimitWindows,
   formatResetsIn,
   remainingPercent,
+  usageCreditSummary,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
@@ -23,7 +25,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
-import { ResetCredits } from "./UsageLimitsSection";
+import { AccountInstanceLabel, ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
@@ -212,6 +214,65 @@ function PoolWindowCard({
   );
 }
 
+function UsageCreditsCard({
+  credits,
+  color,
+  account,
+  showAccountName,
+}: {
+  readonly credits: ServerProviderExtraUsage;
+  readonly color: string;
+  readonly account: LimitAccount;
+  readonly showAccountName: boolean;
+}) {
+  const summary = usageCreditSummary(credits);
+  return (
+    <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
+      <View className="gap-1">
+        <Text className="text-sm font-t3-medium text-foreground">Usage credits</Text>
+        <View className="flex-row items-baseline gap-1.5">
+          <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
+            {summary.amount}
+          </Text>
+          {summary.remainingPercent !== null ? (
+            <Text className="text-sm text-foreground-muted">left</Text>
+          ) : null}
+        </View>
+      </View>
+      {showAccountName ? (
+        account.email && !account.displayName ? (
+          <AccountInstanceLabel key={account.email} value={account.email} />
+        ) : (
+          <Text className="text-xs font-t3-medium text-foreground">{accountName(account)}</Text>
+        )
+      ) : null}
+      {summary.remainingPercent !== null ? (
+        <View
+          accessibilityRole="progressbar"
+          accessibilityLabel="Usage credits remaining under monthly limit"
+          accessibilityValue={{
+            min: 0,
+            max: 100,
+            now: summary.remainingPercent,
+            text: summary.amount,
+          }}
+          className="h-7 overflow-hidden rounded-md bg-subtle"
+        >
+          <AccountSegment remaining={summary.remainingPercent} color={color} pending={false} />
+        </View>
+      ) : null}
+      <Text className="text-xs tabular-nums text-foreground-muted">{summary.description}</Text>
+      <Pressable
+        accessibilityRole="link"
+        className="min-h-11 justify-center"
+        onPress={() => void Linking.openURL(CLAUDE_USAGE_URL).catch(() => undefined)}
+      >
+        <Text className="text-sm font-t3-medium text-primary">Manage usage credits</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export function UsageLimitsSection({
   now,
   failedLabels,
@@ -285,6 +346,17 @@ export function UsageLimitsSection({
                   />
                 );
               })}
+              {pool.accounts.map((account) =>
+                account.limits.extraUsage ? (
+                  <UsageCreditsCard
+                    key={`credits:${account.key}`}
+                    account={account}
+                    credits={account.limits.extraUsage}
+                    color={colors.claude}
+                    showAccountName={pool.accounts.length > 1}
+                  />
+                ) : null,
+              )}
             </View>
           </Fragment>
         );

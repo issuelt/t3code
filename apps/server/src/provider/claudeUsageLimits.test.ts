@@ -6,6 +6,57 @@ const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
 
 describe("claudeUsageResponseToLimits", () => {
+  it("maps Claude paid-plan usage-credit spend and monthly cap", () => {
+    const extraUsage = {
+      is_enabled: true,
+      monthly_limit: 20000,
+      used_credits: 9967,
+      utilization: 49.835,
+      currency: "USD",
+      decimal_places: 2,
+    };
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 12, resets_at: null },
+            extra_usage: extraUsage,
+          },
+        },
+      }).limits.extraUsage,
+    ).toEqual({
+      checkedAt,
+      isEnabled: true,
+      monthlyLimit: 200,
+      usedCredits: 99.67,
+      utilization: 49.835,
+      currency: "USD",
+    });
+  });
+
+  it.each([
+    { decimal_places: undefined, expected: 10 },
+    { decimal_places: 0, expected: 1000 },
+    { decimal_places: 3, expected: 1 },
+    { decimal_places: -1, expected: 10 },
+  ])("normalizes money with decimal_places=$decimal_places", ({ decimal_places, expected }) => {
+    const extraUsage = {
+      is_enabled: true,
+      monthly_limit: null,
+      used_credits: 1000,
+      utilization: null,
+      decimal_places,
+    };
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: { rate_limits_available: true, rate_limits: { extra_usage: extraUsage } },
+    });
+    expect(limits.extraUsage?.usedCredits).toBe(expected);
+    expect(limits.extraUsage?.monthlyLimit).toBeNull();
+  });
+
   it("maps the session, weekly, and model-scoped weekly windows", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -37,6 +88,13 @@ describe("claudeUsageResponseToLimits", () => {
       names: { overageIncluded: "Fable" },
       limits: {
         checkedAt,
+        extraUsage: {
+          checkedAt,
+          isEnabled: false,
+          monthlyLimit: null,
+          usedCredits: null,
+          utilization: null,
+        },
         windows: [
           {
             id: "five_hour",
