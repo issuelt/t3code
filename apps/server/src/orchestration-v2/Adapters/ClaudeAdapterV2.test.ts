@@ -14345,9 +14345,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               const again = yield* Effect.forkScoped(steer);
               // The steer's 5 second wait starts once it reaches it; move the
               // clock until the steer has gone out.
+              // The steer reads skill directories first, so give real I/O time
+              // to finish between ticks instead of only yielding the fiber.
               for (let tick = 0; tick < 100 && again.pollUnsafe() === undefined; tick++) {
                 yield* TestClock.adjust("1 second");
-                yield* Effect.yieldNow;
+                yield* TestClock.withLive(Effect.sleep("10 millis"));
               }
               assert.isTrue(Exit.isSuccess(yield* Fiber.await(again)));
               assert.equal(harness.offeredMessages.length, offered + 1 + repeat);
