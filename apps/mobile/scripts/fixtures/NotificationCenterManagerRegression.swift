@@ -186,14 +186,16 @@ private func partiallyHandledReplay() throws {
   let manager = NotificationCenterManager.shared
   deliver("handled")
   deliver("unhandled")
-  let original = TestDelegate()
-  original.onResponse = { $0.identifier == "handled" }
-  manager.addDelegate(original)
+  let selective = TestDelegate()
+  selective.onResponse = { $0.identifier == "handled" }
+  manager.addDelegate(selective)
+  try require(selective.events == ["handled", "unhandled"], "Replay must offer every pending response to the delegate")
+  manager.removeDelegate(selective)
+
   let receiver = TestDelegate()
   receiver.onResponse = { _ in true }
   manager.addDelegate(receiver)
-  try require(receiver.events == ["unhandled"], "Replay must retain each response that the delegate did not handle")
-  manager.removeDelegate(original)
+  try require(receiver.events == ["unhandled"], "Replay must retain only responses the previous delegate did not handle")
   manager.removeDelegate(receiver)
 }
 
