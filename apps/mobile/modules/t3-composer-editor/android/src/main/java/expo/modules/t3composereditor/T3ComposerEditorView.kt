@@ -664,7 +664,8 @@ internal class SelectionAwareEditText(
       event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD ||
         (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD) != 0
     val canSubmit = isEnabled && !readOnly && submitEnabled && submitListener != null
-    if (!isReturn || fromSoftKeyboard || !canSubmit || BaseInputConnection.getComposingSpanStart(text) >= 0) {
+    val composing = BaseInputConnection.getComposingSpanStart(text) >= 0
+    if (!isReturn || fromSoftKeyboard || !canSubmit || composing) {
       return null
     }
     return when {

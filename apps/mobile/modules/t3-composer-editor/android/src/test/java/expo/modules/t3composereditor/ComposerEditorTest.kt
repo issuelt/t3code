@@ -319,13 +319,14 @@ class ComposerEditorTest {
     ) = 0
   }
 
-  private fun submissionEditor(sends: MutableList<Boolean>) = SelectionAwareEditText(context).apply {
-    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-    setText("draft")
-    setSelection(length())
-    submitEnabled = true
-    submitListener = { sends += it }
-  }
+  private fun submissionEditor(sends: MutableList<Boolean>) =
+    SelectionAwareEditText(context).apply {
+      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+      setText("draft")
+      setSelection(length())
+      submitEnabled = true
+      submitListener = { sends += it }
+    }
 
   private fun SelectionAwareEditText.pressReturn(
     modifiers: Int = 0,
