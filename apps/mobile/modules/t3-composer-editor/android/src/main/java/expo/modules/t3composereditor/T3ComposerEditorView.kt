@@ -20,6 +20,7 @@ import android.util.TypedValue
 import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.MotionEvent
 import android.view.KeyEvent
@@ -701,10 +702,22 @@ internal class SelectionAwareEditText(
   override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
     val connection = super.onCreateInputConnection(outAttrs) ?: return null
     return object : InputConnectionWrapper(connection, false) {
-      // IMEs can send unmarked events; preserve their origin through asynchronous key dispatch.
-      override fun sendKeyEvent(event: KeyEvent): Boolean = super.sendKeyEvent(
-        KeyEvent.changeFlags(event, event.flags or KeyEvent.FLAG_SOFT_KEYBOARD)
-      )
+      // IMEs can also forward physical keys with their original device ID.
+      override fun sendKeyEvent(event: KeyEvent): Boolean {
+        val device = InputDevice.getDevice(event.deviceId)
+        val fromHardwareKeyboard = device != null && !device.isVirtual &&
+          device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+        return super.sendKeyEvent(
+          if (fromHardwareKeyboard) {
+            event
+          } else {
+            KeyEvent.changeFlags(
+              event,
+              event.flags or KeyEvent.FLAG_SOFT_KEYBOARD
+            )
+          }
+        )
+      }
 
       override fun deleteSurroundingText(
         beforeLength: Int,
