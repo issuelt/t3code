@@ -599,16 +599,11 @@ internal class SelectionAwareEditText(
   var pasteContextListener: ((Map<String, String>) -> Unit)? = null
   var pasteTextListener: ((String, Int, Int) -> Unit)? = null
 
-  /** Called for a hardware-keyboard send chord. The argument is true for the alternate send. */
   var submitListener: ((Boolean) -> Unit)? = null
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
-
-  /** Whether a hardware Return sends (`enterBehavior` "send") or inserts a newline. */
   var returnSends = true
-
-  /** The JS wrapper enables submission only when it has an onSubmit handler. */
   var submitEnabled = false
 
   /**
@@ -661,19 +656,13 @@ internal class SelectionAwareEditText(
     return spans.isNotEmpty()
   }
 
-  /**
-   * Maps a hardware Return chord to a send, like the iOS composer. The plainer chord does the
-   * configured behavior and the Ctrl chord does the other one: with "send", Return sends,
-   * Ctrl-Return sends the alternate way and Shift-Return inserts a newline; with "newline",
-   * Ctrl-Return sends and Ctrl-Shift-Return sends the alternate way. Returns whether the send is
-   * the alternate one, or null to insert a newline. Soft keyboards always insert a newline.
-   */
+  // Match iPad submission chords with Ctrl in place of Command; null leaves normal editing.
   private fun submitChord(keyCode: Int, event: KeyEvent): Boolean? {
     val isReturn = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
     val fromSoftKeyboard =
       event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD ||
         (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD) != 0
-    val canSubmit = submitEnabled && submitListener != null && !readOnly
+    val canSubmit = isEnabled && !readOnly && submitEnabled && submitListener != null
     if (!isReturn || fromSoftKeyboard || !canSubmit) {
       return null
     }

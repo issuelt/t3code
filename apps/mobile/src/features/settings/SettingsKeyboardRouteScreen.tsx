@@ -16,7 +16,6 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 
-// Android keyboards send with Ctrl where iPad keyboards use Command.
 const SEND_MODIFIER = Platform.OS === "android" ? "Ctrl" : "Command";
 
 const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
