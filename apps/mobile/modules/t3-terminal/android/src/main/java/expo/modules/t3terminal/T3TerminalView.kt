@@ -278,14 +278,22 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+      val controlByte = when (keyCode) {
+        in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> keyCode - KeyEvent.KEYCODE_A + 1
+        KeyEvent.KEYCODE_LEFT_BRACKET -> 0x1B
+        KeyEvent.KEYCODE_BACKSLASH -> 0x1C
+        KeyEvent.KEYCODE_RIGHT_BRACKET -> 0x1D
+        else -> null
+      }
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
           onInput(mapOf("data" to "\u007F"))
           true
         }
-        event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
+        // The terminal owns control chords before the app's navigation shortcuts.
+        event.isCtrlPressed && controlByte != null -> {
           onInput(
-            mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
+            mapOf("data" to controlByte.toChar().toString()),
           )
           true
         }
