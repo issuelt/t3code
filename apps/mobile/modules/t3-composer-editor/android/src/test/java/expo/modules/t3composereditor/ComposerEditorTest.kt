@@ -15,6 +15,7 @@ import android.view.DragEvent
 import android.view.KeyCharacterMap
 import android.view.View
 import android.view.KeyEvent
+import android.view.inputmethod.BaseInputConnection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -352,6 +353,23 @@ class ComposerEditorTest {
 
     assertEquals(listOf(false, true), sends)
     assertEquals("draft\n", editor.text.toString())
+  }
+
+  @Test
+  fun hardwareReturnWaitsUntilCompositionEndsToSubmit() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends)
+    BaseInputConnection.setComposingSpans(editor.text)
+    assertTrue(BaseInputConnection.getComposingSpanStart(editor.text) >= 0)
+
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
+
+    BaseInputConnection.removeComposingSpans(editor.text)
+    assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))
+
+    editor.pressReturn()
+    assertEquals(listOf(false), sends)
   }
 
   @Test
