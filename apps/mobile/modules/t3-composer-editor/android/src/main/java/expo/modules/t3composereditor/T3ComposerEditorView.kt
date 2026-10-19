@@ -701,6 +701,11 @@ internal class SelectionAwareEditText(
   override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
     val connection = super.onCreateInputConnection(outAttrs) ?: return null
     return object : InputConnectionWrapper(connection, false) {
+      // IMEs can send unmarked events; preserve their origin through asynchronous key dispatch.
+      override fun sendKeyEvent(event: KeyEvent): Boolean = super.sendKeyEvent(
+        KeyEvent.changeFlags(event, event.flags or KeyEvent.FLAG_SOFT_KEYBOARD)
+      )
+
       override fun deleteSurroundingText(
         beforeLength: Int,
         afterLength: Int

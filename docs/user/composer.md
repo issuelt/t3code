@@ -85,9 +85,12 @@ start of the composer to edit the most recently queued message. Change
 
 Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
-other action for a single message, or hold `Cmd` on iPad or `Ctrl` on Android
-while sending from a hardware keyboard. The button only offers Steer when the
-running agent supports it.
+other action for a single message. With a hardware keyboard, `Cmd+Return` on
+iPad or `Ctrl+Return` on Android uses the other action when Return sends. If
+Return inserts a new line instead (**Settings → Keyboard**), add `Shift` for the
+other action; without `Shift`, the shortcut uses your default. See
+[mobile keyboard shortcuts](./keybindings.md#ipad-and-android). The button only
+offers Steer when the running agent supports it.
 
 ## Queue messages offline on mobile
 
