@@ -27,15 +27,17 @@ const orchestrationError = (error: { readonly message: string }) =>
   failure("orchestration_error", error.message);
 
 /** A graph the calling thread created; agents only steer their own graphs. */
-const ownGraph = (graphId: TaskGraphId, threadId: ThreadId) =>
-  Effect.gen(function* () {
-    const service = yield* TaskGraphService.TaskGraphService;
-    const graph = yield* service.get(graphId).pipe(Effect.mapError(orchestrationError));
-    if (graph.threadId !== threadId) {
-      return yield* failure("invalid_request", "That task graph belongs to another thread.");
-    }
-    return service;
-  });
+const ownGraph = Effect.fn("TaskGraphToolkit.ownGraph")(function* (
+  graphId: TaskGraphId,
+  threadId: ThreadId,
+) {
+  const service = yield* TaskGraphService.TaskGraphService;
+  const graph = yield* service.get(graphId).pipe(Effect.mapError(orchestrationError));
+  if (graph.threadId !== threadId) {
+    return yield* failure("invalid_request", "That task graph belongs to another thread.");
+  }
+  return service;
+});
 
 const handlers = {
   task_graph_create: McpToolAccess.actsAsCaller((input) =>

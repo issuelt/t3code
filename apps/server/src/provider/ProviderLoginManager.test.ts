@@ -7,7 +7,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -36,6 +36,7 @@ interface FakePty extends PtyProcess {
 // Shared recorders — reset at the start of each test.
 const spawned: FakePty[] = [];
 const refreshed: string[] = [];
+let refreshedSignal: Deferred.Deferred<void> | undefined;
 const codexStarts: CodexDeviceAuthStartInput[] = [];
 let codexCanceled = false;
 let codexCompletion: Effect.Effect<{ readonly success: boolean }> = Effect.never;
@@ -44,6 +45,7 @@ let settingsOverride: ServerSettings = DEFAULT_SERVER_SETTINGS;
 const reset = (settings: ServerSettings) => {
   spawned.length = 0;
   refreshed.length = 0;
+  refreshedSignal = undefined;
   codexStarts.length = 0;
   codexCanceled = false;
   codexCompletion = Effect.never;
@@ -110,7 +112,11 @@ const ProviderRegistryMock = Layer.mock(ProviderRegistry)({
     Effect.sync(() => {
       refreshed.push(id);
       return [];
-    }),
+    }).pipe(
+      Effect.tap(() =>
+        refreshedSignal === undefined ? Effect.void : Deferred.succeed(refreshedSignal, undefined),
+      ),
+    ),
   getProviderMaintenanceCapabilitiesForInstance: () =>
     Effect.die("not used in ProviderLoginManager tests"),
   setProviderMaintenanceActionState: () => Effect.succeed([]),
@@ -161,15 +167,6 @@ const collectInto = (events: ProviderLoginStreamEvent[]) => (event: ProviderLogi
     events.push(event);
   });
 
-const waitUntil = (predicate: () => boolean) =>
-  Effect.gen(function* () {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (predicate()) return;
-      yield* Effect.sleep(Duration.millis(5));
-    }
-    throw new Error("timed out waiting for condition");
-  });
-
 it.layer(TestLayer)("ProviderLoginManager", (it) => {
   it.effect("starts structured Codex device auth and refreshes on completion", () =>
     Effect.gen(function* () {
@@ -177,10 +174,18 @@ it.layer(TestLayer)("ProviderLoginManager", (it) => {
       codexCompletion = Effect.succeed({ success: true });
       const manager = yield* ProviderLoginManager.ProviderLoginManager;
       const events: ProviderLoginStreamEvent[] = [];
+      const exited = yield* Deferred.make<void>();
+      const refreshedInstance = yield* Deferred.make<void>();
+      refreshedSignal = refreshedInstance;
 
       const unsubscribe = yield* manager.attachStream(
         { instanceId: ProviderInstanceId.make("codex_lifecycle") },
-        collectInto(events),
+        (event) =>
+          collectInto(events)(event).pipe(
+            Effect.andThen(() =>
+              event.type === "exited" ? Deferred.succeed(exited, undefined) : Effect.void,
+            ),
+          ),
       );
 
       expect(spawned).toHaveLength(0);
@@ -198,14 +203,14 @@ it.layer(TestLayer)("ProviderLoginManager", (it) => {
         url: "https://auth.openai.com/device",
         code: "ABCD-1234",
       });
-      yield* waitUntil(() => events.some((event) => event.type === "exited"));
+      yield* Deferred.await(exited);
       expect(events.find((event) => event.type === "exited")).toMatchObject({
         type: "exited",
         exitCode: 0,
       });
 
       // Exit triggers a health re-probe for the instance.
-      yield* waitUntil(() => refreshed.includes("codex_lifecycle"));
+      yield* Deferred.await(refreshedInstance);
       expect(refreshed).toContain("codex_lifecycle");
 
       unsubscribe();

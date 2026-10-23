@@ -190,192 +190,122 @@ const make = Effect.fn("ProviderLoginManager.make")(function* () {
       ),
     );
 
-  const resolveLoginSpec = (
+  const resolveLoginSpec = Effect.fn("ProviderLoginManager.resolveLoginSpec")(function* (
     instanceId: ProviderInstanceId,
-  ): Effect.Effect<
+  ): Effect.fn.Return<
     ResolvedLoginSpec,
     | ProviderLoginInstanceNotFoundError
     | ProviderLoginUnsupportedDriverError
     | ProviderLoginSpawnError
-  > =>
-    Effect.gen(function* () {
-      const settings = yield* serverSettings.getSettings.pipe(
+  > {
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderLoginSpawnError({
+            instanceId,
+            detail: `failed to read settings: ${describeCause(cause)}`,
+          }),
+      ),
+    );
+    const envelope = deriveProviderInstanceConfigMap(settings)[instanceId];
+    if (envelope === undefined) {
+      return yield* new ProviderLoginInstanceNotFoundError({ instanceId });
+    }
+    const driver = envelope.driver;
+
+    if (driver === "codex") {
+      const config = yield* decodeCodexSettings(envelope.config ?? {}).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderLoginSpawnError({
               instanceId,
-              detail: `failed to read settings: ${describeCause(cause)}`,
+              detail: `invalid codex config: ${describeCause(cause)}`,
             }),
         ),
       );
-      const envelope = deriveProviderInstanceConfigMap(settings)[instanceId];
-      if (envelope === undefined) {
-        return yield* new ProviderLoginInstanceNotFoundError({ instanceId });
-      }
-      const driver = envelope.driver;
+      const layout = yield* resolveCodexHomeLayout(config).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      const codexHome = layout.effectiveHomePath;
+      const prepare: Effect.Effect<void, ProviderLoginSpawnError> =
+        layout.mode === "authOverlay"
+          ? materializeCodexShadowHome(layout).pipe(
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderLoginSpawnError({
+                    instanceId,
+                    detail: `failed to materialize codex home: ${describeCause(cause)}`,
+                  }),
+              ),
+            )
+          : codexHome
+            ? makeDirectory(codexHome).pipe(Effect.asVoid)
+            : Effect.void;
+      const args = ["login", "--device-auth"] as const;
+      return {
+        driver,
+        command: config.binaryPath,
+        args,
+        env: codexHome ? { ...baseEnv, CODEX_HOME: codexHome } : baseEnv,
+        commandLabel: `${config.binaryPath} ${args.join(" ")}`,
+        ensureHomeDir: codexHome,
+        prepare,
+        transport: "codexDeviceAuth",
+      } satisfies ResolvedLoginSpec;
+    }
 
-      if (driver === "codex") {
-        const config = yield* decodeCodexSettings(envelope.config ?? {}).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderLoginSpawnError({
-                instanceId,
-                detail: `invalid codex config: ${describeCause(cause)}`,
-              }),
-          ),
-        );
-        const layout = yield* resolveCodexHomeLayout(config).pipe(
-          Effect.provideService(Path.Path, path),
-        );
-        const codexHome = layout.effectiveHomePath;
-        const prepare: Effect.Effect<void, ProviderLoginSpawnError> =
-          layout.mode === "authOverlay"
-            ? materializeCodexShadowHome(layout).pipe(
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderLoginSpawnError({
-                      instanceId,
-                      detail: `failed to materialize codex home: ${describeCause(cause)}`,
-                    }),
-                ),
-              )
-            : codexHome
-              ? makeDirectory(codexHome).pipe(Effect.asVoid)
-              : Effect.void;
-        const args = ["login", "--device-auth"] as const;
-        return {
-          driver,
-          command: config.binaryPath,
-          args,
-          env: codexHome ? { ...baseEnv, CODEX_HOME: codexHome } : baseEnv,
-          commandLabel: `${config.binaryPath} ${args.join(" ")}`,
-          ensureHomeDir: codexHome,
-          prepare,
-          transport: "codexDeviceAuth",
-        } satisfies ResolvedLoginSpec;
-      }
+    if (driver === "claudeAgent") {
+      const config = yield* decodeClaudeSettings(envelope.config ?? {}).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderLoginSpawnError({
+              instanceId,
+              detail: `invalid claude config: ${describeCause(cause)}`,
+            }),
+        ),
+      );
+      const env = yield* makeClaudeEnvironment(config, baseEnv).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      const home = yield* resolveClaudeHomePath(config).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      const isolated = config.homePath.trim().length > 0;
+      const args = ["setup-token"] as const;
+      return {
+        driver,
+        command: config.binaryPath,
+        args,
+        env,
+        commandLabel: `${config.binaryPath} ${args.join(" ")}`,
+        ensureHomeDir: isolated ? home : undefined,
+        prepare: isolated ? makeDirectory(home).pipe(Effect.asVoid) : Effect.void,
+        transport: "pty",
+      } satisfies ResolvedLoginSpec;
+    }
 
-      if (driver === "claudeAgent") {
-        const config = yield* decodeClaudeSettings(envelope.config ?? {}).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderLoginSpawnError({
-                instanceId,
-                detail: `invalid claude config: ${describeCause(cause)}`,
-              }),
-          ),
-        );
-        const env = yield* makeClaudeEnvironment(config, baseEnv).pipe(
-          Effect.provideService(Path.Path, path),
-        );
-        const home = yield* resolveClaudeHomePath(config).pipe(
-          Effect.provideService(Path.Path, path),
-        );
-        const isolated = config.homePath.trim().length > 0;
-        const args = ["setup-token"] as const;
-        return {
-          driver,
-          command: config.binaryPath,
-          args,
-          env,
-          commandLabel: `${config.binaryPath} ${args.join(" ")}`,
-          ensureHomeDir: isolated ? home : undefined,
-          prepare: isolated ? makeDirectory(home).pipe(Effect.asVoid) : Effect.void,
-          transport: "pty",
-        } satisfies ResolvedLoginSpec;
-      }
+    return yield* new ProviderLoginUnsupportedDriverError({ instanceId, driver });
+  });
 
-      return yield* new ProviderLoginUnsupportedDriverError({ instanceId, driver });
-    });
-
-  const spawnSession = (
+  const spawnSession = Effect.fn("ProviderLoginManager.spawnSession")(function* (
     request: ProviderLoginStartRequest,
-  ): Effect.Effect<
+  ): Effect.fn.Return<
     LoginSession,
     | ProviderLoginInstanceNotFoundError
     | ProviderLoginUnsupportedDriverError
     | ProviderLoginSpawnError
-  > =>
-    Effect.gen(function* () {
-      const spec = yield* resolveLoginSpec(request.instanceId);
-      yield* spec.prepare;
-      if (spec.transport === "codexDeviceAuth") {
-        const loginScope = yield* Scope.make();
-        const closeLoginScope = Scope.close(loginScope, Exit.void).pipe(Effect.ignore);
-        const auth = yield* codexDeviceAuth
-          .start({ binaryPath: spec.command, cwd, env: spec.env })
-          .pipe(
-            Effect.provideService(Scope.Scope, loginScope),
-            Effect.mapError(
-              (cause) =>
-                new ProviderLoginSpawnError({
-                  instanceId: request.instanceId,
-                  detail: describeCause(cause),
-                }),
-            ),
-            Effect.onError(() => closeLoginScope),
-          );
-        const session: LoginSession = {
-          instanceId: request.instanceId,
-          driver: spec.driver,
-          pty: undefined,
-          cancel: auth.cancel.pipe(Effect.ignore, Effect.ensuring(closeLoginScope)),
-          listeners: new Set(),
-          buffer: [],
-          bufferBytes: 0,
-          exited: false,
-        };
-        sessions.set(request.instanceId, session);
-        publish(session, {
-          type: "started",
-          instanceId: request.instanceId,
-          driver: spec.driver,
-          commandLabel: `${spec.command} app-server: account/login/start`,
-        });
-        publish(session, {
-          type: "challenge",
-          url: auth.verificationUrl,
-          code: auth.userCode,
-        });
-        runFork(
-          auth.completion.pipe(
-            Effect.flatMap((completion) =>
-              Effect.sync(() => {
-                if (session.exited) return;
-                session.exited = true;
-                publish(session, {
-                  type: "exited",
-                  exitCode: completion.success ? 0 : 1,
-                  exitSignal: null,
-                });
-                if (sessions.get(request.instanceId) === session) {
-                  sessions.delete(request.instanceId);
-                }
-              }),
-            ),
-            Effect.andThen(
-              providerRegistry
-                .refreshInstance(request.instanceId)
-                .pipe(Effect.ignoreCause({ log: true })),
-            ),
-            Effect.ensuring(closeLoginScope),
-            Effect.ignoreCause({ log: true }),
-          ),
-        );
-        return session;
-      }
-      const pty = yield* ptyAdapter
-        .spawn({
-          shell: spec.command,
-          args: [...spec.args],
-          cwd,
-          cols: request.cols ?? DEFAULT_COLS,
-          rows: request.rows ?? DEFAULT_ROWS,
-          env: spec.env,
-        })
+  > {
+    const spec = yield* resolveLoginSpec(request.instanceId);
+    yield* spec.prepare;
+    if (spec.transport === "codexDeviceAuth") {
+      const loginScope = yield* Scope.make();
+      const closeLoginScope = Scope.close(loginScope, Exit.void).pipe(Effect.ignore);
+      const auth = yield* codexDeviceAuth
+        .start({ binaryPath: spec.command, cwd, env: spec.env })
         .pipe(
+          Effect.provideService(Scope.Scope, loginScope),
           Effect.mapError(
             (cause) =>
               new ProviderLoginSpawnError({
@@ -383,50 +313,118 @@ const make = Effect.fn("ProviderLoginManager.make")(function* () {
                 detail: describeCause(cause),
               }),
           ),
+          Effect.onError(() => closeLoginScope),
         );
-
       const session: LoginSession = {
         instanceId: request.instanceId,
         driver: spec.driver,
-        pty,
-        cancel: Effect.sync(() => pty.kill()),
+        pty: undefined,
+        cancel: auth.cancel.pipe(Effect.ignore, Effect.ensuring(closeLoginScope)),
         listeners: new Set(),
         buffer: [],
         bufferBytes: 0,
         exited: false,
       };
       sessions.set(request.instanceId, session);
-
-      pty.onData((data) => publish(session, { type: "output", data }));
-      pty.onExit((exit) => {
-        if (session.exited) return;
-        session.exited = true;
-        publish(session, {
-          type: "exited",
-          exitCode: exit.exitCode,
-          exitSignal: exit.signal,
-        });
-        if (sessions.get(request.instanceId) === session) {
-          sessions.delete(request.instanceId);
-        }
-        // Re-probe so the provider card flips to authenticated when the login
-        // succeeded. `refreshInstance` swallows unknown ids, so this is safe.
-        runFork(
-          providerRegistry
-            .refreshInstance(request.instanceId)
-            .pipe(Effect.ignoreCause({ log: true })),
-        );
-      });
-
       publish(session, {
         type: "started",
         instanceId: request.instanceId,
         driver: spec.driver,
-        commandLabel: spec.commandLabel,
+        commandLabel: `${spec.command} app-server: account/login/start`,
       });
-
+      publish(session, {
+        type: "challenge",
+        url: auth.verificationUrl,
+        code: auth.userCode,
+      });
+      runFork(
+        auth.completion.pipe(
+          Effect.flatMap((completion) =>
+            Effect.sync(() => {
+              if (session.exited) return;
+              session.exited = true;
+              publish(session, {
+                type: "exited",
+                exitCode: completion.success ? 0 : 1,
+                exitSignal: null,
+              });
+              if (sessions.get(request.instanceId) === session) {
+                sessions.delete(request.instanceId);
+              }
+            }),
+          ),
+          Effect.andThen(
+            providerRegistry
+              .refreshInstance(request.instanceId)
+              .pipe(Effect.ignoreCause({ log: true })),
+          ),
+          Effect.ensuring(closeLoginScope),
+          Effect.ignoreCause({ log: true }),
+        ),
+      );
       return session;
+    }
+    const pty = yield* ptyAdapter
+      .spawn({
+        shell: spec.command,
+        args: [...spec.args],
+        cwd,
+        cols: request.cols ?? DEFAULT_COLS,
+        rows: request.rows ?? DEFAULT_ROWS,
+        env: spec.env,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderLoginSpawnError({
+              instanceId: request.instanceId,
+              detail: describeCause(cause),
+            }),
+        ),
+      );
+
+    const session: LoginSession = {
+      instanceId: request.instanceId,
+      driver: spec.driver,
+      pty,
+      cancel: Effect.sync(() => pty.kill()),
+      listeners: new Set(),
+      buffer: [],
+      bufferBytes: 0,
+      exited: false,
+    };
+    sessions.set(request.instanceId, session);
+
+    pty.onData((data) => publish(session, { type: "output", data }));
+    pty.onExit((exit) => {
+      if (session.exited) return;
+      session.exited = true;
+      publish(session, {
+        type: "exited",
+        exitCode: exit.exitCode,
+        exitSignal: exit.signal,
+      });
+      if (sessions.get(request.instanceId) === session) {
+        sessions.delete(request.instanceId);
+      }
+      // Re-probe so the provider card flips to authenticated when the login
+      // succeeded. `refreshInstance` swallows unknown ids, so this is safe.
+      runFork(
+        providerRegistry
+          .refreshInstance(request.instanceId)
+          .pipe(Effect.ignoreCause({ log: true })),
+      );
     });
+
+    publish(session, {
+      type: "started",
+      instanceId: request.instanceId,
+      driver: spec.driver,
+      commandLabel: spec.commandLabel,
+    });
+
+    return session;
+  });
 
   const ensureSession = (request: ProviderLoginStartRequest) =>
     spawnLock.withPermits(1)(
@@ -436,36 +434,37 @@ const make = Effect.fn("ProviderLoginManager.make")(function* () {
       }),
     );
 
-  const attachStream: ProviderLoginManagerShape["attachStream"] = (request, listener) =>
-    Effect.gen(function* () {
-      const session = yield* ensureSession(request);
+  const attachStream: ProviderLoginManagerShape["attachStream"] = Effect.fn(
+    "ProviderLoginManager.attachStream",
+  )(function* (request, listener) {
+    const session = yield* ensureSession(request);
 
-      // Buffer live events until the initial snapshot replay is complete, so a
-      // late listener never sees an event twice or out of order.
-      const pending: ProviderLoginStreamEvent[] = [];
-      let live = false;
-      const wrapped: LoginListener = (event) => {
-        if (!live) {
-          pending.push(event);
-          return Effect.void;
-        }
-        return listener(event);
-      };
-      const snapshot = session.buffer.slice();
-      session.listeners.add(wrapped);
-
-      for (const event of snapshot) {
-        yield* listener(event);
+    // Buffer live events until the initial snapshot replay is complete, so a
+    // late listener never sees an event twice or out of order.
+    const pending: ProviderLoginStreamEvent[] = [];
+    let live = false;
+    const wrapped: LoginListener = (event) => {
+      if (!live) {
+        pending.push(event);
+        return Effect.void;
       }
-      for (const event of pending) {
-        yield* listener(event);
-      }
-      live = true;
+      return listener(event);
+    };
+    const snapshot = session.buffer.slice();
+    session.listeners.add(wrapped);
 
-      return () => {
-        session.listeners.delete(wrapped);
-      };
-    });
+    for (const event of snapshot) {
+      yield* listener(event);
+    }
+    for (const event of pending) {
+      yield* listener(event);
+    }
+    live = true;
+
+    return () => {
+      session.listeners.delete(wrapped);
+    };
+  });
 
   const requireRunning = (
     instanceId: ProviderInstanceId,

@@ -40,7 +40,7 @@ import {
   Trash2Icon,
   UnlinkIcon,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -1019,15 +1019,11 @@ function TaskNodePlacementFields(props: {
     labels.instanceEntries[0]?.instanceId ??
     NO_PROVIDER_MODEL_SELECTION.instanceId;
   const activeModel = shownModel?.model ?? "";
-  const modelOptionsByInstance = useMemo(
-    () =>
-      getCustomModelOptionsByInstance(
-        labels.settings,
-        labels.providers,
-        activeInstanceId,
-        activeModel,
-      ),
-    [labels.settings, labels.providers, activeInstanceId, activeModel],
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    labels.settings,
+    labels.providers,
+    activeInstanceId,
+    activeModel,
   );
 
   const follows = workspace === "dependency" && dependency !== null;

@@ -164,14 +164,14 @@ describe("taskGraphNodeWaitDetail", () => {
 
   it("says whether a limited node starts or continues its thread after the reset", () => {
     expect(taskGraphNodeWaitDetail(waiting({ waitReason: "usage_limit" }), now)).toBe(
-      `Usage limit reached — starts after the reset, ${time}`,
+      `Usage limit reached: starts after the reset, ${time}`,
     );
     expect(
       taskGraphNodeWaitDetail(
         waiting({ waitReason: "usage_limit", threadId: "thread-a" as TaskGraphNode["threadId"] }),
         now,
       ),
-    ).toBe(`Usage limit reached — continues on its thread after the reset, ${time}`);
+    ).toBe(`Usage limit reached: continues on its thread after the reset, ${time}`);
   });
 
   it("names the day once the wait ends after today", () => {

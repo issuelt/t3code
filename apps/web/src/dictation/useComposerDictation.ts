@@ -8,9 +8,10 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { useNavigate } from "@tanstack/react-router";
-import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { useStableCallback } from "../hooks/useStableCallback";
 import {
   dictationEnvironment,
   useDictationEnvironmentId,
@@ -126,7 +127,7 @@ export function useComposerDictation(input: {
   }, [controller, state]);
 
   // Stable across renders so callers can run it from an effect keyed only on focus.
-  const warm = useCallback(() => {
+  const warm = useStableCallback(() => {
     const { environmentId: target, modelLoaded: loaded } = latest.current;
     if (target === null || loaded) return;
     void runAtomCommand(
@@ -135,7 +136,7 @@ export function useComposerDictation(input: {
       { environmentId: target, input: {} },
       { reportFailure: false },
     );
-  }, [registry]);
+  });
 
   const openSettings = () =>
     void navigate({

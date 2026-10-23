@@ -9,8 +9,8 @@
  * so they can be unit-tested against real driver error fixtures.
  *
  * Detection is per driver:
- *  - codex: the reliable discriminator is `error.codexErrorInfo ===
- *    "usageLimitExceeded"` inside the raw `V2ErrorNotification` (carried in
+ *  - codex: the reliable discriminator is `error.codexErrorInfo` equaling
+ *    "usageLimitExceeded" inside the raw `V2ErrorNotification` (carried in
  *    `runtime.error.payload.detail`). Rate-limit windows arrive via a separate
  *    notification whose `resetsAt` we opportunistically read. Free-text
  *    fallbacks cover message-only surfaces (`turn.completed.errorMessage`).

@@ -104,7 +104,7 @@ export function taskGraphNodeWaitDetail(
   if (node.waitReason === "usage_limit") {
     const next =
       node.threadId === null ? "starts after the reset" : "continues on its thread after the reset";
-    return `Usage limit reached — ${next}${at === null ? "" : `, ${at}`}`;
+    return `Usage limit reached: ${next}${at === null ? "" : `, ${at}`}`;
   }
   return at === null ? "Waiting to start" : `Starts ${at}`;
 }

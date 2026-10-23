@@ -10,7 +10,7 @@ import {
   LoaderIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { type EnvironmentId, type ProviderInstanceId } from "@t3tools/contracts";
 import { EMPTY_PROVIDER_LOGIN_STATE } from "@t3tools/client-runtime/state/provider-login";
 
@@ -18,6 +18,8 @@ import { providerLoginEnvironment } from "../../state/providerLogin";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { observeResize } from "~/lib/observeResize";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -77,10 +79,16 @@ export function ProviderLoginDialog({
   // without making `state.output` a dependency of it (which would tear down and
   // recreate the terminal on every streamed byte).
   const outputRef = useRef(state.output);
-  outputRef.current = state.output;
+  useLayoutEffect(() => {
+    outputRef.current = state.output;
+  }, [state.output]);
 
-  const write = useAtomCommand(providerLoginEnvironment.write, { reportFailure: false });
-  const resize = useAtomCommand(providerLoginEnvironment.resize, { reportFailure: false });
+  const write = useStableCallback(
+    useAtomCommand(providerLoginEnvironment.write, { reportFailure: false }),
+  );
+  const resize = useStableCallback(
+    useAtomCommand(providerLoginEnvironment.resize, { reportFailure: false }),
+  );
   const cancel = useAtomCommand(providerLoginEnvironment.cancel, { reportFailure: false });
 
   const { copyToClipboard } = useCopyToClipboard();
@@ -154,7 +162,7 @@ export function ProviderLoginDialog({
     };
     fitFrame = requestAnimationFrame(applyFit);
 
-    const resizeObserver = new ResizeObserver(() => {
+    const stopObservingResize = observeResize(mount, () => {
       const activeTerminal = terminalRef.current;
       const activeFit = fitAddonRef.current;
       if (!activeTerminal || !activeFit) return;
@@ -168,19 +176,18 @@ export function ProviderLoginDialog({
         input: { instanceId, cols: activeTerminal.cols, rows: activeTerminal.rows },
       });
     });
-    resizeObserver.observe(mount);
 
     return () => {
       if (fitFrame !== 0) {
         cancelAnimationFrame(fitFrame);
       }
-      resizeObserver.disconnect();
+      stopObservingResize();
       inputDisposable.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminal.dispose();
     };
-  }, [open, environmentId, instanceId]);
+  }, [open, environmentId, instanceId, write, resize]);
 
   // Write output deltas to the terminal as they stream in.
   useEffect(() => {
@@ -198,12 +205,13 @@ export function ProviderLoginDialog({
     writtenLengthRef.current = output.length;
   }, [state.output]);
 
-  const statusLabel = useMemo(() => {
-    if (succeeded) return "Authenticated";
-    if (failed) return "Login did not complete";
-    if (state.status === "running") return "Waiting for you to authorize…";
-    return "Starting login…";
-  }, [failed, state.status, succeeded]);
+  const statusLabel = succeeded
+    ? "Authenticated"
+    : failed
+      ? "Login did not complete"
+      : state.status === "running"
+        ? "Waiting for you to authorize…"
+        : "Starting login…";
 
   return (
     <Dialog open={open} onOpenChange={closeAndCancel}>
@@ -282,7 +290,8 @@ export function ProviderLoginDialog({
 
           <div
             ref={containerRef}
-            className="h-64 w-full overflow-hidden rounded-md border border-border/60 bg-[#0b0b0c] p-2"
+            className="h-64 w-full overflow-hidden rounded-md border border-border/60 p-2"
+            style={{ backgroundColor: "#0b0b0c" }}
           />
         </div>
 

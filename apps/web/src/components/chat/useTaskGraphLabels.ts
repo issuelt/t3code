@@ -6,7 +6,6 @@ import type {
   TaskGraphNode,
   TaskGraphPeer,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -38,16 +37,12 @@ export function useTaskGraphLabels(environmentId: EnvironmentId, graph: TaskGrap
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(
-          deriveProviderInstanceEntries(providers),
-          settings,
-          graph.projectId,
-        ),
-      ),
-    [providers, settings, graph.projectId],
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      graph.projectId,
+    ),
   );
   const environmentLabel = useEnvironment(environmentId)?.label ?? "This machine";
   // Servers without peer support reject the subscription; the graph's own machine still shows.

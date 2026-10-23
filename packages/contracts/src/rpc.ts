@@ -605,7 +605,6 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
-  // Task graphs
   taskGraphsSubscribe: "taskGraphs.subscribe",
   taskGraphsCreate: "taskGraphs.create",
   taskGraphsEdit: "taskGraphs.edit",

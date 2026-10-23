@@ -305,11 +305,9 @@ const make = Effect.gen(function* () {
       return notify;
     });
 
-  // --- Remote node lifecycle ----------------------------------------------------
-
   /** Commits and pushes a finished peer thread's branch there, then reports the node. */
-  const finishTracked = (environmentId: string, thread: OrchestrationV2ThreadShell) =>
-    Effect.gen(function* () {
+  const finishTracked = Effect.fn("TaskGraphPeers.finishTracked")(
+    function* (environmentId: string, thread: OrchestrationV2ThreadShell) {
       const entry = tracked.get(thread.id);
       const state = live.get(environmentId);
       const outcome = peerThreadOutcome(thread);
@@ -395,102 +393,104 @@ const make = Effect.gen(function* () {
             : {}),
         },
       });
-    }).pipe(
-      Effect.catchCause((cause) => {
-        tracked.delete(thread.id);
-        return Queue.offer(completions, {
-          threadId: thread.id,
-          outcome: {
-            type: "failed",
-            error: `Could not push the node's branch from the peer: ${Cause.pretty(cause)}`,
-          },
-        }).pipe(Effect.asVoid);
-      }),
-    );
+    },
+    (effect, _environmentId, thread) =>
+      effect.pipe(
+        Effect.catchCause((cause) => {
+          tracked.delete(thread.id);
+          return Queue.offer(completions, {
+            threadId: thread.id,
+            outcome: {
+              type: "failed",
+              error: `Could not push the node's branch from the peer: ${Cause.pretty(cause)}`,
+            },
+          }).pipe(Effect.asVoid);
+        }),
+      ),
+  );
 
-  const handleShellItem = (
+  const handleShellItem = Effect.fn("TaskGraphPeers.handleShellItem")(function* (
     environmentId: string,
     state: PeerLive,
     item: OrchestrationV2ShellStreamItem,
-  ) =>
-    Effect.gen(function* () {
-      const changed: OrchestrationV2ThreadShell[] = [];
-      switch (item.kind) {
-        case "snapshot": {
-          // An enrichment refresh only patches repository identity; it never replaces state.
-          if (item.resolvedRepositoryIdentityRoots !== undefined) {
-            for (const project of item.snapshot.projects) {
-              const known = state.projects.get(project.id);
-              if (known !== undefined && known.workspaceRoot === project.workspaceRoot) {
-                state.projects.set(project.id, {
-                  ...known,
-                  repositoryIdentity: project.repositoryIdentity,
-                });
-              }
+  ) {
+    const changed: OrchestrationV2ThreadShell[] = [];
+    switch (item.kind) {
+      case "snapshot": {
+        // An enrichment refresh only patches repository identity; it never replaces state.
+        if (item.resolvedRepositoryIdentityRoots !== undefined) {
+          for (const project of item.snapshot.projects) {
+            const known = state.projects.get(project.id);
+            if (known !== undefined && known.workspaceRoot === project.workspaceRoot) {
+              state.projects.set(project.id, {
+                ...known,
+                repositoryIdentity: project.repositoryIdentity,
+              });
             }
-            break;
-          }
-          state.projects.clear();
-          state.threads.clear();
-          for (const project of item.snapshot.projects) state.projects.set(project.id, project);
-          for (const thread of [...item.snapshot.threads, ...item.snapshot.archivedThreads]) {
-            state.threads.set(thread.id, thread);
-            changed.push(thread);
-          }
-          // A tracked thread the full snapshot lacks was deleted, or never created before a
-          // restart; no removal event will come, so fail its node rather than wait forever.
-          for (const [threadId, entry] of tracked) {
-            if (
-              entry.environmentId !== environmentId ||
-              entry.launching ||
-              state.threads.has(threadId)
-            ) {
-              continue;
-            }
-            tracked.delete(threadId);
-            yield* Queue.offer(completions, {
-              threadId,
-              outcome: { type: "failed", error: "The node's thread is missing on the peer." },
-            });
           }
           break;
         }
-        case "project.updated":
-          state.projects.set(item.project.id, item.project);
-          break;
-        case "project.removed":
-          state.projects.delete(item.projectId);
-          break;
-        case "thread.updated":
-          state.threads.set(item.thread.id, item.thread);
-          changed.push(item.thread);
-          break;
-        case "thread.removed": {
-          state.threads.delete(item.threadId);
-          const entry = tracked.get(item.threadId);
-          if (entry !== undefined && entry.environmentId === environmentId) {
-            tracked.delete(item.threadId);
-            yield* Queue.offer(completions, {
-              threadId: item.threadId,
-              outcome: { type: "failed", error: "The node's thread was deleted on the peer." },
-            });
-          }
-          break;
+        state.projects.clear();
+        state.threads.clear();
+        for (const project of item.snapshot.projects) state.projects.set(project.id, project);
+        for (const thread of [...item.snapshot.threads, ...item.snapshot.archivedThreads]) {
+          state.threads.set(thread.id, thread);
+          changed.push(thread);
         }
-        default:
-          break;
+        // A tracked thread the full snapshot lacks was deleted, or never created before a
+        // restart; no removal event will come, so fail its node rather than wait forever.
+        for (const [threadId, entry] of tracked) {
+          if (
+            entry.environmentId !== environmentId ||
+            entry.launching ||
+            state.threads.has(threadId)
+          ) {
+            continue;
+          }
+          tracked.delete(threadId);
+          yield* Queue.offer(completions, {
+            threadId,
+            outcome: { type: "failed", error: "The node's thread is missing on the peer." },
+          });
+        }
+        break;
       }
-      for (const thread of changed) {
-        if (tracked.get(thread.id)?.environmentId === environmentId) {
-          // Delivery waits on the peer's git work; do not hold up the shell stream.
-          yield* finishTracked(environmentId, thread).pipe(Effect.forkDetach);
+      case "project.updated":
+        state.projects.set(item.project.id, item.project);
+        break;
+      case "project.removed":
+        state.projects.delete(item.projectId);
+        break;
+      case "thread.updated":
+        state.threads.set(item.thread.id, item.thread);
+        changed.push(item.thread);
+        break;
+      case "thread.removed": {
+        state.threads.delete(item.threadId);
+        const entry = tracked.get(item.threadId);
+        if (entry !== undefined && entry.environmentId === environmentId) {
+          tracked.delete(item.threadId);
+          yield* Queue.offer(completions, {
+            threadId: item.threadId,
+            outcome: { type: "failed", error: "The node's thread was deleted on the peer." },
+          });
         }
+        break;
       }
-    });
+      default:
+        break;
+    }
+    for (const thread of changed) {
+      if (tracked.get(thread.id)?.environmentId === environmentId) {
+        // Delivery waits on the peer's git work; do not hold up the shell stream.
+        yield* finishTracked(environmentId, thread).pipe(Effect.forkDetach);
+      }
+    }
+  });
 
   /** One connection to a peer, until it drops. */
-  const connectOnce = (row: PeerRow, token: string, state: PeerLive) =>
-    Effect.gen(function* () {
+  const connectOnce = Effect.fn("TaskGraphPeers.connectOnce")(
+    function* (row: PeerRow, _token: string, state: PeerLive) {
       const client = yield* makeClient;
       const config = yield* client[WS_METHODS.serverGetConfig]({});
       if (config.environment.environmentId !== row.environment_id) {
@@ -503,14 +503,17 @@ const make = Effect.gen(function* () {
       yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
         Stream.runForEach((item) => handleShellItem(row.environment_id, state, item)),
       );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(protocolLayer(row.http_base_url, token)),
-      Effect.ensuring(Effect.sync(() => (state.client = null))),
-    );
+    },
+    (effect, row, token, state) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.provide(protocolLayer(row.http_base_url, token)),
+        Effect.ensuring(Effect.sync(() => (state.client = null))),
+      ),
+  );
 
-  const connect = (row: PeerRow) =>
-    Effect.gen(function* () {
+  const connect = Effect.fn("TaskGraphPeers.connect")(
+    function* (row: PeerRow) {
       const token = yield* secrets.get(tokenSecretName(row.environment_id));
       if (Option.isNone(token)) {
         return yield* setStatus(
@@ -532,19 +535,20 @@ const make = Effect.gen(function* () {
         }),
         Effect.repeat(Schedule.spaced("15 seconds")),
       );
-    }).pipe(Effect.ignoreCause);
+    },
+    (effect) => effect.pipe(Effect.ignoreCause),
+  );
 
-  const startConnection = (row: PeerRow) =>
-    Effect.gen(function* () {
-      live.set(row.environment_id, {
-        status: "connecting",
-        error: null,
-        client: null,
-        projects: new Map(),
-        threads: new Map(),
-      });
-      yield* FiberMap.run(connections, row.environment_id, connect(row));
+  const startConnection = Effect.fn("TaskGraphPeers.startConnection")(function* (row: PeerRow) {
+    live.set(row.environment_id, {
+      status: "connecting",
+      error: null,
+      client: null,
+      projects: new Map(),
+      threads: new Map(),
     });
+    yield* FiberMap.run(connections, row.environment_id, connect(row));
+  });
 
   yield* readRows.pipe(
     Effect.flatMap((rows) => Effect.forEach(rows, startConnection, { discard: true })),
@@ -554,8 +558,6 @@ const make = Effect.gen(function* () {
       }),
     ),
   );
-
-  // --- Service ------------------------------------------------------------------
 
   const repositoryKeyOf = (projectId: ProjectId) =>
     projects.getShell(projectId).pipe(
@@ -576,44 +578,45 @@ const make = Effect.gen(function* () {
         repositoryGroupingKeyOf(project.repositoryIdentity) === key,
     );
 
-  const candidates: TaskGraphPeers["Service"]["candidates"] = ({ projectId }) =>
-    Effect.gen(function* () {
-      const key = yield* repositoryKeyOf(projectId);
-      if (Option.isNone(key)) return [];
-      const rows = yield* readRows.pipe(Effect.orElseSucceed(() => []));
-      const usable = rows.flatMap((row) => {
-        const state = live.get(row.environment_id);
-        const running = [...tracked.values()].filter(
-          (entry) => entry.environmentId === row.environment_id,
-        ).length;
-        return state?.client != null && peerProjectFor(state, key.value) !== undefined
-          ? [{ row, client: state.client, running }]
-          : [];
-      });
-      return yield* Effect.forEach(
-        usable,
-        ({ row, client, running }) =>
-          client[WS_METHODS.serverGetHostResources]({}).pipe(
-            Effect.timeout("5 seconds"),
-            Effect.orElseSucceed(() => null),
-            Effect.flatMap((resources) =>
-              Clock.currentTimeMillis.pipe(
-                Effect.map((receivedAt) => ({
-                  environmentId: EnvironmentId.make(row.environment_id),
-                  resources,
-                  receivedAt,
-                  weight: row.weight,
-                  running,
-                })),
-              ),
+  const candidates: TaskGraphPeers["Service"]["candidates"] = Effect.fn(
+    "TaskGraphPeers.candidates",
+  )(function* ({ projectId }) {
+    const key = yield* repositoryKeyOf(projectId);
+    if (Option.isNone(key)) return [];
+    const rows = yield* readRows.pipe(Effect.orElseSucceed(() => []));
+    const usable = rows.flatMap((row) => {
+      const state = live.get(row.environment_id);
+      const running = [...tracked.values()].filter(
+        (entry) => entry.environmentId === row.environment_id,
+      ).length;
+      return state?.client != null && peerProjectFor(state, key.value) !== undefined
+        ? [{ row, client: state.client, running }]
+        : [];
+    });
+    return yield* Effect.forEach(
+      usable,
+      ({ row, client, running }) =>
+        client[WS_METHODS.serverGetHostResources]({}).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orElseSucceed(() => null),
+          Effect.flatMap((resources) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((receivedAt) => ({
+                environmentId: EnvironmentId.make(row.environment_id),
+                resources,
+                receivedAt,
+                weight: row.weight,
+                running,
+              })),
             ),
           ),
-        { concurrency: "unbounded" },
-      );
-    });
+        ),
+      { concurrency: "unbounded" },
+    );
+  });
 
-  const startNode: TaskGraphPeers["Service"]["startNode"] = (input) =>
-    Effect.gen(function* () {
+  const startNode: TaskGraphPeers["Service"]["startNode"] = Effect.fn("TaskGraphPeers.startNode")(
+    function* (input) {
       const state = live.get(input.environmentId);
       const client = state?.client;
       if (state === undefined || client == null) {
@@ -647,17 +650,23 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => peerError("The peer could not start the node.", cause)),
       );
       entry.launching = false;
-    });
+    },
+  );
 
-  const track: TaskGraphPeers["Service"]["track"] = ({ environmentId, threadId, delivery }) =>
-    Effect.gen(function* () {
-      tracked.set(threadId, { environmentId, delivery, delivering: false, launching: false });
-      const thread = live.get(environmentId)?.threads.get(threadId);
-      if (thread !== undefined) yield* finishTracked(environmentId, thread).pipe(Effect.forkDetach);
-    });
+  const track: TaskGraphPeers["Service"]["track"] = Effect.fn("TaskGraphPeers.track")(function* ({
+    environmentId,
+    threadId,
+    delivery,
+  }) {
+    tracked.set(threadId, { environmentId, delivery, delivering: false, launching: false });
+    const thread = live.get(environmentId)?.threads.get(threadId);
+    if (thread !== undefined) yield* finishTracked(environmentId, thread).pipe(Effect.forkDetach);
+  });
 
-  const interruptNode: TaskGraphPeers["Service"]["interruptNode"] = ({ environmentId, threadId }) =>
-    Effect.gen(function* () {
+  const interruptNode: TaskGraphPeers["Service"]["interruptNode"] = Effect.fn(
+    "TaskGraphPeers.interruptNode",
+  )(
+    function* ({ environmentId, threadId }) {
       tracked.delete(threadId);
       const state = live.get(environmentId);
       const runId = state?.threads.get(threadId)?.activeRunId;
@@ -669,91 +678,86 @@ const make = Effect.gen(function* () {
         runId,
         reason: "The task graph branch was cancelled.",
       });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not stop a peer task graph node", {
-          environmentId,
-          threadId,
-          cause: Cause.pretty(cause),
-        }),
-      ),
-    );
-
-  const add: TaskGraphPeers["Service"]["add"] = (input) =>
-    Effect.gen(function* () {
-      const target = yield* Effect.try({
-        try: () => resolveRemotePairingTarget({ pairingUrl: input.pairingUrl }),
-        catch: (cause) => peerError("That is not a pairing link.", cause),
-      });
-      const descriptor = yield* fetchJson(
-        HttpClientRequest.get(
-          new URL("/.well-known/t3/environment", target.httpBaseUrl).toString(),
-        ),
-      ).pipe(
-        Effect.flatMap((body) =>
-          decodeDescriptor(body).pipe(
-            Effect.mapError((cause) =>
-              peerError("The link does not point at a T3 Code server.", cause),
-            ),
-          ),
-        ),
-      );
-      if (descriptor.environmentId === localEnvironmentId) {
-        return yield* peerError("That link points at this machine.");
-      }
-      const label = input.label ?? (descriptor.label.trim() || target.httpBaseUrl);
-      const token = yield* fetchJson(
-        HttpClientRequest.post(new URL("/oauth/token", target.httpBaseUrl).toString()).pipe(
-          HttpClientRequest.bodyUrlParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-            subject_token: target.credential,
-            subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
-            requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            scope: TASK_GRAPH_PEER_SCOPES.join(" "),
-            client_label: "T3 Code task graphs",
-            client_device_type: "bot",
+    },
+    (effect, { environmentId, threadId }) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not stop a peer task graph node", {
+            environmentId,
+            threadId,
+            cause: Cause.pretty(cause),
           }),
         ),
-      ).pipe(
-        Effect.flatMap((body) =>
-          decodeToken(body).pipe(
-            Effect.mapError((cause) => peerError("The peer refused the link.", cause)),
+      ),
+  );
+
+  const add: TaskGraphPeers["Service"]["add"] = Effect.fn("TaskGraphPeers.add")(function* (input) {
+    const target = yield* Effect.try({
+      try: () => resolveRemotePairingTarget({ pairingUrl: input.pairingUrl }),
+      catch: (cause) => peerError("That is not a pairing link.", cause),
+    });
+    const descriptor = yield* fetchJson(
+      HttpClientRequest.get(new URL("/.well-known/t3/environment", target.httpBaseUrl).toString()),
+    ).pipe(
+      Effect.flatMap((body) =>
+        decodeDescriptor(body).pipe(
+          Effect.mapError((cause) =>
+            peerError("The link does not point at a T3 Code server.", cause),
           ),
         ),
-      );
-      if (token.token_type.toLowerCase() !== "bearer") {
-        return yield* peerError("The peer issued a credential this server cannot use.");
-      }
-      yield* secrets
-        .set(
-          tokenSecretName(descriptor.environmentId),
-          new TextEncoder().encode(token.access_token),
-        )
-        .pipe(
-          Effect.mapError((cause) => peerError("Could not store the peer's credential.", cause)),
-        );
-      const addedAt = DateTime.formatIso(yield* DateTime.now);
-      const row: PeerRow = {
-        environment_id: descriptor.environmentId,
-        label,
-        http_base_url: target.httpBaseUrl,
-        weight: DEFAULT_PEER_WEIGHT,
-        added_at: addedAt,
-      };
-      yield* sql`
+      ),
+    );
+    if (descriptor.environmentId === localEnvironmentId) {
+      return yield* peerError("That link points at this machine.");
+    }
+    const label = input.label ?? (descriptor.label.trim() || target.httpBaseUrl);
+    const token = yield* fetchJson(
+      HttpClientRequest.post(new URL("/oauth/token", target.httpBaseUrl).toString()).pipe(
+        HttpClientRequest.bodyUrlParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+          subject_token: target.credential,
+          subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
+          requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          scope: TASK_GRAPH_PEER_SCOPES.join(" "),
+          client_label: "T3 Code task graphs",
+          client_device_type: "bot",
+        }),
+      ),
+    ).pipe(
+      Effect.flatMap((body) =>
+        decodeToken(body).pipe(
+          Effect.mapError((cause) => peerError("The peer refused the link.", cause)),
+        ),
+      ),
+    );
+    if (token.token_type.toLowerCase() !== "bearer") {
+      return yield* peerError("The peer issued a credential this server cannot use.");
+    }
+    yield* secrets
+      .set(tokenSecretName(descriptor.environmentId), new TextEncoder().encode(token.access_token))
+      .pipe(Effect.mapError((cause) => peerError("Could not store the peer's credential.", cause)));
+    const addedAt = DateTime.formatIso(yield* DateTime.now);
+    const row: PeerRow = {
+      environment_id: descriptor.environmentId,
+      label,
+      http_base_url: target.httpBaseUrl,
+      weight: DEFAULT_PEER_WEIGHT,
+      added_at: addedAt,
+    };
+    yield* sql`
         INSERT INTO task_graph_peers (environment_id, label, http_base_url, weight, added_at)
         VALUES (${row.environment_id}, ${row.label}, ${row.http_base_url}, ${row.weight}, ${row.added_at})
         ON CONFLICT (environment_id) DO UPDATE SET
           label = excluded.label,
           http_base_url = excluded.http_base_url
       `.pipe(Effect.mapError((cause) => peerError("Could not save the peer.", cause)));
-      yield* startConnection(row);
-      yield* notify;
-      return yield* list;
-    });
+    yield* startConnection(row);
+    yield* notify;
+    return yield* list;
+  });
 
-  const remove: TaskGraphPeers["Service"]["remove"] = (environmentId) =>
-    Effect.gen(function* () {
+  const remove: TaskGraphPeers["Service"]["remove"] = Effect.fn("TaskGraphPeers.remove")(
+    function* (environmentId) {
       yield* FiberMap.remove(connections, environmentId);
       live.delete(environmentId);
       yield* sql`DELETE FROM task_graph_peers WHERE environment_id = ${environmentId}`.pipe(
@@ -772,7 +776,8 @@ const make = Effect.gen(function* () {
       }
       yield* notify;
       return yield* list;
-    });
+    },
+  );
 
   const setWeight: TaskGraphPeers["Service"]["setWeight"] = (environmentId, weight) =>
     sql`UPDATE task_graph_peers SET weight = ${weight} WHERE environment_id = ${environmentId}`.pipe(

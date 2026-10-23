@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { isElectron } from "../../env";
 import { useThreadShells } from "../../state/entities";
@@ -72,6 +72,29 @@ const relayFailure = (error: unknown) =>
           error instanceof Error ? error.message : "The other environment could not be reached.",
       });
 
+function createRelayConsumer(
+  requestsAtom: ReturnType<typeof homeEnvironment.relayRequests>,
+  handlerAtom: Atom.Atom<{ handle: (request: FleetHostRequest) => Promise<void> }>,
+  label: string,
+) {
+  return Atom.make((get) => {
+    get.mount(handlerAtom);
+    // A request runs once even if the stream value is seen again.
+    const handled = new Set<string>();
+    // `immediate` reads the stream atom now, which opens fleet.connect. Without
+    // it the atom is never computed and the hub never hears from this window.
+    get.subscribe(
+      requestsAtom,
+      (result) => {
+        if (!AsyncResult.isSuccess(result) || handled.has(result.value.requestId)) return;
+        handled.add(result.value.requestId);
+        void get.once(handlerAtom).handle(result.value);
+      },
+      { immediate: true },
+    );
+  }).pipe(Atom.setIdleTTL(0), Atom.withLabel(label));
+}
+
 function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { environments } = useEnvironments();
   const [clientId] = useState(createRelayClientId);
@@ -85,30 +108,24 @@ function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId })
         connected: environment.connection.phase === "connected",
       })),
   );
-  const registration = useMemo<FleetHostRegistration>(
-    () => ({ clientId, environments: JSON.parse(reachKey) }),
-    [clientId, reachKey],
-  );
+  const registration: FleetHostRegistration = { clientId, environments: JSON.parse(reachKey) };
   const requestsAtom = homeEnvironment.relayRequests({ environmentId, input: registration });
   const invoke = useAtomCommand(homeEnvironment.invoke, { reportFailure: false });
   const respond = useAtomCommand(homeEnvironment.relayRespond, { reportFailure: false });
 
-  const handle = useCallback(
-    async (request: FleetHostRequest) => {
-      const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
-      await respond({
-        environmentId,
-        input:
-          result._tag === "Success"
-            ? { requestId: request.requestId, result: result.value }
-            : {
-                requestId: request.requestId,
-                failure: relayFailure(squashAtomCommandFailure(result)),
-              },
-      });
-    },
-    [environmentId, invoke, respond],
-  );
+  const handle = async (request: FleetHostRequest) => {
+    const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
+    await respond({
+      environmentId,
+      input:
+        result._tag === "Success"
+          ? { requestId: request.requestId, result: result.value }
+          : {
+              requestId: request.requestId,
+              failure: relayFailure(squashAtomCommandFailure(result)),
+            },
+    });
+  };
   // The consumer outlives renders, so it reads the latest handler from an atom.
   const [handlerAtom] = useState(() => Atom.make({ handle }));
   const setHandler = useAtomSet(handlerAtom);
@@ -116,26 +133,17 @@ function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId })
     setHandler({ handle });
   }, [handle, setHandler]);
 
-  const consumerAtom = useMemo(
-    () =>
-      Atom.make((get) => {
-        get.mount(handlerAtom);
-        // A request runs once even if the stream value is seen again.
-        const handled = new Set<string>();
-        // `immediate` reads the stream atom now, which opens fleet.connect. Without
-        // it the atom is never computed and the hub never hears from this window.
-        get.subscribe(
-          requestsAtom,
-          (result) => {
-            if (!AsyncResult.isSuccess(result) || handled.has(result.value.requestId)) return;
-            handled.add(result.value.requestId);
-            void get.once(handlerAtom).handle(result.value);
-          },
-          { immediate: true },
-        );
-      }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`home:relay:${environmentId}:${clientId}`)),
-    [clientId, environmentId, handlerAtom, requestsAtom],
-  );
+  const label = `home:relay:${environmentId}:${clientId}`;
+  // The subscription owns request deduplication, so its lifetime follows the stream.
+  const [storedConsumer, setStoredConsumer] = useState(() => ({
+    requestsAtom,
+    atom: createRelayConsumer(requestsAtom, handlerAtom, label),
+  }));
+  let consumerAtom = storedConsumer.atom;
+  if (storedConsumer.requestsAtom !== requestsAtom) {
+    consumerAtom = createRelayConsumer(requestsAtom, handlerAtom, label);
+    setStoredConsumer({ requestsAtom, atom: consumerAtom });
+  }
   useAtomValue(consumerAtom);
   return null;
 }
@@ -154,10 +162,8 @@ function HomeWatchReporter({
   const [knownWatchKeys] = useState(
     () => new Set(home.watches.map((watch) => homeWatchKey(watch.environmentId, watch.threadId))),
   );
-  const labels = useMemo(
-    () =>
-      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
-    [environments],
+  const labels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
   );
   const report = useAtomCommand(homeEnvironment.reportWatchEvents, { reportFailure: false });
   const previous = useRef<ReadonlyMap<string, WatchedThreadState>>(new Map());
