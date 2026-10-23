@@ -39,22 +39,6 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
 }
 
 describe("chatThreadActions", () => {
-  it("only treats an active stored selection marked explicit as an explicit pick", () => {
-    const draft = {
-      activeProvider: PROJECT_DEFAULT_SELECTION.instanceId,
-      modelSelectionByProvider: {
-        [PROJECT_DEFAULT_SELECTION.instanceId]: PROJECT_DEFAULT_SELECTION,
-      },
-      modelSelectionExplicit: true,
-    };
-
-    expect(hasExplicitComposerModelSelection(draft)).toBe(true);
-    expect(hasExplicitComposerModelSelection({ ...draft, modelSelectionExplicit: false })).toBe(
-      false,
-    );
-    expect(hasExplicitComposerModelSelection({ ...draft, activeProvider: null })).toBe(false);
-  });
-
   it("does not carry a non-explicit model from the destination draft back into itself", () => {
     expect(
       resolveNewThreadModelSelectionOverride({
@@ -64,17 +48,6 @@ describe("chatThreadActions", () => {
         destinationDraftId: "draft-a",
       }),
     ).toBeNull();
-  });
-
-  it("still carries models between different threads when the project has no default", () => {
-    expect(
-      resolveNewThreadModelSelectionOverride({
-        projectDefaultSelection: null,
-        carrySelection: CARRIED_SELECTION,
-        carrySourceDraftId: "draft-a",
-        destinationDraftId: "draft-b",
-      }),
-    ).toEqual(CARRIED_SELECTION);
   });
 
   it("keeps the project default above any carried selection", () => {

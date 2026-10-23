@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import { refuseHomeFolder } from "../../../home/FleetService.ts";
 import * as HomeService from "../../../home/HomeService.ts";
+import * as HomeWorkspace from "../../../home/HomeWorkspace.ts";
 import { callerIsHome, routeHome, runAsHome } from "../../homeRouting.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -20,6 +21,9 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -36,9 +40,7 @@ function projectFailure(error: Project.ProjectServiceError) {
 }
 
 /**
- * An existing checkout a launch may bind: one of the project's own git
- * worktrees. Without this check a launch could point an agent at any directory
- * on the machine.
+ * Without this check a launch could point an agent at any directory on the machine.
  */
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
@@ -136,7 +138,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* refuseHomeFolder(
             {
               projects: yield* Project.ProjectService,
-              folders: yield* ManagedProjectFolders.ManagedProjectFolders,
+              workspace: yield* HomeWorkspace.HomeWorkspace,
             },
             { projectId: input.projectId, workspaceStrategy: input.workspaceStrategy },
           );
@@ -205,16 +207,32 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   code: "invalid_request",
                   message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
                     strategy.startFromOrigin === true
-                      ? "; the project has no origin remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on origin."
+                      ? "; the project has no usable remote to fetch it from."
+                      : ", or set startFromOrigin:true if it exists only on a remote."
                   }`,
                 }),
             ),
           );
+        // A caller outside a thread has nothing to inherit, so it starts with the
+        // project's effective defaults, as the composer does. Its mode stays
+        // within the ceiling it was approved with.
+        const projectDefaults =
+          caller === undefined
+            ? yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.flatMap((settings) => settings.getSettings),
+                Effect.mapError(unavailable),
+                Effect.flatMap((settings) =>
+                  Effect.map(
+                    readProject,
+                    (project) => resolveProjectSettings(settings, projectId, project).settings,
+                  ),
+                ),
+              )
+            : undefined;
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
+          projectDefaults?.defaultModelSelection ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -224,13 +242,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         if (homeThreadId !== undefined)
           yield* watchLaunched(homeThreadId, scope.environmentId, threadId);
+        const startedRuntimeMode =
+          projectDefaults !== undefined && input.runtimeMode === undefined
+            ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
+                Effect.orElseSucceed(() => runtimeMode),
+              )
+            : runtimeMode;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
           title: input.title,
           modelSelection,
-          runtimeMode,
+          runtimeMode: startedRuntimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
           ...(input.message === undefined && attachments.length === 0

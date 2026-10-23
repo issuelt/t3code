@@ -7,8 +7,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -31,7 +30,9 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  invalidateLatestProviderVersion,
   makeTargetedProviderUpdateAction,
+  resolveLatestProviderUpdateAction,
   resolveLatestProviderVersion,
   type ProviderMaintenanceCommandAction,
 } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -42,8 +43,6 @@ const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
-// npm can propagate the numeric EACCES errno (-13), which POSIX wraps to 243.
-const NPM_POSIX_EACCES_EXIT_CODE = 243;
 // Every progress publish resends the provider list to each client, so the
 // installer's output is sampled rather than forwarded line by line.
 const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
@@ -99,24 +98,10 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
-        // Resolve bare commands to an absolute executable before spawning.
-        // The Effect child-process spawner does not consistently perform PATH
-        // lookup for maintenance commands on every host, which can otherwise
-        // fail before npm has a chance to initialize or write its debug log.
-        const platform = yield* HostProcess.Platform;
-        const hostEnvironment = yield* HostProcess.Environment;
-        const resolveExecutable = yield* SpawnExecutableResolution;
-        const executable =
-          resolveExecutable(input.command, platform, hostEnvironment) ?? input.command;
-
-        // Resolve the executable for the host platform before spawning. On
-        // Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`),
-        // which a bare ChildProcess.spawn cannot launch (spawn npm ENOENT);
-        // resolveSpawnCommand finds the real `.cmd` and routes it through the
-        // shell.
-        const resolved = yield* resolveSpawnCommand(executable, input.args, {
-          env: hostEnvironment,
-        });
+        // On Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`), which a bare
+        // ChildProcess.spawn cannot launch (spawn npm ENOENT); resolveSpawnCommand finds the
+        // real `.cmd` and routes it through the shell.
+        const resolved = yield* resolveSpawnCommand(input.command, input.args);
         const child = yield* input.spawner
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
@@ -135,7 +120,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
 
-        // Holds the newest output line not yet reported; the sampler takes it.
         const pendingProgress = yield* Ref.make<string | null>(null);
         const onProgress = input.onProgress;
         if (onProgress) {
@@ -155,8 +139,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
             Stream.tap((chunk) => {
               const split = splitOutputLines(partialLine, decoder.decode(chunk, { stream: true }));
               partialLine = split.partialLine;
-              // A progress bar that redraws with a leading `\r` keeps its newest
-              // frame unterminated, so that frame is the latest status.
               const line =
                 toProgressLine(split.partialLine) ??
                 split.lines.map(toProgressLine).findLast((value) => value !== null);
@@ -220,10 +202,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   },
 );
 
-/**
- * Split a chunk of installer output into complete lines. `\r` ends a line too,
- * so a redrawn progress bar reports its latest frame.
- */
 export function splitOutputLines(
   partialLine: string,
   text: string,
@@ -232,7 +210,6 @@ export function splitOutputLines(
   return { partialLine: (parts.pop() ?? "").slice(-UPDATE_PARTIAL_LINE_MAX_LENGTH), lines: parts };
 }
 
-/** Turn one raw output line into a short status message, or null if it has no text. */
 export function toProgressLine(line: string): string | null {
   const text = NodeUtil.stripVTControlCharacters(line).replace(/\s+/g, " ").trim();
   if (text.length === 0) {
@@ -243,7 +220,6 @@ export function toProgressLine(line: string): string | null {
     : `${text.slice(0, UPDATE_PROGRESS_MAX_LENGTH - 1)}…`;
 }
 
-/** `claude update` reads better in a status line than the full executable path. */
 function describeCommand(command: ProviderMaintenanceCommandAction): string {
   const executable = command.executable.split(/[\\/]/).pop() || command.executable;
   return [executable, ...command.args].join(" ");
@@ -266,26 +242,30 @@ function commandOutput(result: ProviderMaintenanceCommandResult): string | null 
   return truncateText(output, UPDATE_OUTPUT_MAX_BYTES);
 }
 
-function isNpmCommand(command: string): boolean {
-  const commandName = command.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase();
-  return commandName === "npm" || commandName === "npm.cmd";
+// Updaters print their reason last, usually on stderr.
+function lastOutputLine(result: ProviderMaintenanceCommandResult): string | null {
+  for (const output of [result.stderr, result.stdout]) {
+    const line = output
+      .split(/\r\n|\r|\n/)
+      .map(toProgressLine)
+      .findLast(Boolean);
+    if (line) {
+      return line;
+    }
+  }
+  return null;
 }
 
-function failureMessage(result: ProviderMaintenanceCommandResult, command: string): string {
+function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
     return "Update timed out.";
   }
-  const output = [result.stderr, result.stdout].filter(Boolean).join("\n");
-  if (
-    /\bEACCES\b|permission denied/i.test(output) ||
-    (isNpmCommand(command) && result.exitCode === NPM_POSIX_EACCES_EXIT_CODE)
-  ) {
-    return "Update command could not access the provider installation (permission denied).";
-  }
-  if (result.exitCode !== null && result.exitCode !== 0) {
-    return `Update command exited with code ${result.exitCode}.`;
-  }
-  return "Update command failed.";
+  const summary =
+    result.exitCode !== null && result.exitCode !== 0
+      ? `Update command exited with code ${result.exitCode}`
+      : "Update command failed";
+  const reason = lastOutputLine(result);
+  return reason ? `${summary}: ${reason}` : `${summary}.`;
 }
 
 function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
@@ -349,28 +329,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     maintenanceCapabilities: ProviderMaintenanceCapabilities,
     instanceId: ProviderInstanceId,
   ): Effect.Effect<VerifiedProviderRefresh> =>
-    providerRegistry.getProviders.pipe(
-      Effect.map((providers) => {
-        const instanceIds: Array<ProviderInstanceId> = [];
-        for (const candidate of providers) {
-          if (candidate.driver === provider && candidate.instanceId === instanceId) {
-            instanceIds.push(candidate.instanceId);
-          }
-        }
-        return instanceIds;
-      }),
-      Effect.flatMap((instanceIds) =>
-        instanceIds.length === 0
-          ? providerRegistry.refreshInstance(instanceId)
-          : Effect.forEach(
-              instanceIds,
-              (instanceId) => providerRegistry.refreshInstance(instanceId),
-              {
-                concurrency: "unbounded",
-                discard: true,
-              },
-            ).pipe(Effect.andThen(providerRegistry.getProviders)),
-      ),
+    providerRegistry.refreshAfterUpdate(provider, instanceId).pipe(
       Effect.flatMap((providers) => {
         const refreshedProviders = providers.filter(
           (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
@@ -492,9 +451,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             }
 
             const manifest = yield* manifestService.current;
+            // Check compatibility against what an unpinned command would install now.
             const candidateVersion =
               targetVersion ??
-              (yield* resolveLatestProviderVersion(fresh).pipe(
+              (yield* invalidateLatestProviderVersion(fresh).pipe(
+                Effect.andThen(resolveLatestProviderVersion(fresh)),
                 Effect.provideService(HttpClient.HttpClient, httpClient),
                 Effect.provideService(
                   ProviderLatestVersions.ProviderLatestVersions,
@@ -511,7 +472,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const command =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
-                : fresh.update;
+                : resolveLatestProviderUpdateAction(fresh, candidateVersion);
             const rejected =
               targetVersion !== undefined
                 ? !command ||
@@ -539,11 +500,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // during cleanup. Trust that postcondition only when a fresh probe
             // affirmatively reports every targeted provider as current.
             yield* setRunningMessage("Verifying the installed version");
-            // Homebrew's "latest" moves once the upgrade lands; read it again.
             const verified = yield* providerRegistry.getProviderMaintenanceCapabilitiesForInstance(
               instanceId,
               provider,
               { fresh: true },
+            );
+            yield* invalidateLatestProviderVersion(verified).pipe(
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             );
             const { verifiedProviders } = yield* verifyRefreshedProvider(
               provider,
@@ -556,7 +519,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   status: "failed",
                   startedAt,
                   finishedAt,
-                  message: failureMessage(result, update.executable),
+                  message: failureMessage(result),
                   output: commandOutput(result),
                 }),
               );
@@ -568,12 +531,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // Cursor's `about` probe can fail transiently on a healthy binary.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
-              verifiedProviders.some(
-                (verifiedProvider) =>
+              verifiedProviders.some((verifiedProvider) => {
+                const installedVersion =
+                  verifiedProvider.installedVersion !== undefined
+                    ? verifiedProvider.installedVersion
+                    : verifiedProvider.version;
+                return (
                   !isStillInstalled(verifiedProvider) ||
+                  (verifiedProvider.status === "error" &&
+                    (verifiedProvider.auth.status !== "unauthenticated" ||
+                      !verifiedProvider.version)) ||
                   (targetVersion !== undefined &&
-                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
-              );
+                    installedVersion?.replace(/^v/, "") !== targetVersion)
+                );
+              });
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));

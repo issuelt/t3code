@@ -715,9 +715,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var verticalOffset = 0
   private var horizontalOffset = 0
 
-  // Unwrapped rows scroll until the end of the widest one clears the right edge.
   private var contentWidthPx = 0
-
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
   private var lastVisibleRange: Pair<Int, Int>? = null
   var rows: List<DiffRow> = emptyList()
@@ -726,13 +724,17 @@ private class DiffCanvasView(context: Context) : View(context) {
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
-      contentWidthPx = drawing.contentWidth(value, style)
       rebuildOffsets()
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
     set(value) {
       field = value
-      if (style.wordWrap) rebuildOffsets()
+      if (style.wordWrap) {
+        rebuildOffsets()
+      } else {
+        contentWidthPx = drawing.contentWidth(rows, value, style)
+        setHorizontalOffset(horizontalOffset)
+      }
       invalidate()
     }
   var viewedFileIds: Set<String> = emptySet()
@@ -765,7 +767,6 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
-      contentWidthPx = drawing.contentWidth(rows, value)
       rebuildOffsets()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
@@ -889,6 +890,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun layoutRows() {
+    contentWidthPx = drawing.contentWidth(rows, tokensByRowId, style)
     codeWrap = drawing.codeWrapLayout(rows, tokensByRowId, style, width)
     rowOffsets = IntArray(rows.size + 1)
     rows.forEachIndexed { index, row ->

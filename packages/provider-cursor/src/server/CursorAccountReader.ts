@@ -1,9 +1,3 @@
-/**
- * CursorAccountReader - reads one range of Cursor account usage from its
- * dashboard API. A service so tests can stand in for Cursor's API.
- *
- * @module provider-cursor/server/CursorAccountReader
- */
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -32,7 +26,6 @@ export class CursorAccountReader extends Context.Service<
   }
 >()("@t3tools/provider-cursor/server/CursorAccountReader") {}
 
-/** Reads Cursor's dashboard API with the saved CLI or Keychain login. */
 export const layer = Layer.effect(
   CursorAccountReader,
   Effect.gen(function* () {

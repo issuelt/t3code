@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./workspace-basename-lookup": {
+      "types": "./src/workspaceBasenameLookup.ts",
+      "default": "./src/workspaceBasenameLookup.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -139,10 +143,6 @@
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"
     },
-    "./state/composer-attachment": {
-      "types": "./src/state/composerAttachment.ts",
-      "default": "./src/state/composerAttachment.ts"
-    },
     "./state/attachments": {
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"
@@ -174,6 +174,10 @@
     "./state/git": {
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
+    },
+    "./state/command-output": {
+      "types": "./src/state/commandOutput.ts",
+      "default": "./src/state/commandOutput.ts"
     },
     "./state/item-support": {
       "types": "./src/state/itemSupport.ts",
@@ -299,14 +303,6 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
-    "./state/thread-outbox-model": {
-      "types": "./src/state/threadOutboxModel.ts",
-      "default": "./src/state/threadOutboxModel.ts"
-    },
-    "./state/thread-outbox-manager": {
-      "types": "./src/state/threadOutboxManager.ts",
-      "default": "./src/state/threadOutboxManager.ts"
-    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
@@ -342,6 +338,10 @@
     "./state/thread-subagents": {
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"
+    },
+    "./state/thread-undo": {
+      "types": "./src/state/threadUndo.ts",
+      "default": "./src/state/threadUndo.ts"
     },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
@@ -382,6 +382,10 @@
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./pull-request-link-input": {
+      "types": "./src/pullRequestLinkInput.ts",
+      "default": "./src/pullRequestLinkInput.ts"
     },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
@@ -450,10 +454,18 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-query": {
+      "types": "./src/pullRequestQuery.ts",
+      "default": "./src/pullRequestQuery.ts"
+    },
+    "./model-traits": {
+      "types": "./src/modelTraits.ts",
+      "default": "./src/modelTraits.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {

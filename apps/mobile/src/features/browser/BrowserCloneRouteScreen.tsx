@@ -14,7 +14,7 @@ import { createBrowserCloneSession } from "@t3tools/client-runtime/browser-clone
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { BrowserCloneViewer, type BrowserCloneTransport } from "./BrowserCloneViewer";
 import { previewEnvironment } from "../../state/preview";
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 type Props = StaticScreenProps<{ readonly environmentId: string; readonly threadId: string }>;

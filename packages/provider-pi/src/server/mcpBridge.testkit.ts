@@ -2,7 +2,7 @@
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { buildPiT3McpExtensionSource } from "./mcpExtensionSource.ts";
 
 interface RegisteredTool {
   readonly name: string;
@@ -29,12 +29,15 @@ interface RegisteredTool {
 }
 
 type AgentStartHook = (
-  event: { systemPrompt: string },
+  event: {
+    systemPrompt: string;
+    systemPromptOptions?: { sections?: Record<string, string> | null; forceSystemPrompt?: string };
+  },
   ctx: {
     model?: { api: string };
     ui: { notify: (message: string, severity: string) => void };
   },
-) => Promise<{ systemPrompt: string }>;
+) => Promise<{ systemPrompt: string } | undefined>;
 
 export async function loadMcpBridge(
   options: {
@@ -44,6 +47,7 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly inputSchema?: Record<string, unknown>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -72,14 +76,13 @@ export async function loadMcpBridge(
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: options.inputSchema ?? { type: "object", properties: {} },
     outputSchema: { type: "object", properties: { count: { type: "number" } } },
   }));
   const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-      "export default async function",
-      "async function",
-    ),
+    buildPiT3McpExtensionSource()
+      .replace(/^import .*;$/gm, "")
+      .replace("export default async function", "async function"),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {

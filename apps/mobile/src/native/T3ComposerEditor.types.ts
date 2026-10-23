@@ -36,7 +36,10 @@ export interface ComposerEditorProps {
     },
   ) => void;
   readonly skills?: ReadonlyArray<
-    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
+    Pick<
+      ServerProviderSkill,
+      "name" | "displayName" | "shortDescription" | "description" | "enabled" | "userInvocable"
+    > &
       Partial<Pick<ServerProviderSkill, "path">>
   >;
   readonly selection?: ComposerEditorSelection;
@@ -65,13 +68,17 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
-  /** Height of the laid-out text in dp, for hosts that size the editor to its content. */
-  readonly onContentHeightChange?: (height: number) => void;
+  /**
+   * Size of the laid-out text in dp, without insets. Width is the widest line, so a
+   * one-line draft reports its natural width; only fires when the size changes.
+   */
+  readonly onContentSizeChange?: (size: {
+    readonly width: number;
+    readonly height: number;
+  }) => void;
   /** Hardware-keyboard Return behavior. Soft keyboards always insert a newline. */
   readonly enterBehavior?: ComposerEnterBehavior;
-  /** Shortcut-HUD title for the primary send chord. iOS only. */
   readonly submitTitle?: string;
-  /** Shortcut-HUD title for the Command-modified send chord. iOS only. */
   readonly alternateSubmitTitle?: string;
   /**
    * Hardware keyboard submission. `alternate` is true for the Command-modified

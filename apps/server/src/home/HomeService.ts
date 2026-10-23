@@ -36,7 +36,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export class HomeService extends Context.Service<
@@ -118,7 +118,7 @@ function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const workspace = yield* HomeWorkspace.HomeWorkspace;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* Crypto.Crypto;
@@ -150,7 +150,7 @@ const make = Effect.gen(function* () {
 
   const launchHome = (modelSelection: ModelSelection) =>
     Effect.gen(function* () {
-      const { projectId } = yield* folders.ensureHomeProject.pipe(
+      const { projectId } = yield* workspace.ensureProject.pipe(
         Effect.mapError((error) => fail(error.message)),
       );
       const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
@@ -206,7 +206,7 @@ const make = Effect.gen(function* () {
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.
   if (available && (yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId != null) {
-    yield* folders.ensureHomeProject.pipe(Effect.ignore);
+    yield* workspace.ensureProject.pipe(Effect.ignore);
   }
 
   // A read failure fails the report, so the reporter retries the batch and

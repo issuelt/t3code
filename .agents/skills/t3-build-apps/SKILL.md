@@ -42,17 +42,11 @@ copies, keeping the newest backup.
 ```bash
 pnpm dist:desktop:dmg            # arm64 by default; :dmg:x64 / :dmg:arm64 to pin
 # artifact -> release/ . Unsigned: first launch needs right-click-Open or xattr.
-bash .claude/skills/t3-build-apps/scripts/validate-afterpack.sh   # install + health
 ```
 
-The build's afterPack/afterSign hooks swap the pruned packed `node_modules` for
-the **complete staged tree** (~296 pkgs) with `asar: false` — this is the
-DURABLE fix for the pnpm-11 isolated-layout crash (cascading
-`ERR_MODULE_NOT_FOUND`). A plain `pnpm dist:desktop:dmg` now Just Works; no
-manual copy step. **GUI vs SSH:** launching over SSH yields HEALTH=000 +
-Keychain errors even when the app is fine — the truth is `backend ready` in
-stderr; verify a real 200 via `open` in a login session. Full story (why
-asar:false, why exclude electron, mac afterSign split): `references/desktop.md`.
+Launch and verify the installed app in a login session. Over SSH, a headless
+launch can fail on Keychain access even when the build is sound. See
+`references/desktop.md` for host and signing notes.
 
 ## Windows exe (cross-build on Linux)
 
@@ -90,7 +84,7 @@ PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
 osascript -e 'tell application "Terminal" to do script "DEV_TEAM=XXXXXXXXXX DEVICE_NAME=fon ~/dev/t3code/.claude/skills/t3-build-apps/scripts/ios-device-build.sh"'
 ```
 
-`ios-personal-prep.sh` strips paid capabilities (`T3CODE_PERSONAL_TEAM`) and
+`ios-personal-prep.sh` strips paid capabilities (`T3CODE_IOS_PERSONAL_TEAM`) and
 regenerates the **preview** variant with a fresh bundle id. Three traps:
 signing works ONLY in a GUI session; the real team id comes from
 `defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier` (keychain

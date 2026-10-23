@@ -22,6 +22,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestratorMcpFailure,
+  OrchestratorMcpCapabilitiesInput,
   ThreadId,
 } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
@@ -47,6 +48,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -79,7 +81,7 @@ const orchestrationError = (error: unknown) =>
 export const refuseHomeFolder = Effect.fn("FleetService.refuseHomeFolder")(function* (
   services: {
     readonly projects: ProjectService.ProjectService["Service"];
-    readonly folders: ManagedProjectFolders.ManagedProjectFolders["Service"];
+    readonly workspace: HomeWorkspace.HomeWorkspace["Service"];
   },
   input: {
     readonly projectId: ProjectId;
@@ -96,7 +98,7 @@ export const refuseHomeFolder = Effect.fn("FleetService.refuseHomeFolder")(funct
       : []),
   ];
   for (const root of roots) {
-    if (yield* services.folders.isInHomeFolder(root)) {
+    if (yield* services.workspace.contains(root)) {
       return yield* failure("invalid_request", "Threads never launch in Home's folder.");
     }
   }
@@ -113,6 +115,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const workspace = yield* HomeWorkspace.HomeWorkspace;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -165,16 +168,20 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
 
   const handlers: Handlers = {
-    capabilities: () =>
+    capabilities: (input) =>
       Effect.gen(function* () {
+        const catalogInput = yield* Schema.decodeUnknownEffect(OrchestratorMcpCapabilitiesInput)(
+          input,
+        ).pipe(Effect.mapError(orchestrationError));
         const providers = yield* providerRegistry.getProviders;
         const capable = new Set<string>(yield* adapters.list());
         // Models the user hid from pickers stay out of the catalog Home chooses from.
-        const modelPreferences = yield* settings.getSettings.pipe(
-          Effect.map((current) => current.providerModelPreferences ?? {}),
+        const currentSettings = yield* settings.getSettings.pipe(
           Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
         );
-        return { providers: providerCapabilities(providers, capable, modelPreferences) };
+        return {
+          providers: providerCapabilities(providers, capable, currentSettings, catalogInput),
+        };
       }),
 
     "projects.list": (input) =>
@@ -280,7 +287,7 @@ const make = Effect.gen(function* () {
           return yield* failure("invalid_request", "Pass projectId or scratch:true.");
         }
         yield* refuseHomeFolder(
-          { projects, folders },
+          { projects, workspace },
           { projectId, workspaceStrategy: input.workspaceStrategy },
         );
         const current = yield* settings.getSettings.pipe(Effect.mapError(orchestrationError));

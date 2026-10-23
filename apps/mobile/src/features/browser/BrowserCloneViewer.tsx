@@ -19,8 +19,8 @@ import {
   createCloneGestureController,
   type CloneGestureInput,
 } from "@t3tools/client-runtime/browser-clone-gestures";
-import { AppText } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 
 export interface BrowserCloneTransport {
   readonly gesture: (input: CloneGestureInput) => void;

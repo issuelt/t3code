@@ -18,20 +18,20 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
-import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
+import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { confirm as showConfirmDialog } from "../../components/ui/Dialog";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { RequestActionButton } from "./RequestActionButton";
+import { Button as RequestActionButton } from "../../components/ui/Button";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import {
   sortTaskGraphs,
@@ -86,7 +86,6 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
   const target = route.params;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const theme = useUniwindTheme();
   const query = useTaskGraphsQuery(target);
   const graphs = query.data === null ? null : sortTaskGraphs(query.data.graphs);
   const canEdit = useAtomValue(
@@ -311,27 +310,27 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
-          <Screen
+          <NativeScreen
             activityState={2}
             enabled
             isNativeStack
             screenId="thread-task-graphs-sheet-native"
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: theme["--color-sheet"], flex: 1 }}
+            className="flex-1 bg-sheet"
           >
             {content}
-            <ScreenStackHeaderConfig
+            <NativeHeader
               backgroundColor="rgba(0,0,0,0)"
-              color={theme["--color-foreground"]}
+              tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
               title="Task graphs"
-              titleColor={theme["--color-foreground"]}
+              titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
               translucent
             />
-          </Screen>
+          </NativeScreen>
         </ScreenStack>
       </View>
     );

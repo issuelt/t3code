@@ -1,4 +1,5 @@
 import type { SubscriptionWidgetConfiguration } from "./subscriptionWidgetPreferences";
+import type { WidgetTheme } from "./widgetTheme";
 
 export interface AndroidSubscriptionUsageSnapshot {
   configuration: Pick<
@@ -25,6 +26,7 @@ export interface AndroidSubscriptionUsageSnapshot {
 }
 
 export interface SubscriptionUsageSnapshot {
+  theme?: WidgetTheme;
   androidWidgetUrl?: string;
   android?: {
     defaults: AndroidSubscriptionUsageSnapshot;

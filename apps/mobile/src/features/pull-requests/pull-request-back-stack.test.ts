@@ -73,8 +73,10 @@ vi.mock("./usePullRequestDiff", () => ({
 }));
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
-import { newTaskSubmitNavigationAction } from "../threads/new-task-submit-navigation";
+import {
+  useAndroidWorkspaceBack,
+  useWorkspaceBackNavigation,
+} from "../workspace/useAndroidWorkspaceNavigation";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 
 const { CommonActions, StackActions, StackRouter } = loadRouters();
@@ -115,6 +117,7 @@ function apply(action: RouterAction) {
 
 const navigation = {
   getState: () => state,
+  getParent: () => undefined,
   canGoBack: () => router.getStateForAction(state, CommonActions.goBack(), options) !== null,
   goBack: () => apply(CommonActions.goBack()),
   navigate: (name: string, params: object) => apply(CommonActions.navigate(name, params)),
@@ -147,26 +150,23 @@ describe("Android contextual PR navigation", () => {
     const chatKey = openChat();
     await openPullRequest();
     expect(names()).toEqual(["Home", "Thread", "PullRequest"]);
-    const back = useAndroidWorkspaceBack("pullRequests");
-    expect(selectTab).not.toHaveBeenCalled();
-    back();
+    useWorkspaceBackNavigation("pullRequests")();
     expect(names()).toEqual(["Home", "Thread"]);
     expect(state.routes[state.index]?.key).toBe(chatKey);
+    expect(selectTab).not.toHaveBeenCalled();
   });
 
-  it("replaces GitOverview and native Back returns to the same chat", async () => {
+  it("replaces GitOverview and Back returns to the same chat", async () => {
     const chatKey = openChat();
     apply(StackActions.push("GitOverview", thread));
     await useOpenPullRequest({ replace: true })(pr.url);
     expect(names()).toEqual(["Home", "Thread", "PullRequest"]);
-    useAndroidWorkspaceBack("pullRequests");
-    expect(hardwareBack?.()).toBe(false);
-    apply(CommonActions.goBack());
+    useWorkspaceBackNavigation("pullRequests")();
     expect(state.routes[state.index]?.key).toBe(chatKey);
   });
 
-  it("dismisses the keyboard before yielding subsequent Back to the native stack", async () => {
-    openChat();
+  it("dismisses the keyboard before hardware Back returns to chat", async () => {
+    const chatKey = openChat();
     await openPullRequest();
     const previous = state;
     useAndroidWorkspaceBack("pullRequests");
@@ -174,10 +174,9 @@ describe("Android contextual PR navigation", () => {
     expect(hardwareBack?.()).toBe(true);
     expect(keyboardVisible).toBe(false);
     expect(state).toBe(previous);
-    expect(hardwareBack?.()).toBe(false);
-    expect(state).toBe(previous);
-    apply(CommonActions.goBack());
+    expect(hardwareBack?.()).toBe(true);
     expect(names()).toEqual(["Home", "Thread"]);
+    expect(state.routes[state.index]?.key).toBe(chatKey);
   });
 
   it("gives a cold-linked PR a route back to its list", () => {
@@ -185,22 +184,21 @@ describe("Android contextual PR navigation", () => {
       CommonActions.reset({ index: 0, routes: [{ name: "PullRequest", params: pullRequest }] }),
     );
     useAndroidWorkspaceBack("pullRequests");
-    expect(selectTab).toHaveBeenCalledWith({ type: "select", tab: "pullRequests" });
     expect(hardwareBack?.()).toBe(true);
     expect(names()).toEqual(["Home"]);
+    expect(selectTab).toHaveBeenCalledWith({ type: "select", tab: "pullRequests" });
   });
 
-  it("opens a linked thread without losing the PR or switching tabs", async () => {
+  it("opens a linked thread and Back restores its PR", async () => {
     openChat();
     await openPullRequest();
     const prKey = state.routes[state.index]?.key;
     const linked = { id: "thread-b" } as PullRequestLinkedThreadsResult["threads"][number];
     usePullRequestThreads(pullRequest, pr).openThread(linked);
     expect(names()).toEqual(["Home", "Thread", "PullRequest", "Thread"]);
-    const back = useAndroidWorkspaceBack("threads");
-    expect(selectTab).not.toHaveBeenCalled();
-    back();
+    useWorkspaceBackNavigation("threads")();
     expect(state.routes[state.index]?.key).toBe(prKey);
+    expect(selectTab).not.toHaveBeenCalled();
   });
 
   it("keeps the old chat and PR intact when a new PR draft is cancelled", async () => {
@@ -208,65 +206,12 @@ describe("Android contextual PR navigation", () => {
     await openPullRequest();
     const previous = state.routes;
     await usePullRequestThreads(pullRequest, pr).ask();
-    expect(names()).toEqual(["Home", "Thread", "PullRequest", "NewTaskSheet"]);
-    expect(selectTab).not.toHaveBeenCalled();
-    apply(CommonActions.goBack());
-    expect(state.routes).toEqual(previous);
-  });
-
-  it("clears old Android history on an accepted immediate first send", async () => {
-    const oldChatKey = openChat();
-    await openPullRequest();
-    const homeKey = state.routes[0]?.key;
-    await usePullRequestThreads(pullRequest, pr).ask();
-    apply(
-      newTaskSubmitNavigationAction({
-        state,
-        params: { ...thread, threadId: "new-thread" },
-        queued: false,
-        android: true,
-      }),
-    );
-    expect(names()).toEqual(["Home", "Thread"]);
-    expect(state.routes[0]?.key).toBe(homeKey);
-    expect(state.routes[1]?.key).not.toBe(oldChatKey);
-    expect(state.routes[1]?.params).toEqual({ ...thread, threadId: "new-thread" });
-    expect(state.routes.some((route) => route.key === oldChatKey)).toBe(false);
-    useAndroidWorkspaceBack("threads");
-    expect(hardwareBack?.()).toBe(false);
-    apply(CommonActions.goBack());
-    expect(names()).toEqual(["Home"]);
-    expect(navigation.canGoBack()).toBe(false);
-  });
-
-  it("keeps old history when a first send queues offline or waits for uploads", async () => {
-    openChat();
-    await openPullRequest();
-    const previous = state.routes;
-    await usePullRequestThreads(pullRequest, pr).ask();
-    apply(
-      newTaskSubmitNavigationAction({
-        state,
-        params: { ...thread, threadId: "queued-thread" },
-        queued: true,
-        android: true,
-      }),
-    );
-    expect(state.routes).toEqual(previous);
-  });
-
-  it("retains the existing iOS sheet replacement", async () => {
-    openChat();
-    await openPullRequest();
-    await usePullRequestThreads(pullRequest, pr).ask();
-    apply(
-      newTaskSubmitNavigationAction({
-        state,
-        params: { ...thread, threadId: "new-thread" },
-        queued: false,
-        android: false,
-      }),
-    );
     expect(names()).toEqual(["Home", "Thread", "PullRequest", "Thread"]);
+    expect(state.routes[state.index]?.params).toEqual({
+      draft: { draftId: "draft-pr", title: "Ask about #42" },
+    });
+    useWorkspaceBackNavigation("threads")();
+    expect(state.routes).toEqual(previous);
+    expect(selectTab).not.toHaveBeenCalled();
   });
 });
