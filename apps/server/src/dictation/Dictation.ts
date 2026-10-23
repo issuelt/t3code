@@ -363,46 +363,47 @@ const make = Effect.gen(function* () {
    * Starts loading the selected model in the background unless it is already
    * loaded or loading, and counts as use for the 30 minute idle unload.
    */
-  const ensureLoaded = (current: DictationState) =>
-    Effect.gen(function* (): Effect.fn.Return<LoadedModel, DictationError> {
-      lastModelUse = yield* Clock.currentTimeMillis;
-      if (loaded?.error) yield* unload();
-      if (!loaded) {
-        const slot: LoadedModel = {
-          model: current.settings.localModel,
-          loading: null,
-          recognizer: null,
-          error: null,
-          retired: false,
-        };
-        loaded = slot;
-        slot.loading = yield* native
-          .withPermit(
-            Effect.gen(function* () {
-              if (slot.retired) return;
-              const recognizer = yield* recognizers
-                .load(slot.model, current.settings.language)
-                .pipe(Effect.uninterruptible);
-              if (slot.retired) {
-                yield* recognizer.release;
-                return;
-              }
-              slot.recognizer = recognizer;
-              yield* update((current) => ({ ...current, loadedModel: slot.model }));
-            }),
-          )
-          .pipe(
-            Effect.catchTags({
-              DictationError: (error) =>
-                Effect.sync(() => {
-                  slot.error = error;
-                }),
-            }),
-            Effect.forkIn(scope),
-          );
-      }
-      return loaded;
-    });
+  const ensureLoaded = Effect.fn("Dictation.ensureLoaded")(function* (
+    current: DictationState,
+  ): Effect.fn.Return<LoadedModel, DictationError> {
+    lastModelUse = yield* Clock.currentTimeMillis;
+    if (loaded?.error) yield* unload();
+    if (!loaded) {
+      const slot: LoadedModel = {
+        model: current.settings.localModel,
+        loading: null,
+        recognizer: null,
+        error: null,
+        retired: false,
+      };
+      loaded = slot;
+      slot.loading = yield* native
+        .withPermit(
+          Effect.gen(function* () {
+            if (slot.retired) return;
+            const recognizer = yield* recognizers
+              .load(slot.model, current.settings.language)
+              .pipe(Effect.uninterruptible);
+            if (slot.retired) {
+              yield* recognizer.release;
+              return;
+            }
+            slot.recognizer = recognizer;
+            yield* update((current) => ({ ...current, loadedModel: slot.model }));
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            DictationError: (error) =>
+              Effect.sync(() => {
+                slot.error = error;
+              }),
+          }),
+          Effect.forkIn(scope),
+        );
+    }
+    return loaded;
+  });
 
   /**
    * Best-effort warm-up for a client that is about to dictate, e.g. when its

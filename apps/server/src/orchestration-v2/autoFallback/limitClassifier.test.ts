@@ -163,13 +163,15 @@ describe("classifyProviderLimitError", () => {
 
 describe("extractResetAt", () => {
   it("reads unix-second reset stamps", () => {
-    const seconds = Math.floor(Date.now() / 1000) + 3600;
-    expect(extractResetAt({ resetsAt: seconds })).toBe(new Date(seconds * 1000).toISOString());
+    const now = 1_783_200_000_000;
+    const seconds = 1_783_203_600;
+    expect(extractResetAt({ resetsAt: seconds }, now)).toBe(new Date(seconds * 1000).toISOString());
   });
 
   it("reads nested rate-limit window stamps", () => {
-    const seconds = Math.floor(Date.now() / 1000) + 600;
-    expect(extractResetAt({ rateLimits: { primary: { resetsAt: seconds } } })).toBe(
+    const now = 1_783_200_000_000;
+    const seconds = 1_783_200_600;
+    expect(extractResetAt({ rateLimits: { primary: { resetsAt: seconds } } }, now)).toBe(
       new Date(seconds * 1000).toISOString(),
     );
   });

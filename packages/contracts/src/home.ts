@@ -22,6 +22,7 @@ import {
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpProviderCapability,
@@ -101,9 +102,6 @@ export const isHomeLaunchedThreadId = (threadId: string): boolean =>
 /** Watch reports T3 Code sends into Home's thread have message ids that start with this. */
 export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 
-export const isHomeReportMessageId = (messageId: string): boolean =>
-  messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX);
-
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;
 
@@ -115,9 +113,7 @@ export class HomeUnavailableError extends Schema.TaggedError<HomeUnavailableErro
   { message: Schema.String },
 ) {}
 
-// ---------------------------------------------------------------------------
 // Fleet operations: what Home can do in any environment.
-// ---------------------------------------------------------------------------
 
 /** The Home thread that asked, recorded as the sender of messages it causes. */
 export const FleetActor = Schema.Struct({
@@ -291,7 +287,13 @@ const operation = <const Op extends string, S extends Schema.Top>(op: Op, input:
 
 /** One operation Home asks an environment to run, with the user's reach. */
 export const FleetRequest = Schema.Union([
-  operation("capabilities", Schema.Struct({ environmentId: environmentIdField })),
+  operation(
+    "capabilities",
+    Schema.Struct({
+      ...OrchestratorMcpCapabilitiesInput.fields,
+      environmentId: environmentIdField,
+    }),
+  ),
   operation("projects.list", FleetProjectListInput),
   operation("threads.list", OrchestratorMcpThreadListInput),
   operation("threads.read", OrchestratorMcpThreadReadInput),
@@ -329,9 +331,7 @@ export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: 
 export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
 
-// ---------------------------------------------------------------------------
 // Hub <-> desktop renderer relay.
-// ---------------------------------------------------------------------------
 
 export const FleetEnvironment = Schema.Struct({
   environmentId: EnvironmentId,

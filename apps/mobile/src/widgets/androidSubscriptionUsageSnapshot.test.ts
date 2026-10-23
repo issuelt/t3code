@@ -308,6 +308,7 @@ describe("Android account-aware widget snapshots", () => {
           entry: { target: { label: "Laptop" } },
           connection: { phase: "connected" },
           serverConfig: {
+            providers: [],
             usageLimitSources: [
               {
                 id: UsageLimitSourceId.make("hub"),

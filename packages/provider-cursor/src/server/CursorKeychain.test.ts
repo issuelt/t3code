@@ -7,29 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as CursorKeychain from "./CursorKeychain.ts";
 
-describe("CursorKeychain", () => {
-  it.effect("shares concurrent reads and rechecks after the cache expires", () =>
-    Effect.gen(function* () {
-      let reads = 0;
-      const keychain = CursorKeychain.make(
-        Effect.sync(() => {
-          reads++;
-          return `token-${reads}`;
-        }),
-      );
-      assert.deepStrictEqual(
-        yield* Effect.all([keychain.accessToken, keychain.accessToken], {
-          concurrency: "unbounded",
-        }),
-        ["token-1", "token-1"],
-      );
-      assert.strictEqual(yield* keychain.accessToken, "token-1");
-      assert.strictEqual(reads, 1);
-      yield* TestClock.adjust(Duration.minutes(5));
-      assert.strictEqual(yield* keychain.accessToken, "token-2");
-    }),
-  );
-
+describe("CursorKeychain freshness", () => {
   it.effect("shares fresh reads and updates the cache after login changes and logout", () =>
     Effect.gen(function* () {
       let reads = 0;

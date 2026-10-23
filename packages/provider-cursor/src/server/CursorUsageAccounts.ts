@@ -1,16 +1,3 @@
-/**
- * CursorUsageAccounts - Cursor's account usage as a usage source, answered
- * from a cache.
- *
- * Cursor's account API is slow, so a read answers from the cached account
- * history and marks itself `refreshing` while a background refresh runs;
- * `awaitRefresh` waits for that refresh instead. The caches persist in the
- * server's state directory, so a restart only refetches the newest edge. See
- * `accountCache`.
- *
- * @module provider-cursor/server/CursorUsageAccounts
- */
-
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -43,7 +30,6 @@ const encodeCredentialKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unkno
 
 const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 
-/** The cache file is narrowed by hand in `accountCache`, so JSON is enough here. */
 const decodeCacheFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
 );
@@ -57,9 +43,7 @@ type ScanInput = {
 export class CursorUsageAccounts extends Context.Service<
   CursorUsageAccounts,
   {
-    /** This environment's Cursor account usage source, if it has one to report. */
     readonly scan: (input: {
-      /** From the same settings snapshot as the rest of the usage read. */
       readonly keychainUsageEnabled: boolean;
       readonly windowStartMs: number;
       readonly retentionCutoffMs: number;
@@ -97,7 +81,6 @@ const make = Effect.gen(function* () {
   /** The refresh in flight per credential, which every read joins. */
   const refreshes = new Map<string, Deferred.Deferred<void>>();
 
-  /** Loads the persisted caches once; concurrent first readers await the same load. */
   const ensureLoaded = yield* Effect.cached(
     fileSystem.readFileString(cachePath).pipe(
       Effect.flatMap((raw) => decodeCacheFile(raw)),
@@ -128,7 +111,6 @@ const make = Effect.gen(function* () {
   }).pipe(persistLock.withPermit, Effect.withSpan("CursorUsageAccounts.persist"));
 
   const pendingPersists = new Set<Fiber.Fiber<void>>();
-  /** Writes the caches in the background, after the read that dirtied them answers. */
   const schedulePersist = Effect.forkDetach(persist).pipe(
     Effect.map((fiber) => {
       pendingPersists.add(fiber);
@@ -138,10 +120,8 @@ const make = Effect.gen(function* () {
   const awaitPersisted = Effect.suspend(() => Fiber.awaitAll([...pendingPersists])).pipe(
     Effect.asVoid,
   );
-  // A write still running at shutdown finishes first, so the next start keeps it.
   yield* Effect.addFinalizer(() => awaitPersisted);
 
-  /** Fetches what one account cache is missing, then persists it if anything changed. */
   const refreshAccount = Effect.fn("CursorUsageAccounts.refreshAccount")(function* (
     credential: CursorResolvedCredential,
     credentialKey: string,
@@ -188,14 +168,10 @@ const make = Effect.gen(function* () {
     );
     caches.set(credentialKey, merged.cache);
     failures.delete(credentialKey);
-    // An unchanged edge is not worth rewriting the file for: after a restart
-    // the cache just refetches a slightly wider edge. Persisting anyway retries
-    // an earlier failed write; it is a no-op when nothing is dirty.
     if (merged.changed) cacheDirty = true;
     yield* schedulePersist;
   });
 
-  /** Joins the refresh in flight, or starts one. */
   const startRefresh = (
     credential: CursorResolvedCredential,
     credentialKey: string,
@@ -231,11 +207,6 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * The account source. A cache inside its TTL, or a refresh that failed
-   * inside it, answers directly. Otherwise a refresh starts: `awaitRefresh`
-   * waits for it, and anything else answers from the cache marked `refreshing`.
-   */
   const accountSource = Effect.fn("CursorUsageAccounts.accountSource")(function* (
     credential: CursorResolvedCredential,
     credentialKey: string,
@@ -374,18 +345,21 @@ const make = Effect.gen(function* () {
     }
     return {
       cacheKey: resolved.kind === "token" ? cacheKey : encodeCredentialKey(resolved),
-      scan: ({ windowStartMs, retentionCutoffMs, awaitRefresh }: ScanInput) =>
-        Effect.gen(function* () {
-          const source = yield* accountSource(
-            resolved,
-            cacheKey,
-            authPath,
-            windowStartMs,
-            retentionCutoffMs,
-            awaitRefresh,
-          );
-          return source === null ? [] : [source];
-        }),
+      scan: Effect.fn("CursorUsageAccounts.scanPrepared")(function* ({
+        windowStartMs,
+        retentionCutoffMs,
+        awaitRefresh,
+      }: ScanInput) {
+        const source = yield* accountSource(
+          resolved,
+          cacheKey,
+          authPath,
+          windowStartMs,
+          retentionCutoffMs,
+          awaitRefresh,
+        );
+        return source === null ? [] : [source];
+      }),
     };
   });
 

@@ -1,0 +1,316 @@
+diff --git a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+index edabde8f5..a092ffd28 100644
+--- a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
++++ b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+@@ -25,7 +25,9 @@ internal class ExpoWidgetsPeekWidget(
+     val layout = WidgetsLayoutRegistry.layout(appContext, widgetName)
+       ?: return createErrorRoot("No layout found for $widgetName")
+     val props = WidgetsLayoutRegistry.props(appContext, widgetName)
+-    val environment = getWidgetEnvironment(appContext)
++    val environment = getWidgetEnvironment(appContext) + mapOf(
++      "widgetId" to id.appWidgetId
++    )
+     val node = evaluateLayout(appContext, layout, props, environment)
+ 
+     return node.toPeekRoot(appContext, InteractionSource.Widget(widgetName), size)
+diff --git a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+index b0b6479c2..d8c81d884 100644
+--- a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
++++ b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+@@ -5,6 +5,7 @@ import android.content.Intent
+ import android.net.Uri
+ import androidx.glance.action.Action
+ import androidx.glance.appwidget.action.actionSendBroadcast
++import androidx.glance.appwidget.action.actionStartActivity
+ import expo.modules.widgets.notifications.ExpoWidgetsNotificationReceiver
+ 
+ internal const val WIDGET_INTERACTION_ACTION = "expo.modules.widgets.ACTION_WIDGET_INTERACTION"
+@@ -27,6 +28,14 @@ internal data class WidgetInteraction(
+ )
+ 
+ internal fun WidgetInteraction.toGlanceAction(context: Context): Action {
++  // Activity intents can launch a stopped app on Android 12+, unlike broadcast trampolines.
++  if (target.startsWith("url:")) {
++    return actionStartActivity(
++      Intent(Intent.ACTION_VIEW, Uri.parse(target.removePrefix("url:")))
++        .setPackage(context.packageName)
++        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++    )
++  }
+   val intent = when (source) {
+     is InteractionSource.Widget -> Intent(WIDGET_INTERACTION_ACTION)
+       .setComponent(widgetProviderComponentName(context, source.name))
+diff --git a/build/ExpoWidgets.js b/build/ExpoWidgets.js
+index 85f3fbddd..05b8dd87f 100644
+--- a/build/ExpoWidgets.js
++++ b/build/ExpoWidgets.js
+@@ -34,6 +34,7 @@ class LiveActivityFactoryStub {
+     getInstances() {
+         return [];
+     }
++    dismissEnded() {}
+ }
+ class CustomNotificationStub {
+     getId() {
+diff --git a/build/Widgets.d.ts b/build/Widgets.d.ts
+index fb37d5dd6..47a97af1b 100644
+--- a/build/Widgets.d.ts
++++ b/build/Widgets.d.ts
+@@ -100,6 +100,8 @@ export declare class LiveActivityFactory<T extends object = object> {
+      * @platform ios
+      */
+     getInstances(): LiveActivity<T>[];
++    /** Dismisses ended instances that iOS still shows on the Lock Screen. */
++    dismissEnded(): void;
+ }
+ /**
+  * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
+diff --git a/build/Widgets.js b/build/Widgets.js
+index cc1efce0c..3ce889744 100644
+--- a/build/Widgets.js
++++ b/build/Widgets.js
+@@ -134,6 +134,9 @@ import ExpoWidgetsModule from './ExpoWidgets';
+    */ getInstances() {
+         return this.nativeLiveActivityFactory.getInstances().map((instance)=>new LiveActivity(instance));
+     }
++    dismissEnded() {
++        this.nativeLiveActivityFactory.dismissEnded();
++    }
+ }
+ /**
+  * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
+diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
+index 4c474bb27..dbfb8b16d 100644
+--- a/build/Widgets.types.d.ts
++++ b/build/Widgets.types.d.ts
+@@ -98,6 +98,10 @@ export type LiveActivityEnvironment = {
+      * @platform ios
+      */
+     colorScheme: 'light' | 'dark';
++    /** The rendering mode supplied by WidgetKit for this presentation. */
++    widgetRenderingMode?: WidgetRenderingMode;
++    /** Whether the presentation OS supports Liquid Glass. @platform iOS 26+ */
++    isLiquidGlassAvailable?: boolean;
+     /**
+      * Whether the activity is displayed in a context with reduced luminance.
+      * @platform iOS 16+
+@@ -307,6 +311,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+     constructor(name: string, layout: string);
+     start(props?: string, url?: string, staleDate?: number): NativeLiveActivity;
+     getInstances(): NativeLiveActivity[];
++    dismissEnded(): void;
+ }
+ export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {
+     getId(): string;
+diff --git a/ios/LiveActivityFactory.swift b/ios/LiveActivityFactory.swift
+index 29e4f1566..629e547d8 100644
+--- a/ios/LiveActivityFactory.swift
++++ b/ios/LiveActivityFactory.swift
+@@ -14,11 +14,23 @@ final class LiveActivityFactory: SharedObject {
+     WidgetsStorage.set(layout, forKey: "__expo_widgets_live_activity_\(name)_layout")
+   }
+ 
++  // iOS ends an activity after 8 hours but leaves it frozen on the Lock Screen for up to
++  // 4 more. getInstances() can't see it, so dismiss the ended ones directly.
++  func dismissEnded() {
++    for activity in Activity<LiveActivityAttributes>.activities
++    where activity.content.state.name == name && activity.activityState == .ended {
++      Task { await activity.end(nil, dismissalPolicy: .immediate) }
++    }
++  }
++
+   func start(props: String?, url: URL?, staleDate: Date?) throws -> LiveActivity {
+     guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+       throw LiveActivitiesNotSupportedException()
+     }
+ 
++    // A replacement started beside an ended card would leave both visible.
++    dismissEnded()
++
+     do {
+       let initialState = LiveActivityAttributes.ContentState(name: name, props: props)
+       let activity = try Activity.request(
+diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
+index 76b2199c2..6cb52c3de 100644
+--- a/ios/Widgets/Utils.swift
++++ b/ios/Widgets/Utils.swift
+@@ -125,6 +125,10 @@ func getLiveActivityEnvironment(for environment: EnvironmentValues, in context:
+     "isStale": context.isStale
+   ]
+ 
++  if #available(iOS 26.0, *) {
++    env["isLiquidGlassAvailable"] = true
++  }
++  env["widgetRenderingMode"] = environment.widgetRenderingMode.description
+   if #available(iOS 18.0, *) {
+     env["isActivityUpdateReduced"] = environment.isActivityUpdateReduced
+     env["activityFamily"] = "\(environment.activityFamily)"
+diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
+index 4d135c4e4..dae47445b 100644
+--- a/ios/Widgets/WidgetLiveActivity.swift
++++ b/ios/Widgets/WidgetLiveActivity.swift
+@@ -19,53 +19,41 @@ struct LiveActivityAttributes: ActivityAttributes {
+ }
+ 
+ public struct WidgetLiveActivity: Widget {
+-  @Environment(\.self) var env
+-  
+   let widgetContext: AppContext = AppContext()
+ 
+   public init() {}
+ 
+   public var body: some WidgetConfiguration {
+     ActivityConfiguration(for: LiveActivityAttributes.self) { context in
+-      let nodes = getLiveActivityNodes(
+-        forName: context.state.name,
+-        props: context.state.props,
+-        environment: getLiveActivityEnvironment(for: env, in: context)
+-      )
+       // Only apply widgetURL when the activity has one: a hierarchy with more than one
+       // widgetURL modifier is undefined behavior, and layouts can set their own through
+       // the widgetURL modifier from @expo/ui.
+-      let banner = LiveActivityBannerView(context: context, nodes: nodes)
++      let banner = LiveActivityBannerView(context: context)
+       if let url = context.attributes.url.flatMap(URL.init(string:)) {
+         banner.widgetURL(url)
+       } else {
+         banner
+       }
+     } dynamicIsland: { context in
+-      let nodes = getLiveActivityNodes(
+-        forName: context.state.name,
+-        props: context.state.props,
+-        environment: getLiveActivityEnvironment(for: env, in: context)
+-      )
+       let island = DynamicIsland {
+         DynamicIslandExpandedRegion(.center) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedCenter")
++          LiveActivitySectionView(context: context, sectionName: "expandedCenter")
+         }
+         DynamicIslandExpandedRegion(.leading) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedLeading")
++          LiveActivitySectionView(context: context, sectionName: "expandedLeading")
+         }
+         DynamicIslandExpandedRegion(.trailing) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedTrailing")
++          LiveActivitySectionView(context: context, sectionName: "expandedTrailing")
+         }
+         DynamicIslandExpandedRegion(.bottom) {
+-          LiveActivitySectionView(context: context, nodes: nodes, sectionName: "expandedBottom")
++          LiveActivitySectionView(context: context, sectionName: "expandedBottom")
+         }
+       } compactLeading: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "compactLeading")
++        LiveActivitySectionView(context: context, sectionName: "compactLeading")
+       } compactTrailing: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "compactTrailing")
++        LiveActivitySectionView(context: context, sectionName: "compactTrailing")
+       } minimal: {
+-        LiveActivitySectionView(context: context, nodes: nodes, sectionName: "minimal")
++        LiveActivitySectionView(context: context, sectionName: "minimal")
+       }
+       if let url = context.attributes.url.flatMap(URL.init(string:)) {
+         return island.widgetURL(url)
+@@ -77,11 +65,16 @@ public struct WidgetLiveActivity: Widget {
+ }
+ 
+ private struct LiveActivitySectionView: View {
++  @Environment(\.self) var env
+   let context: ActivityViewContext<LiveActivityAttributes>
+-  let nodes: [String: Any]
+   let sectionName: String
+ 
+   var body: some View {
++    let nodes = getLiveActivityNodes(
++      forName: context.state.name,
++      props: context.state.props,
++      environment: getLiveActivityEnvironment(for: env, in: context)
++    )
+     if let node = nodes[sectionName] as? [String: Any] {
+       WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)
+     } else {
+@@ -91,10 +84,17 @@ private struct LiveActivitySectionView: View {
+ }
+ 
+ private struct LiveActivityBannerView: View {
++  // Read inside the rendered view: Widget-level values do not include the
++  // presentation's color scheme, rendering mode, or reduced-luminance state.
++  @Environment(\.self) var env
+   var context: ActivityViewContext<LiveActivityAttributes>
+-  let nodes: [String: Any]
+ 
+   var body: some View {
++    let nodes = getLiveActivityNodes(
++      forName: context.state.name,
++      props: context.state.props,
++      environment: getLiveActivityEnvironment(for: env, in: context)
++    )
+     if #available(iOS 18.0, *) {
+       LiveActivityBanner(context: context, nodes: nodes)
+     } else if let node = nodes["banner"] as? [String: Any] {
+diff --git a/ios/WidgetsModule.swift b/ios/WidgetsModule.swift
+index 285136b37..d36eac46f 100644
+--- a/ios/WidgetsModule.swift
++++ b/ios/WidgetsModule.swift
+@@ -97,6 +97,10 @@ public final class WidgetsModule: Module {
+       Function("getInstances") { (liveActivity: LiveActivityFactory) in
+         try liveActivity.getInstances()
+       }
++
++      Function("dismissEnded") { (liveActivity: LiveActivityFactory) in
++        liveActivity.dismissEnded()
++      }
+     }
+ 
+     Class("LiveActivity", LiveActivity.self) {
+diff --git a/src/ExpoWidgets.ts b/src/ExpoWidgets.ts
+index db1500090..6863dc94a 100644
+--- a/src/ExpoWidgets.ts
++++ b/src/ExpoWidgets.ts
+@@ -59,6 +59,7 @@ class LiveActivityFactoryStub {
+   getInstances(): NativeLiveActivity[] {
+     return [];
+   }
++  dismissEnded(): void {}
+ }
+ 
+ class CustomNotificationStub {
+diff --git a/src/Widgets.ts b/src/Widgets.ts
+index 814b3120b..98189070a 100644
+--- a/src/Widgets.ts
++++ b/src/Widgets.ts
+@@ -213,6 +213,11 @@ export class LiveActivityFactory<T extends object = object> {
+       .getInstances()
+       .map((instance) => new LiveActivity<T>(instance));
+   }
++
++  /** Dismisses ended instances that iOS still shows on the Lock Screen. */
++  dismissEnded(): void {
++    this.nativeLiveActivityFactory.dismissEnded();
++  }
+ }
+ 
+ /**
+diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
+index 690d0695c..c60dd79ea 100644
+--- a/src/Widgets.types.ts
++++ b/src/Widgets.types.ts
+@@ -112,6 +112,10 @@ export type LiveActivityEnvironment = {
+    * @platform ios
+    */
+   colorScheme: 'light' | 'dark';
++  /** The rendering mode supplied by WidgetKit for this presentation. */
++  widgetRenderingMode?: WidgetRenderingMode;
++  /** Whether the presentation OS supports Liquid Glass. @platform iOS 26+ */
++  isLiquidGlassAvailable?: boolean;
+   /**
+    * Whether the activity is displayed in a context with reduced luminance.
+    * @platform iOS 16+
+@@ -337,6 +341,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+   constructor(name: string, layout: string);
+   start(props?: string, url?: string, staleDate?: number): NativeLiveActivity;
+   getInstances(): NativeLiveActivity[];
++  dismissEnded(): void;
+ }
+ 
+ export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {

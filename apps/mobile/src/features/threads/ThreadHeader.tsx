@@ -1,11 +1,12 @@
 import { useMemo } from "react";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
-import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
+import { AppBar } from "../../components/ui/AppBar";
+import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
+import type { AppBarAction } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
-import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
@@ -18,13 +19,12 @@ export function ThreadHeader(
     readonly onOpenFilesInspector: () => void;
   },
 ) {
-  const returnToList = useWorkspaceListNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
-    useAdaptiveWorkspaceLayout();
+  const goBack = useWorkspaceBackNavigation("threads");
+  const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
-  const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
-    const actions: ScreenHeaderAction[] = [];
+  const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
+    const actions: AppBarAction[] = [];
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -41,12 +41,6 @@ export function ThreadHeader(
         onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
       });
     }
-    if (props.onOpenBrowserClone)
-      actions.push({
-        accessibilityLabel: "Open browser clone",
-        icon: "safari",
-        onPress: props.onOpenBrowserClone,
-      });
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
       actions.push({
         accessibilityLabel: "Open terminal",
@@ -62,7 +56,7 @@ export function ThreadHeader(
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
-        icon: "arrow.triangle.merge",
+        icon: PullRequestGlyph.merged,
         onPress: onMergeBack,
       });
     }
@@ -79,12 +73,11 @@ export function ThreadHeader(
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
-    props.onOpenBrowserClone,
   ]);
 
   return (
     <>
-      <ScreenHeader
+      <AppBar
         title={props.title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}
@@ -104,10 +97,9 @@ export function ThreadHeader(
             />
           ) : null
         }
-        onBack={layout.usesSplitView ? undefined : returnToList}
+        onBack={layout.usesSplitView ? undefined : goBack}
         actions={androidHeaderActions}
         hideBottomBorder
-        compact={composerKeyboardActive}
       />
       {native.fallback}
     </>

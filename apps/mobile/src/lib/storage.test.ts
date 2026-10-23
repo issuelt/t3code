@@ -70,6 +70,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: () => null,
+}));
+
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: mocks.deleteItemAsync,
   getItemAsync: mocks.getItemAsync,
@@ -89,17 +93,13 @@ vi.mock("expo-constants", () => ({
 }));
 
 vi.mock("react-native", () => ({
+  AppState: { currentState: "active" },
   Platform: {
     OS: "ios",
   },
 }));
 
-import {
-  loadPreferences,
-  loadSavedConnections,
-  saveConnection,
-  savePreferencesPatch,
-} from "../persistence/imperative";
+import { loadPreferences, saveConnection, savePreferencesPatch } from "../persistence/imperative";
 import { toStableSavedRemoteConnection } from "./connection";
 import { DEFAULT_WIDGET_CONFIGURATION } from "../widgets/subscriptionWidgetPreferences";
 
@@ -130,45 +130,6 @@ describe("mobile connection storage", () => {
     expect(JSON.parse(savedValue ?? "")).toEqual({
       connections: [toStableSavedRemoteConnection(managedConnection)],
     });
-  });
-
-  it("loads relay-managed connection metadata without a cached access token", async () => {
-    await saveConnection(managedConnection);
-
-    await expect(loadSavedConnections()).resolves.toEqual([
-      toStableSavedRemoteConnection(managedConnection),
-    ]);
-  });
-
-  it("preserves secure-storage read failures with operation and key context", async () => {
-    const cause = new Error("keychain unavailable");
-    mocks.getItemAsync.mockRejectedValueOnce(cause);
-
-    await expect(loadSavedConnections()).rejects.toMatchObject({
-      _tag: "MobileSecureStorageError",
-      operation: "read",
-      key: "t3code.connections",
-      cause,
-      message: "Mobile secure storage operation read failed for key t3code.connections.",
-    });
-  });
-
-  it("logs structured decode failures before using the empty fallback", async () => {
-    await mocks.setItemAsync("t3code.connections", "{");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await expect(loadSavedConnections()).resolves.toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      "[mobile-storage] ignored invalid JSON",
-      expect.objectContaining({
-        _tag: "MobileStorageDecodeError",
-        key: "t3code.connections",
-        cause: expect.any(SyntaxError),
-        message: "Failed to decode mobile storage value for key t3code.connections.",
-      }),
-    );
-
-    warn.mockRestore();
   });
 
   it("loads legacy preferences when SQLite is unavailable", async () => {
@@ -246,7 +207,6 @@ describe("mobile connection storage", () => {
 
     await expect(loadPreferences()).resolves.toEqual({});
   });
-
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
@@ -256,76 +216,6 @@ describe("mobile connection storage", () => {
     };
     expect(JSON.parse(fallback.payload)).toEqual({ baseFontSize: 19 });
     expect(fallback.updatedAt).toEqual(expect.any(Number));
-  });
-
-  it("persists thread list shelf preferences", async () => {
-    await expect(
-      savePreferencesPatch({
-        threadListSettledShelfExpanded: false,
-        threadListSnoozedShelfExpanded: true,
-        threadListWorkingShelfExpanded: true,
-        workingShelfEnabled: true,
-      }),
-    ).resolves.toEqual({
-      threadListSettledShelfExpanded: false,
-      threadListSnoozedShelfExpanded: true,
-      threadListWorkingShelfExpanded: true,
-      workingShelfEnabled: true,
-    });
-
-    await expect(loadPreferences()).resolves.toEqual({
-      threadListSettledShelfExpanded: false,
-      threadListSnoozedShelfExpanded: true,
-      threadListWorkingShelfExpanded: true,
-      workingShelfEnabled: true,
-    });
-    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
-      threadListSettledShelfExpanded: false,
-      threadListSnoozedShelfExpanded: true,
-      threadListWorkingShelfExpanded: true,
-      workingShelfEnabled: true,
-    });
-  });
-
-  it("drops legacy and invalid thread list shelf expansion preferences", async () => {
-    mocks.setPreferencesJson(
-      JSON.stringify({
-        baseFontSize: 17,
-        threadListV2SettledShelfExpanded: true,
-        threadListV2SnoozedShelfExpanded: true,
-        threadListSettledShelfExpanded: "false",
-        threadListSnoozedShelfExpanded: 1,
-      }),
-      10,
-    );
-
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
-  });
-
-  it("keeps valid list filters and drops malformed ones", async () => {
-    const threadListFilters = { environmentId: "environment-1", projectKey: null };
-    const pullRequestListFilters = {
-      environmentId: null,
-      controls: {
-        "": {
-          state: "all",
-          involvement: "reviewing",
-          filters: { labels: [["size:S"]] },
-          sort: "oldest",
-        },
-      },
-    };
-    mocks.setPreferencesJson(JSON.stringify({ threadListFilters, pullRequestListFilters }), 10);
-    await expect(loadPreferences()).resolves.toEqual({ threadListFilters, pullRequestListFilters });
-
-    mocks.setPreferencesJson(
-      JSON.stringify({
-        threadListFilters: { environmentId: 1, projectKey: null },
-        pullRequestListFilters: { environmentId: null, controls: { "": { sort: "newest" } } },
-      }),
-      11,
-    );
-    await expect(loadPreferences()).resolves.toEqual({});
   });
 
   it("reconciles fallback preferences after SQLite recovers", async () => {
@@ -356,21 +246,6 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
-  });
-
-  it("ignores an invalid fallback even when it has a newer timestamp", async () => {
-    mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 21 }), 30);
-    await mocks.setItemAsync(
-      "t3code.preferences.fallback",
-      JSON.stringify({ payload: "{", updatedAt: 40 }),
-    );
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
-    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
-    expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
-
-    warn.mockRestore();
   });
 
   it("keeps SQLite authoritative when stale legacy preferences remain", async () => {

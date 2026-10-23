@@ -119,10 +119,10 @@ describe("task graph summaries", () => {
 
     expect(taskGraphNodeWaitDetail(scheduled, formatTime)).toBe("Starts <15:40>");
     expect(taskGraphNodeWaitDetail(limited, formatTime)).toBe(
-      "Usage limit reached — starts after the reset, <15:40>",
+      "Usage limit reached: starts after the reset, <15:40>",
     );
     expect(taskGraphNodeWaitDetail(stopped, formatTime)).toBe(
-      "Usage limit reached — continues on its thread after the reset, <15:40>",
+      "Usage limit reached: continues on its thread after the reset, <15:40>",
     );
     expect(taskGraphNodeWaitDetail(node("c"), formatTime)).toBeNull();
   });

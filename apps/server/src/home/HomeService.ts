@@ -36,7 +36,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export class HomeService extends Context.Service<
@@ -118,7 +118,7 @@ function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const workspace = yield* HomeWorkspace.HomeWorkspace;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* Crypto.Crypto;
@@ -148,30 +148,31 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const launchHome = (modelSelection: ModelSelection) =>
-    Effect.gen(function* () {
-      const { projectId } = yield* folders.ensureHomeProject.pipe(
-        Effect.mapError((error) => fail(error.message)),
-      );
-      const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-      const result = yield* launches
-        .launch({
-          commandId: CommandId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
-          threadId: ThreadId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
-          projectId,
-          title: "Home",
-          modelSelection,
-          // Approving for the user needs the widest mode, and the mode check
-          // stops a caller from acting on a thread broader than itself.
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          workspaceStrategy: { type: "root" },
-          createdBy: "user",
-          creationSource: "server",
-        })
-        .pipe(Effect.mapError((error) => fail(error.message)));
-      return result.threadId;
-    });
+  const launchHome = Effect.fn("HomeService.launchHome")(function* (
+    modelSelection: ModelSelection,
+  ) {
+    const { projectId } = yield* workspace.ensureProject.pipe(
+      Effect.mapError((error) => fail(error.message)),
+    );
+    const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const result = yield* launches
+      .launch({
+        commandId: CommandId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
+        threadId: ThreadId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
+        projectId,
+        title: "Home",
+        modelSelection,
+        // Approving for the user needs the widest mode, and the mode check
+        // stops a caller from acting on a thread broader than itself.
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        createdBy: "user",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError((error) => fail(error.message)));
+    return result.threadId;
+  });
 
   const withLock = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
 
@@ -182,8 +183,8 @@ const make = Effect.gen(function* () {
    * queued runs, so after it no queued turn can start; a turn that started
    * before it is the active run, which is then interrupted.
    */
-  const stopFormerHome = (threadId: ThreadId) =>
-    Effect.gen(function* () {
+  const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(
+    function* (threadId: ThreadId) {
       if ((yield* liveShell(threadId)) === null) return;
       const commandId = crypto.randomUUIDv4().pipe(
         Effect.orDie,
@@ -201,37 +202,41 @@ const make = Effect.gen(function* () {
         runId: shell.activeRunId,
         reason: "Home was turned off or started fresh.",
       });
-    }).pipe(Effect.ignore);
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.
   if (available && (yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId != null) {
-    yield* folders.ensureHomeProject.pipe(Effect.ignore);
+    yield* workspace.ensureProject.pipe(Effect.ignore);
   }
 
   // A read failure fails the report, so the reporter retries the batch and
   // keeps its ended watches. A Home thread that is gone has nothing to wake.
-  const deliver = (homeThreadId: ThreadId, events: ReadonlyArray<HomeWatchEvent>) =>
-    Effect.gen(function* () {
-      const shell = yield* threads
-        .getThreadShell(homeThreadId)
-        .pipe(Effect.mapError(() => fail("Home could not be read.")));
-      if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return;
-      const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-      yield* threads
-        .sendToThread({
-          projectId: shell.projectId,
-          commandId: CommandId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
-          threadId: homeThreadId,
-          messageId: MessageId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
-          text: formatWatchReport(events),
-          attachments: [],
-          mode: "auto",
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(Effect.mapError(() => fail("Home could not be woken.")));
-    });
+  const deliver = Effect.fn("HomeService.deliver")(function* (
+    homeThreadId: ThreadId,
+    events: ReadonlyArray<HomeWatchEvent>,
+  ) {
+    const shell = yield* threads
+      .getThreadShell(homeThreadId)
+      .pipe(Effect.mapError(() => fail("Home could not be read.")));
+    if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return;
+    const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    yield* threads
+      .sendToThread({
+        projectId: shell.projectId,
+        commandId: CommandId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
+        threadId: homeThreadId,
+        messageId: MessageId.make(`${HOME_REPORT_MESSAGE_ID_PREFIX}${id}`),
+        text: formatWatchReport(events),
+        attachments: [],
+        mode: "auto",
+        createdBy: "system",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(() => fail("Home could not be woken.")));
+  });
 
   return HomeService.of({
     available,

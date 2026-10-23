@@ -25,7 +25,6 @@ const OptionalTimeoutMs = Schema.optional(
     .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
 ).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
 
-/** Operations understood by desktop hosts predating viewport resizing. */
 export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "status",
   "open",
@@ -41,23 +40,14 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "recordingStop",
 ] as const;
 
-/** Advertised by current desktop hosts for mixed-version routing. */
-export const PREVIEW_AUTOMATION_OPERATIONS = [
+const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
-  "captureFrame",
-  "pointer",
-  "key",
-  "text",
-  "clipboardCopy",
-  "clipboardPaste",
 ] as const;
 
 export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
-  ...PREVIEW_AUTOMATION_V1_OPERATIONS,
-  "resize",
-  "setColorScheme",
+  ...PREVIEW_AUTOMATION_OPERATIONS,
   "dialog",
   "close",
   "upload",
@@ -65,10 +55,7 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "select",
   "drag",
 ] as const;
-export const PreviewAutomationOperation = Schema.Literals([
-  ...PREVIEW_AUTOMATION_OPERATIONS,
-  ...PREVIEW_AUTOMATION_SERVER_OPERATIONS,
-]);
+export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
 
 const PreviewAutomationTabTargetFields = {
@@ -86,7 +73,6 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
-/** `human`: a person controls the tab now; `agent`: an agent session opened it; `unclaimed`: neither. */
 export const PreviewAutomationTabOwner = Schema.Literals(["agent", "human", "unclaimed"]);
 
 export const PreviewAutomationProfile = Schema.Struct({
@@ -119,15 +105,11 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /** Optional for compatibility with desktop hosts predating viewport sizing. */
   viewportSetting: Schema.optional(PreviewViewportSetting),
-  /** Measured guest-page viewport in CSS pixels when a webview is ready. */
   viewport: Schema.optional(PreviewRenderedViewportSize),
-  /** Server hosts: a file picker the page opened, answered with preview_upload. */
   fileChooser: Schema.optional(
     Schema.NullOr(Schema.Struct({ multiple: Schema.Boolean, accept: Schema.String })),
   ),
-  /** Server hosts: files this tab downloaded, saved on the environment until the tab closes. */
   downloads: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -157,9 +139,7 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /** Server hosts: the browser profiles preview_open accepts, as the user's client reported them. */
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
-  /** Server hosts: the profile preview_open uses when given none. */
   defaultProfileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
@@ -492,7 +472,7 @@ export const PreviewAutomationSelectResult = Schema.Struct({
 });
 export type PreviewAutomationSelectResult = typeof PreviewAutomationSelectResult.Type;
 
-/** A required locator field. Its JSON schema keeps only the description on its last check. */
+/** Its JSON schema keeps only the description on its last check. */
 const DescribedLocator = (description: string) =>
   Schema.String.check(Schema.isTrimmed())
     .check(Schema.isNonEmpty({ description }))
@@ -753,75 +733,6 @@ export const PreviewAutomationSnapshot = Schema.Struct({
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
-/** A bounded JPEG frame returned by a desktop preview host for remote cloning. */
-export const PreviewAutomationFrame = Schema.Struct({
-  data: Schema.String.check(Schema.isMaxLength(12_000_000)),
-  mimeType: Schema.Literal("image/jpeg"),
-  width: Schema.Int.check(Schema.isGreaterThan(0)),
-  height: Schema.Int.check(Schema.isGreaterThan(0)),
-  /** CSS viewport dimensions used to map remote pointer coordinates. */
-  viewportWidth: Schema.Int.check(Schema.isGreaterThan(0)),
-  viewportHeight: Schema.Int.check(Schema.isGreaterThan(0)),
-  capturedAt: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-});
-export type PreviewAutomationFrame = typeof PreviewAutomationFrame.Type;
-
-export const PreviewCloneOperation = Schema.Literals([
-  "capture",
-  "pointer",
-  "key",
-  "text",
-  "clipboardCopy",
-  "clipboardPaste",
-]);
-export type PreviewCloneOperation = typeof PreviewCloneOperation.Type;
-const CloneTab = { tabId: PreviewTabId };
-export const PreviewClonePointerInput = Schema.Struct({
-  ...CloneTab,
-  action: Schema.Literals(["down", "move", "up", "wheel"]),
-  x: Schema.Finite,
-  y: Schema.Finite,
-  deltaX: Schema.optional(Schema.Finite),
-  deltaY: Schema.optional(Schema.Finite),
-  button: Schema.optional(Schema.Literals(["left", "middle", "right"])),
-});
-export type PreviewClonePointerInput = typeof PreviewClonePointerInput.Type;
-
-export const PreviewCloneInput = Schema.Union([
-  Schema.Struct({ ...CloneTab, action: Schema.Literal("capture") }),
-  PreviewClonePointerInput,
-  Schema.Struct({
-    ...CloneTab,
-    action: Schema.Literal("key"),
-    key: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
-    modifiers: Schema.optional(Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"]))),
-  }),
-  Schema.Struct({
-    ...CloneTab,
-    action: Schema.Literal("text"),
-    text: Schema.String.check(Schema.isMaxLength(64_000)),
-  }),
-  Schema.Struct({ ...CloneTab, action: Schema.Literal("clipboardCopy") }),
-  Schema.Struct({
-    ...CloneTab,
-    action: Schema.Literal("clipboardPaste"),
-    text: Schema.String.check(Schema.isMaxLength(64_000)),
-  }),
-]);
-export type PreviewCloneInput = typeof PreviewCloneInput.Type;
-export const PreviewCloneResult = Schema.Union([
-  PreviewAutomationFrame,
-  Schema.Struct({ tabId: PreviewTabId, clipboard: Schema.String }),
-  Schema.Struct({ tabId: PreviewTabId, ok: Schema.Literal(true) }),
-]);
-export type PreviewCloneResult = typeof PreviewCloneResult.Type;
-export const PreviewCloneResponse = Schema.Struct({
-  clientId: TrimmedNonEmptyString,
-  connectionId: TrimmedNonEmptyString,
-  result: PreviewCloneResult,
-});
-export type PreviewCloneResponse = typeof PreviewCloneResponse.Type;
-
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
   recording: Schema.Boolean,
@@ -846,32 +757,6 @@ export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
 export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
 
-export const PreviewCloneInvokeInput = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  cloneId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-  operation: PreviewCloneOperation,
-  input: PreviewCloneInput,
-  tabId: PreviewTabId,
-  timeoutMs: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15_000 }))),
-  clientId: Schema.optional(PreviewAutomationClientId),
-  connectionId: Schema.optional(PreviewAutomationConnectionId),
-}).check(
-  Schema.makeFilter((value) => {
-    if (value.tabId !== value.input.tabId) return "Clone input must target the selected tab.";
-    const operation = ["down", "move", "up", "wheel"].includes(value.input.action)
-      ? "pointer"
-      : value.input.action;
-    if (value.operation !== operation) return "Clone operation must match its input.";
-    if ((value.clientId === undefined) !== (value.connectionId === undefined))
-      return "Provide both desktop host identifiers.";
-    if (value.operation !== "capture" && value.clientId === undefined)
-      return "Capture a desktop frame before sending input.";
-    return true;
-  }),
-);
-export type PreviewCloneInvokeInput = typeof PreviewCloneInvokeInput.Type;
-
 export const PreviewAutomationHostIdentity = Schema.Struct({
   clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
@@ -881,8 +766,7 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   /**
-   * Missing means the pre-capability-negotiation V1 operation set. This lets
-   * a newer server safely coexist with an older desktop during rollout.
+   * Missing means the pre-capability-negotiation V1 operation set.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
@@ -946,7 +830,6 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
-// Thread fields are absent when the caller signed in from outside a T3 thread.
 const McpCapabilityErrorFields = {
   environmentId: EnvironmentId,
   threadId: Schema.optional(ThreadId),
@@ -954,7 +837,6 @@ const McpCapabilityErrorFields = {
   providerInstanceId: Schema.optional(ProviderInstanceId),
 };
 
-/** Agents read this message, so it names the next step and not only the failure. */
 export class PreviewAutomationUnavailableError extends Schema.TaggedError<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
   {
@@ -967,7 +849,6 @@ export class PreviewAutomationUnavailableError extends Schema.TaggedError<Previe
   }
 }
 
-/** A `t3-code` MCP tool was called with a credential that does not carry its capability. */
 export class McpCapabilityUnavailableError extends Schema.TaggedError<McpCapabilityUnavailableError>()(
   "McpCapabilityUnavailableError",
   {
@@ -988,7 +869,6 @@ const PreviewAutomationScopeErrorFields = {
   providerInstanceId: ProviderInstanceId,
 };
 
-/** The automation host id of an environment's own server browser. */
 export const SERVER_BROWSER_AUTOMATION_CLIENT_ID = "server-browser";
 
 const PreviewAutomationRequestErrorFields = {
@@ -1116,10 +996,6 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationRemoteDiagnosticFields,
-    /**
-     * What went wrong, as the server's own browser reported it, such as a
-     * page that refused the connection. Absent for other hosts.
-     */
     reason: Schema.optional(Schema.String),
   },
 ) {
@@ -1137,7 +1013,6 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedError<Pr
     ...PreviewAutomationRemoteDiagnosticFields,
     selectorKind: Schema.optional(Schema.Literals(["locator", "selector"])),
     selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-    /** The selector was an `aria-ref` from an older snapshot. */
     staleRef: Schema.optional(Schema.Boolean),
   },
 ) {

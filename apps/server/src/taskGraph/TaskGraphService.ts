@@ -214,8 +214,8 @@ function taskGraphReport(graph: TaskGraph): string {
       pr === null
         ? ""
         : pr.status === "opened"
-          ? ` — PR: ${pr.url ?? "opened"}`
-          : ` — PR failed: ${pr.error ?? "unknown error"}`;
+          ? `, PR: ${pr.url ?? "opened"}`
+          : `, PR failed: ${pr.error ?? "unknown error"}`;
     const detail = node.status === "succeeded" ? "" : node.error === null ? "" : ` (${node.error})`;
     return `- ${node.key} "${node.title}": ${node.status}${detail}${prText}`;
   });
@@ -332,17 +332,16 @@ const make = Effect.gen(function* () {
     );
 
   /** Writes a graph after settling skips and status. Returns the stored graph. */
-  const writeGraph = (graph: TaskGraph) =>
-    Effect.gen(function* () {
-      const now = yield* nowIso;
-      const nodes = skipUnreachableTaskGraphNodes(graph.nodes, now);
-      const stored: TaskGraph = {
-        ...graph,
-        nodes,
-        status: deriveTaskGraphStatus(graph.status, nodes),
-        updatedAt: now,
-      };
-      yield* sql`
+  const writeGraph = Effect.fn("TaskGraphService.writeGraph")(function* (graph: TaskGraph) {
+    const now = yield* nowIso;
+    const nodes = skipUnreachableTaskGraphNodes(graph.nodes, now);
+    const stored: TaskGraph = {
+      ...graph,
+      nodes,
+      status: deriveTaskGraphStatus(graph.status, nodes),
+      updatedAt: now,
+    };
+    yield* sql`
         INSERT INTO task_graphs (graph_id, project_id, thread_id, status, graph_json, created_at, updated_at)
         VALUES (${stored.id}, ${stored.projectId}, ${stored.threadId}, ${stored.status},
                 ${encodeGraphJson(stored)}, ${stored.createdAt}, ${stored.updatedAt})
@@ -351,10 +350,10 @@ const make = Effect.gen(function* () {
           graph_json = excluded.graph_json,
           updated_at = excluded.updated_at
       `.pipe(Effect.mapError((cause) => graphError("Could not save task graph.", graph.id, cause)));
-      indexGraph(stored);
-      yield* PubSub.publish(changes, stored.threadId);
-      return stored;
-    });
+    indexGraph(stored);
+    yield* PubSub.publish(changes, stored.threadId);
+    return stored;
+  });
 
   const updateNode = (
     graphId: TaskGraphId,
@@ -414,64 +413,64 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // --- Finishing nodes -------------------------------------------------------
-
   /** Commits the node's work so dependents can branch from it, and opens its PR. */
-  const deliver = (graph: TaskGraph, node: TaskGraphNode, worktreePath: string) =>
-    Effect.gen(function* () {
-      const opensPullRequest = taskGraphNodeOpensPullRequest(graph.nodes, node);
-      // With peers paired, a dependent may run elsewhere and needs the branch on origin.
-      const push =
-        (yield* peers.hasPeers) || taskGraphNodeSharesPullRequestBranch(graph.nodes, node);
-      const baseBranch = opensPullRequest ? taskGraphPullRequestBase(graph, node) : null;
-      let failedPhase: string | null = null;
-      const delivered = yield* git
-        .runStackedAction(
-          {
-            actionId: `task-graph:${graph.id}:${node.key}:${node.threadId}`,
-            cwd: worktreePath,
-            action: opensPullRequest ? "commit_push_pr" : push ? "commit_push" : "commit",
-            ...(baseBranch === null ? {} : { baseBranch }),
-            ...(node.threadId === null ? {} : { threadId: node.threadId }),
-            projectId: graph.projectId,
+  const deliver = Effect.fn("TaskGraphService.deliver")(function* (
+    graph: TaskGraph,
+    node: TaskGraphNode,
+    worktreePath: string,
+  ) {
+    const opensPullRequest = taskGraphNodeOpensPullRequest(graph.nodes, node);
+    // With peers paired, a dependent may run elsewhere and needs the branch on origin.
+    const push = (yield* peers.hasPeers) || taskGraphNodeSharesPullRequestBranch(graph.nodes, node);
+    const baseBranch = opensPullRequest ? taskGraphPullRequestBase(graph, node) : null;
+    let failedPhase: string | null = null;
+    const delivered = yield* git
+      .runStackedAction(
+        {
+          actionId: `task-graph:${graph.id}:${node.key}:${node.threadId}`,
+          cwd: worktreePath,
+          action: opensPullRequest ? "commit_push_pr" : push ? "commit_push" : "commit",
+          ...(baseBranch === null ? {} : { baseBranch }),
+          ...(node.threadId === null ? {} : { threadId: node.threadId }),
+          projectId: graph.projectId,
+        },
+        {
+          progressReporter: {
+            publish: (event) =>
+              Effect.sync(() => {
+                if (event.kind === "action_failed") failedPhase = event.phase;
+              }),
           },
-          {
-            progressReporter: {
-              publish: (event) =>
-                Effect.sync(() => {
-                  if (event.kind === "action_failed") failedPhase = event.phase;
-                }),
-            },
-          },
-        )
-        .pipe(
-          // Only a failed PR step leaves the work committed and pushed for dependents;
-          // a commit or push failure fails the node.
-          Effect.map((result) => ({ result, prError: null })),
-          Effect.catch((error) =>
-            opensPullRequest && failedPhase === "pr"
-              ? Effect.succeed({ result: null, prError: error.message })
-              : Effect.fail(error),
-          ),
-        );
-      if (delivered.result === null) {
-        return { status: "failed", url: null, error: delivered.prError } as const;
-      }
-      const result = delivered.result;
-      if (opensPullRequest && node.threadId !== null) {
-        yield* linkCreatedPullRequest({
-          threadId: node.threadId,
-          result,
-          commandId: Effect.succeed(CommandId.make(`task-graph-pr-link:${node.threadId}`)),
-        }).pipe(
-          Effect.provideService(Orchestrator.OrchestratorV2, orchestrator),
-          Effect.provideService(ProjectService.ProjectService, projects),
-        );
-      }
-      return opensPullRequest
-        ? ({ status: "opened", url: result.pr.url ?? null, error: null } as const)
-        : null;
-    });
+        },
+      )
+      .pipe(
+        // Only a failed PR step leaves the work committed and pushed for dependents;
+        // a commit or push failure fails the node.
+        Effect.map((result) => ({ result, prError: null })),
+        Effect.catch((error) =>
+          opensPullRequest && failedPhase === "pr"
+            ? Effect.succeed({ result: null, prError: error.message })
+            : Effect.fail(error),
+        ),
+      );
+    if (delivered.result === null) {
+      return { status: "failed", url: null, error: delivered.prError } as const;
+    }
+    const result = delivered.result;
+    if (opensPullRequest && node.threadId !== null) {
+      yield* linkCreatedPullRequest({
+        threadId: node.threadId,
+        result,
+        commandId: Effect.succeed(CommandId.make(`task-graph-pr-link:${node.threadId}`)),
+      }).pipe(
+        Effect.provideService(Orchestrator.OrchestratorV2, orchestrator),
+        Effect.provideService(ProjectService.ProjectService, projects),
+      );
+    }
+    return opensPullRequest
+      ? ({ status: "opened", url: result.pr.url ?? null, error: null } as const)
+      : null;
+  });
 
   /** A succeeded node's thread has nothing left to do; settle it so it leaves the active list. */
   const settleNodeThread = (threadId: ThreadId) =>
@@ -491,8 +490,8 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const finishLocalNode = (graphId: TaskGraphId, key: string, threadId: ThreadId) =>
-    Effect.gen(function* () {
+  const finishLocalNode = Effect.fn("TaskGraphService.finishLocalNode")(
+    function* (graphId: TaskGraphId, key: string, threadId: ThreadId) {
       const projection = yield* threads.getThreadProjection(threadId);
       // A follow-up the user sent to the node thread keeps the node running.
       if (ThreadManagement.latestActiveRun(projection) !== undefined) return;
@@ -591,21 +590,23 @@ const make = Effect.gen(function* () {
         yield* settleNodeThread(threadId);
       }
       yield* advance;
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not finish task graph node", {
-          graphId,
-          key,
-          cause: Cause.pretty(cause),
-        }),
+    },
+    (effect, graphId, key) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not finish task graph node", {
+            graphId,
+            key,
+            cause: Cause.pretty(cause),
+          }),
+        ),
       ),
-    );
+  );
 
-  const completeRemoteNode: TaskGraphService["Service"]["completeRemoteNode"] = ({
-    threadId,
-    outcome,
-  }) =>
-    Effect.gen(function* () {
+  const completeRemoteNode: TaskGraphService["Service"]["completeRemoteNode"] = Effect.fn(
+    "TaskGraphService.completeRemoteNode",
+  )(
+    function* ({ threadId, outcome }) {
       const target = nodeByThread.get(threadId);
       if (target === undefined) return;
       nodeByThread.delete(threadId);
@@ -631,70 +632,70 @@ const make = Effect.gen(function* () {
         };
       });
       yield* advance;
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not record remote task graph node", {
-          threadId,
-          cause: Cause.pretty(cause),
-        }),
+    },
+    (effect, { threadId }) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record remote task graph node", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
       ),
-    );
-
-  // --- Starting nodes --------------------------------------------------------
+  );
 
   /**
    * Where a ready node runs: its pinned machine, or whichever of this machine
    * and its peers has the most free capacity, scored like client load balancing.
    * Null when nowhere has room; the node waits for the next pass.
    */
-  const placeNode = (
+  const placeNode = Effect.fn("TaskGraphService.placeNode")(function* (
     graph: TaskGraph,
     node: TaskGraphNode,
     local: { readonly resources: HostResourcesSnapshot; readonly hasRoom: boolean },
     maxNodes: number,
     peerCandidates: ReadonlyArray<TaskGraphPeers.PeerCandidate>,
     pending: ReadonlyMap<string, number>,
-  ): Effect.Effect<EnvironmentId | null> =>
-    Effect.gen(function* () {
-      // Continuing a worktree means running on the machine that has it.
-      const continued =
-        node.workspace === "dependency"
-          ? (graph.nodes.find((candidate) => candidate.key === node.dependsOn[0])
-              ?.assignedEnvironmentId ?? null)
-          : null;
-      const pinned = continued ?? node.environmentId;
-      if (pinned === localEnvironmentId) {
-        return local.hasRoom ? localEnvironmentId : null;
-      }
-      // Peers count a node once it starts there, after this pass; this pass's placements count too.
-      const remote = peerCandidates.filter(
-        (candidate) => candidate.running + (pending.get(candidate.environmentId) ?? 0) < maxNodes,
-      );
-      if (pinned !== null) {
-        return remote.some((candidate) => candidate.environmentId === pinned) ? pinned : null;
-      }
-      if (remote.length === 0) return local.hasRoom ? localEnvironmentId : null;
-      const now = yield* Clock.currentTimeMillis;
-      const chosen = chooseLoadBalancedEnvironment(
-        [
-          ...(local.hasRoom
-            ? [
-                {
-                  environmentId: localEnvironmentId,
-                  resources: local.resources,
-                  receivedAt: now,
-                  weight: LOCAL_WEIGHT,
-                },
-              ]
-            : []),
-          ...remote,
-        ],
-        now,
-      );
-      // The scorer skips a machine without a CPU sample yet; this one can still take work.
-      if (chosen === null) return local.hasRoom ? localEnvironmentId : null;
-      return EnvironmentId.make(chosen);
-    });
+  ): Effect.fn.Return<EnvironmentId | null> {
+    // Continuing a worktree means running on the machine that has it.
+    const continued =
+      node.workspace === "dependency"
+        ? (graph.nodes.find((candidate) => candidate.key === node.dependsOn[0])
+            ?.assignedEnvironmentId ?? null)
+        : null;
+    const pinned = continued ?? node.environmentId;
+    if (pinned === localEnvironmentId) {
+      return local.hasRoom ? localEnvironmentId : null;
+    }
+    // Peers count a node once it starts there, after this pass; this pass's placements count too.
+    const remote = peerCandidates.filter(
+      (candidate) => candidate.running + (pending.get(candidate.environmentId) ?? 0) < maxNodes,
+    );
+    if (pinned !== null) {
+      return remote.some((candidate) => candidate.environmentId === pinned) ? pinned : null;
+    }
+    if (remote.length === 0) return local.hasRoom ? localEnvironmentId : null;
+    const now = yield* Clock.currentTimeMillis;
+    const chosen = chooseLoadBalancedEnvironment(
+      [
+        ...(local.hasRoom
+          ? [
+              {
+                environmentId: localEnvironmentId,
+                resources: local.resources,
+                receivedAt: now,
+                weight: LOCAL_WEIGHT,
+              },
+            ]
+          : []),
+        ...remote,
+      ],
+      now,
+    );
+    // The scorer skips a machine without a CPU sample yet; this one can still take work.
+    if (chosen === null) return local.hasRoom ? localEnvironmentId : null;
+    return EnvironmentId.make(chosen);
+  });
 
   /** Whether a cancel or edit since `advance` took the node back. */
   const launchWithdrawn = (graph: TaskGraph, node: TaskGraphNode) =>
@@ -705,8 +706,8 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const launchNode = (graph: TaskGraph, node: TaskGraphNode) =>
-    Effect.gen(function* () {
+  const launchNode = Effect.fn("TaskGraphService.launchNode")(
+    function* (graph: TaskGraph, node: TaskGraphNode) {
       const threadId = node.threadId!;
       // Cancelling stops a node's run, but one still launching has none yet.
       if (yield* locked(launchWithdrawn(graph, node))) return;
@@ -764,24 +765,27 @@ const make = Effect.gen(function* () {
       // A cancel that landed while launching found no run to stop; stop the one just started.
       if (yield* locked(launchWithdrawn(graph, node)))
         yield* stopNodes(graph, [node], "task-graph-launch-stop");
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          const completedAt = yield* nowIso;
-          nodeByThread.delete(node.threadId!);
-          yield* updateNode(graph.id, node.key, (current) =>
-            current.status === "running"
-              ? {
-                  ...current,
-                  status: "failed",
-                  error: `Could not start the node: ${errorMessage(cause)}`,
-                  completedAt,
-                }
-              : current,
-          );
-        }),
+    },
+    (effect, graph, node) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const completedAt = yield* nowIso;
+            nodeByThread.delete(node.threadId!);
+            yield* updateNode(graph.id, node.key, (current) =>
+              current.status === "running"
+                ? {
+                    ...current,
+                    status: "failed",
+                    error: `Could not start the node: ${errorMessage(cause)}`,
+                    completedAt,
+                  }
+                : current,
+            );
+          }),
+        ),
       ),
-    );
+  );
 
   /**
    * Starts every node that is ready and fits: under the environment's
@@ -951,10 +955,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // --- Public API -------------------------------------------------------------
-
-  const create: TaskGraphService["Service"]["create"] = (input) =>
-    Effect.gen(function* () {
+  const create: TaskGraphService["Service"]["create"] = Effect.fn("TaskGraphService.create")(
+    function* (input) {
       const parent = yield* threads
         .getThreadProjection(input.threadId)
         .pipe(
@@ -990,10 +992,11 @@ const make = Effect.gen(function* () {
       );
       if (graph.status === "running") yield* advance;
       return yield* requireGraph(graph.id);
-    });
+    },
+  );
 
-  const edit: TaskGraphService["Service"]["edit"] = (graphId, edits) =>
-    Effect.gen(function* () {
+  const edit: TaskGraphService["Service"]["edit"] = Effect.fn("TaskGraphService.edit")(
+    function* (graphId, edits) {
       const { graph, stopped, finished } = yield* locked(
         Effect.gen(function* () {
           const current = yield* requireGraph(graphId);
@@ -1026,10 +1029,11 @@ const make = Effect.gen(function* () {
       if (finished) yield* reportFinished(graph);
       if (graph.status === "running") yield* advance;
       return yield* requireGraph(graphId);
-    });
+    },
+  );
 
-  const run: TaskGraphService["Service"]["run"] = (graphId) =>
-    Effect.gen(function* () {
+  const run: TaskGraphService["Service"]["run"] = Effect.fn("TaskGraphService.run")(
+    function* (graphId) {
       yield* locked(
         Effect.gen(function* () {
           const graph = yield* requireGraph(graphId);
@@ -1041,10 +1045,11 @@ const make = Effect.gen(function* () {
       );
       yield* advance;
       return yield* requireGraph(graphId);
-    });
+    },
+  );
 
-  const cancel: TaskGraphService["Service"]["cancel"] = (graphId) =>
-    Effect.gen(function* () {
+  const cancel: TaskGraphService["Service"]["cancel"] = Effect.fn("TaskGraphService.cancel")(
+    function* (graphId) {
       const { graph, stopped } = yield* locked(
         Effect.gen(function* () {
           const current = yield* requireGraph(graphId);
@@ -1067,7 +1072,8 @@ const make = Effect.gen(function* () {
       );
       yield* stopNodes(graph, stopped);
       return graph;
-    });
+    },
+  );
 
   const listForThread: TaskGraphService["Service"]["listForThread"] = (threadId) =>
     sql<TaskGraphRow>`
@@ -1091,8 +1097,6 @@ const make = Effect.gen(function* () {
         ).pipe(Stream.map((graphs) => ({ graphs })));
       }),
     );
-
-  // --- Startup ----------------------------------------------------------------
 
   // Rebuild the thread index, then catch up on node runs that ended while the
   // server was down. Launches are idempotent by command id, so a node that was

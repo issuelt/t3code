@@ -145,12 +145,7 @@ function TaskGraphPeerRow({
     failureTitle: string,
   ) => {
     setBusy(true);
-    let result: AtomCommandResult<A, E>;
-    try {
-      result = await action();
-    } finally {
-      setBusy(false);
-    }
+    const result = await action().finally(() => setBusy(false));
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
         stackedThreadToast({
@@ -285,27 +280,26 @@ function ConnectedMachineRow({
     if (adding || connection === null) return;
     setAdding(true);
     setError(null);
-    try {
+    const failure = `Could not add ${candidate.label}.`;
+    const pair = async (httpBaseUrl: string) => {
       const grant = await issueGrant({
         environmentId: candidate.environmentId,
         input: { label: environmentLabel },
       });
       if (grant._tag !== "Success") {
-        setError(commandError(grant, `${candidate.label} would not issue a pairing grant.`));
-        return;
+        return commandError(grant, `${candidate.label} would not issue a pairing grant.`);
       }
-      const pairingUrl = new URL("/pair", connection.httpBaseUrl);
+      const pairingUrl = new URL("/pair", httpBaseUrl);
       pairingUrl.hash = `token=${grant.value.credential}`;
       const result = await add({
         environmentId,
         input: { pairingUrl: pairingUrl.toString(), label: candidate.label },
       });
-      setError(commandError(result, `Could not add ${candidate.label}.`));
-    } catch {
-      setError(`Could not add ${candidate.label}.`);
-    } finally {
-      setAdding(false);
-    }
+      return commandError(result, failure);
+    };
+    const message = await pair(connection.httpBaseUrl).catch(() => failure);
+    setAdding(false);
+    setError(message);
   };
 
   return (
@@ -352,18 +346,13 @@ function AddTaskGraphPeerForm({ environmentId }: { readonly environmentId: Envir
     const trimmedLabel = label.trim();
     setAdding(true);
     setError(null);
-    let result: AtomCommandResult<unknown, unknown>;
-    try {
-      result = await add({
-        environmentId,
-        input: {
-          pairingUrl: trimmedUrl,
-          ...(trimmedLabel.length > 0 ? { label: trimmedLabel } : {}),
-        },
-      });
-    } finally {
-      setAdding(false);
-    }
+    const result = await add({
+      environmentId,
+      input: {
+        pairingUrl: trimmedUrl,
+        ...(trimmedLabel.length > 0 ? { label: trimmedLabel } : {}),
+      },
+    }).finally(() => setAdding(false));
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setError(failureMessage(squashAtomCommandFailure(result), "Could not add the machine."));

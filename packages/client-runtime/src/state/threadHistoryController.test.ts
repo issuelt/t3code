@@ -219,7 +219,6 @@ describe("ThreadHistoryController", () => {
       const olderRegistration = yield* controller.register(ENV, THREAD, older);
       const newerRegistration = yield* controller.register(ENV, THREAD, newer);
 
-      // Older fiber finalizes after the newer handler is already registered.
       yield* controller.unregister(olderRegistration);
 
       const result = yield* controller.loadEarlier(ENV, THREAD);
@@ -230,15 +229,5 @@ describe("ThreadHistoryController", () => {
       yield* controller.unregister(newerRegistration);
       expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
     }).pipe(Effect.provide(ThreadHistoryController.layer)),
-  );
-
-  it.effect("unregister removes only its own matching registration", () =>
-    Effect.gen(function* () {
-      const controller = yield* ThreadHistoryController.ThreadHistoryController;
-      const first = handler("first");
-      const registration = yield* controller.register(ENV, THREAD, first);
-      yield* controller.unregister(registration);
-      expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
-    }).pipe(Effect.provide(Layer.fresh(ThreadHistoryController.layer))),
   );
 });

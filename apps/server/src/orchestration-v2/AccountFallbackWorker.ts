@@ -18,7 +18,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 
 /** Reuse the persisted user message and the normal V2 provider-switch path. */
-export const makeAccountFallback = Effect.gen(function* () {
+const makeAccountFallback = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const registry = yield* ProviderRegistry;
   const settings = yield* ServerSettingsService;

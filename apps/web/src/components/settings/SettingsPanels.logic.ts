@@ -1,8 +1,6 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
-  EnvironmentId,
   ProviderInstanceConfig,
   PreviewViewportSetting,
   ProviderInstanceId,
@@ -19,61 +17,6 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
-
-export interface ProviderSettingsEnvironmentInput {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly displayUrl: string | null;
-  readonly isPrimary: boolean;
-  readonly connectionPhase: EnvironmentConnectionPhase;
-}
-
-export interface ProviderSettingsSection {
-  readonly environmentId: EnvironmentId;
-  readonly title: string;
-  readonly isPrimary: boolean;
-}
-
-/**
- * Group the providers page into one section per environment. Connected
- * server environments come first — when the app is attached to a remote
- * server, that server's providers are what the user came to check — with
- * the app's own (primary/local) backend last. Environments that are in the
- * catalog but not connected are skipped: their provider state is stale and
- * their RPC actions would fail. With no connected servers the primary keeps
- * the plain "Providers" title so single-environment usage is unchanged.
- */
-export function deriveProviderSettingsSections(
-  environments: ReadonlyArray<ProviderSettingsEnvironmentInput>,
-): ReadonlyArray<ProviderSettingsSection> {
-  const primary = environments.find((environment) => environment.isPrimary);
-  const servers = environments.filter(
-    (environment) => !environment.isPrimary && environment.connectionPhase === "connected",
-  );
-
-  if (servers.length === 0) {
-    return primary
-      ? [{ environmentId: primary.environmentId, title: "Providers", isPrimary: true }]
-      : [];
-  }
-
-  return [
-    ...servers.map((server) => ({
-      environmentId: server.environmentId,
-      title: `Providers — ${server.label || server.displayUrl || "Server"}`,
-      isPrimary: false,
-    })),
-    ...(primary
-      ? [
-          {
-            environmentId: primary.environmentId,
-            title: "Providers — This app (local)",
-            isPrimary: true,
-          },
-        ]
-      : []),
-  ];
-}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -103,9 +46,7 @@ export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingM
   if (mode === "separate") return;
   try {
     localStorage.setItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
-  } catch {
-    // Storage can be unavailable in restricted browser contexts.
-  }
+  } catch {}
 }
 
 export function hasChangedBackgroundActivitySettings(
@@ -143,7 +84,6 @@ type TypographySettings = Pick<
   | "fontSizeTerminal"
 >;
 
-/** Labels the font rows whose family or size differs from the defaults. */
 export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
@@ -174,16 +114,12 @@ export type BrowserDefaultSettings = Pick<
   | "browserRecordingShowKeyPresses"
   | "browserRecordingShowMousePresses"
   | "browserLinkTarget"
+  | "browserSearchEngine"
+  | "browserCustomSearchUrl"
   | "browserAutoShowFloatingPreview"
+  | "pullRequestLinksOpenInApp"
 >;
 
-/**
- * True when two viewport settings describe the same viewport.
- *
- * The setting is a tagged union rather than a scalar, so identity comparison
- * reports every stored viewport as changed — including one that matches the
- * default.
- */
 function isSamePreviewViewport(
   left: PreviewViewportSetting,
   right: PreviewViewportSetting,
@@ -196,7 +132,6 @@ function isSamePreviewViewport(
     : true;
 }
 
-/** Labels the browser-default rows that differ from the defaults. */
 export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
   return [
     ...(isSamePreviewViewport(
@@ -219,9 +154,16 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
       ? ["Open links in"]
       : []),
+    ...(settings.browserSearchEngine !== DEFAULT_UNIFIED_SETTINGS.browserSearchEngine ||
+    settings.browserCustomSearchUrl !== DEFAULT_UNIFIED_SETTINGS.browserCustomSearchUrl
+      ? ["Search engine"]
+      : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
       ? ["Floating preview"]
+      : []),
+    ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
+      ? ["Open pull requests in T3 Code"]
       : []),
   ];
 }
@@ -262,54 +204,6 @@ export function backgroundActivitySharedPolicySettings(
   };
 }
 
-function collapseOtelSignalsUrl(input: {
-  readonly tracesUrl: string;
-  readonly metricsUrl: string;
-}): string | null {
-  const tracesSuffix = "/traces";
-  const metricsSuffix = "/metrics";
-  if (!input.tracesUrl.endsWith(tracesSuffix) || !input.metricsUrl.endsWith(metricsSuffix)) {
-    return null;
-  }
-
-  const tracesBase = input.tracesUrl.slice(0, -tracesSuffix.length);
-  const metricsBase = input.metricsUrl.slice(0, -metricsSuffix.length);
-  if (tracesBase !== metricsBase) {
-    return null;
-  }
-
-  return `${tracesBase}/{traces,metrics}`;
-}
-
-export function formatDiagnosticsDescription(input: {
-  readonly localTracingEnabled: boolean;
-  readonly otlpTracesEnabled: boolean;
-  readonly otlpTracesUrl?: string | undefined;
-  readonly otlpMetricsEnabled: boolean;
-  readonly otlpMetricsUrl?: string | undefined;
-}): string {
-  const mode = input.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-  const tracesUrl = input.otlpTracesEnabled ? input.otlpTracesUrl : undefined;
-  const metricsUrl = input.otlpMetricsEnabled ? input.otlpMetricsUrl : undefined;
-
-  if (tracesUrl && metricsUrl) {
-    const collapsedUrl = collapseOtelSignalsUrl({ tracesUrl, metricsUrl });
-    return collapsedUrl
-      ? `${mode}. Exporting OTEL to ${collapsedUrl}.`
-      : `${mode}. Exporting OTEL traces to ${tracesUrl} and metrics to ${metricsUrl}.`;
-  }
-
-  if (tracesUrl) {
-    return `${mode}. Exporting OTEL traces to ${tracesUrl}.`;
-  }
-
-  if (metricsUrl) {
-    return `${mode}. Exporting OTEL metrics to ${metricsUrl}.`;
-  }
-
-  return `${mode}.`;
-}
-
 export function buildProviderInstanceUpdatePatch(input: {
   readonly settings: Pick<ServerSettings, "providerInstances">;
   readonly instanceId: ProviderInstanceId;
@@ -328,10 +222,6 @@ export function buildProviderInstanceUpdatePatch(input: {
       : {}),
   };
 }
-
-// ── Background-activity interval helpers ─────────────────────────────
-// Shared by the General panel's interval rows and the Providers panel's
-// health-check row.
 
 export const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
 

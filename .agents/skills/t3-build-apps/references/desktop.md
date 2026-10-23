@@ -16,40 +16,6 @@ existing dist; `--keep-stage` keeps the /tmp stage for inspection.
 - If a staged `vp install --prod` fails on a broken electron package, run
   `pnpm store prune` and retry.
 
-## The pnpm-11 packaging fix (why asar:false + hooks)
-
-After the pnpm-11 upstream merge, a plain build produced an app that crashed on
-launch with cascading `ERR_MODULE_NOT_FOUND` (fast-check → pure-rand → ms →
-@effect/... — effect's Schema.js eagerly loads FastCheck).
-
-**Root cause:** the staged `vp install --prod` produces a complete but ISOLATED
-pnpm `node_modules`, and electron-builder mis-packs pnpm's isolated layout into
-the asar, dropping deduped transitive leaves. Everything tried to make pnpm
-flatten (`node-linker=hoisted` via workspace.yaml / .npmrc / `--config` / lockfile
-delete) FAILED — pnpm 11 here always stays isolated. `includeSubNodeModules` is
-not a valid electron-builder key.
-
-**Durable fix (baked into `scripts/build-desktop-artifact.ts`):** `asar: false`
-plus two hook files written into the stage dir (`afterPack.cjs` + `afterSign.cjs`)
-that swap the packed (~88-pkg) tree for the complete staged tree (~296 pkgs). A
-plain `pnpm dist:desktop:*` now works with NO manual step.
-
-Two hard constraints encoded in the hooks:
-
-1. **Exclude the build-only `electron` package** from the copy — it carries a
-   nested Electron.app+Framework that codesign chokes on, and the app never
-   needs it (the app IS the runtime).
-2. **Split by platform:** win/linux patch in `afterPack` (no signing); macOS
-   patches in `afterSign` (AFTER sign+verify) — patching pnpm's symlink farm +
-   native `.node` addons before signing fails `codesign --verify --deep --strict`.
-   The ad-hoc sig is invalidated, but local/unsigned fork distribution strips
-   quarantine on launch anyway.
-
-Hook paths are referenced by ABSOLUTE path from `createBuildConfig`
-(electron-builder resolves hook paths relative to its CWD = apps/desktop, so a
-relative `./afterPack.cjs` is Cannot-find-module). `build-desktop-artifact.test.ts`
-pins both hook paths to absolute stage paths.
-
 ## Gotchas that cost hours (Mac)
 
 - macOS temp is `/var/folders/xx/yy/T/`, NOT `/tmp`; the stage lives there at
@@ -59,10 +25,6 @@ pins both hook paths to absolute stage paths.
 - **HEALTH=000 over SSH is a FALSE negative.** A headless launch hits Keychain
   `errKCInteractionNotAllowed`; the app is fine if stderr shows `backend ready`
   - `main window created`. Verify a real 200 via `open` in your login session.
-- The old `~/.local/bin/fix-mac-app.sh` manual-copy wrapper is now redundant.
-  If you ever recover by hand: any build's `app/node_modules` (>50 pkgs) is
-  interchangeable — the client JS bundle lives in the app's `dist/`, not in
-  node_modules — so copy the NEWEST complete stage's tree into the app.
 
 ## Windows / Linux notes
 
@@ -72,6 +34,7 @@ pins both hook paths to absolute stage paths.
 - Linux: `pnpm dist:desktop:linux` (AppImage, x64).
 
 ## Rust toolchain (required since upstream ~2026-08, resource monitor)
+
 Desktop builds compile a native resource-monitor executable via `cargo build`
 (`native/resource-monitor/Cargo.toml`). Without cargo on PATH the build dies
 with `spawn cargo ENOENT`. One-time setup on the build Mac:

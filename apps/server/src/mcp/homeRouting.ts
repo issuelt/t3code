@@ -12,11 +12,13 @@ import * as Option from "effect/Option";
 import * as FleetBroker from "../home/FleetBroker.ts";
 import * as FleetService from "../home/FleetService.ts";
 import * as HomeService from "../home/HomeService.ts";
+import * as HomeWorkspace from "../home/HomeWorkspace.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { assertFullAccess, assertLiveCaller, readCaller } from "./threadAccess.ts";
 
 /** Services a tool needs to declare when it routes Home calls. */
 export const homeRoutingDependencies = [
+  HomeWorkspace.HomeWorkspace,
   HomeService.HomeService,
   FleetService.FleetService,
   FleetBroker.FleetBroker,

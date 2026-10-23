@@ -4,7 +4,7 @@
 # Run this before ios-device-build.sh (can run over SSH; only the signed BUILD
 # needs a GUI session).
 #
-# What T3CODE_PERSONAL_TEAM does (apps/mobile/personalTeam.ts): removes the
+# What T3CODE_IOS_PERSONAL_TEAM does (apps/mobile/personalTeam.ts): removes the
 # widget target + paid entitlements (push / Sign in with Apple / associated
 # domains / app groups) that a free team cannot sign, and unsets ios.appleTeamId
 # so Xcode fills in your personal team.
@@ -27,7 +27,7 @@ export PATH="$VP_BIN:/opt/homebrew/bin:/usr/bin:/bin"
 cd "$REPO/apps/mobile"
 
 APP_VARIANT=preview \
-T3CODE_PERSONAL_TEAM=1 \
+T3CODE_IOS_PERSONAL_TEAM=1 \
 T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID="$PERSONAL_TEAM_BUNDLE_ID" \
   node_modules/.bin/expo prebuild --clean -p ios
 

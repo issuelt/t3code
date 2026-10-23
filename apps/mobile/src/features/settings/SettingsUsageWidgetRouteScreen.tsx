@@ -7,9 +7,9 @@ import { useEffect, useState } from "react";
 import { Alert, AppState, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Menu as ControlPillMenu } from "../../components/ui/Menu";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -24,7 +24,7 @@ import {
   toggleWidgetSelection,
   type SubscriptionWidgetConfiguration,
 } from "../../widgets/subscriptionWidgetPreferences";
-import { ListRowLayout } from "../../components/ListRowLayout";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -95,7 +95,7 @@ export function SettingsUsageWidgetRouteScreen() {
   const focused = useIsFocused();
   const result = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const ready = AsyncResult.isSuccess(result) && !result.waiting;
   const preferences = resolveWidgetPreferences(
     AsyncResult.isSuccess(result) ? result.value.subscriptionWidgets : undefined,

@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as HomeService from "./HomeService.ts";
 
@@ -49,9 +49,9 @@ const makeHome = () => {
           mode: "desktop",
         } as ServerConfig.ServerConfig["Service"]),
         ServerSettings.layerTest(),
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          namedProjectsRoot: "/projects",
-          ensureHomeProject: Effect.succeed({ projectId: homeProjectId, workspaceRoot: "/home" }),
+        Layer.mock(HomeWorkspace.HomeWorkspace)({
+          root: "/home",
+          ensureProject: Effect.succeed({ projectId: homeProjectId, workspaceRoot: "/home" }),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {

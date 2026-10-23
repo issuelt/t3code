@@ -30,7 +30,7 @@ PERSONAL_TEAM_BUNDLE_ID=com.example.t3code bash .../ios-personal-prep.sh
 osascript -e 'tell application "Terminal" to do script "DEV_TEAM=XXXXXXXXXX DEVICE_NAME=fon ~/dev/t3code/.claude/skills/t3-build-apps/scripts/ios-device-build.sh"'
 ```
 
-## What `T3CODE_PERSONAL_TEAM` strips (apps/mobile/personalTeam.ts)
+## What `T3CODE_IOS_PERSONAL_TEAM` strips (apps/mobile/personalTeam.ts)
 
 A free personal team cannot provision any capability that needs a
 program-granted entitlement, so the strip mode removes them before signing:
@@ -40,7 +40,7 @@ program-granted entitlement, so the strip mode removes them before signing:
   (`com.apple.developer.applesignin`, also forced off in the Clerk plugin),
   **Associated Domains**, **App Groups**;
 - unsets `ios.appleTeamId` so Xcode fills in your personal team.
-  It runs ONLY when `T3CODE_PERSONAL_TEAM` is truthy; the default build is untouched.
+  It runs ONLY when `T3CODE_IOS_PERSONAL_TEAM` is truthy; the default build is untouched.
 
 ## Three traps
 

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -46,10 +46,6 @@ export function parseThreadLinkEnvironmentId(href: string): EnvironmentId | null
   }
 }
 
-/**
- * Agents often percent-encode the id anyway. When the id as written names no thread, clients try
- * this decoded form. Null when decoding changes nothing or fails.
- */
 export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   try {
     const decoded = decodeURIComponent(threadId);
@@ -57,6 +53,30 @@ export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null 
   } catch {
     return null;
   }
+}
+
+export function resolveThreadLinkRef(
+  source: ScopedThreadRef,
+  refs: ReadonlyArray<ScopedThreadRef>,
+): ScopedThreadRef | null {
+  const decodedId = percentDecodedThreadLinkId(source.threadId);
+  const ids = decodedId === null ? [source.threadId] : [source.threadId, decodedId];
+  for (const threadId of ids) {
+    const local = refs.find(
+      (ref) => ref.environmentId === source.environmentId && ref.threadId === threadId,
+    );
+    if (local) return local;
+  }
+  for (const threadId of ids) {
+    let match: ScopedThreadRef | null = null;
+    for (const ref of refs) {
+      if (ref.threadId !== threadId) continue;
+      if (match !== null) return null;
+      match = ref;
+    }
+    if (match !== null) return match;
+  }
+  return null;
 }
 
 /**
@@ -77,10 +97,6 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`](${THREAD_LINK_HREF_PREFIX}`);
 }
 
-/**
- * Relabels each thread link with `title(threadId)`, pointing it at the thread that title came from.
- * A link it returns nothing for keeps its label.
- */
 export function relabelThreadLinks(
   markdown: string,
   title: (threadId: ThreadId) => string | undefined,
@@ -91,7 +107,6 @@ export function relabelThreadLinks(
     if (href === undefined) return source;
     const written = parseThreadLinkHref(href);
     if (written === null) return source;
-    // The decoded id only stands in when the id as written names no thread.
     const decoded = percentDecodedThreadLinkId(written);
     const threadId =
       title(written) === undefined && decoded !== null && title(decoded) !== undefined

@@ -20,6 +20,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as Project from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -81,8 +82,10 @@ const setup = () => {
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
-          homeRoot: Effect.succeed("/home"),
-          isInHomeFolder: (candidate) =>
+        }),
+        Layer.mock(HomeWorkspace.HomeWorkspace)({
+          root: "/home",
+          contains: (candidate) =>
             Effect.succeed(candidate === "/home" || candidate.startsWith("/home/")),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),

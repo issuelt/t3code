@@ -36,8 +36,6 @@ export class ThreadTitleRegenerationService extends Context.Service<
       | OrchestratorV2Error
       | ProjectStore.ProjectStoreV2Error
       | ServerSettingsError
-      // `complete` dispatches thread.title.regeneration.complete, a command
-      // the enablement chokepoint never gates; the type stays accurate anyway.
       | ThreadManagementService.ThreadManagementProviderInstanceDisabledError
     >;
   }
@@ -117,6 +115,7 @@ const make = Effect.gen(function* () {
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
+        instructions: settings.threadTitleInstructions,
         modelSelection: settings.textGenerationModelSelection,
       });
       const generatedTitle = result.title.trim();

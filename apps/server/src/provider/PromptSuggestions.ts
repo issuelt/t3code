@@ -38,17 +38,18 @@ export const make = Effect.gen(function* () {
   const suggestions = new Map<ThreadId, PromptSuggestion>();
   const changes = yield* PubSub.unbounded<PromptSuggestionChange>();
 
-  const publish: (typeof PromptSuggestions.Service)["publish"] = (threadId, suggestion) =>
-    Effect.gen(function* () {
-      const existing = suggestions.get(threadId) ?? null;
-      if (existing?.id === suggestion?.id) return;
-      if (suggestion === null) {
-        suggestions.delete(threadId);
-      } else {
-        suggestions.set(threadId, suggestion);
-      }
-      yield* PubSub.publish(changes, { threadId, suggestion });
-    });
+  const publish: (typeof PromptSuggestions.Service)["publish"] = Effect.fn(
+    "PromptSuggestions.publish",
+  )(function* (threadId, suggestion) {
+    const existing = suggestions.get(threadId) ?? null;
+    if (existing?.id === suggestion?.id) return;
+    if (suggestion === null) {
+      suggestions.delete(threadId);
+    } else {
+      suggestions.set(threadId, suggestion);
+    }
+    yield* PubSub.publish(changes, { threadId, suggestion });
+  });
 
   /**
    * One-slot sliding mailbox per subscriber: each value replaces the last, so

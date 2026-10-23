@@ -9,11 +9,19 @@ notice.
 
 The update button at the bottom of the sidebar updates every connected machine
 in one step. It updates outdated providers, then servers that are behind, then
-the desktop app you are using, which restarts last. Servers move to the
+the desktop app you are using. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
 it will update.
+
+While it runs, the button widens to show progress. It names a machine that is
+taking longer than usual, and offers **Retry** for a server that failed. Click
+it to see every machine. The desktop app restarts once each server has started
+its own restart, after a short countdown. Choose **Later** to keep working and
+restart from the update button when you are ready. A server still restarting
+finishes on its own, and the button keeps showing it after the desktop app
+restarts.
 
 Server updates appear only after that version is published to npm. Remote
 desktop apps do not wait for npm. The confirmation lists each machine it skips
@@ -109,6 +117,15 @@ directory and pair with the running server.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only
 offer a manual update command are not included.
+
+After a successful provider CLI update, T3 Code refreshes model discovery for
+every enabled instance of that provider using its own configuration. Connected
+clients receive the refreshed catalogs automatically. Provider update checks
+must be enabled to download the latest T3 Code model catalog.
+
+Provider updates do not restart running chats. An existing session can keep
+using the previous CLI until it ends. If discovery fails, check the provider
+status and refresh it again.
 
 ## Mobile updates
 

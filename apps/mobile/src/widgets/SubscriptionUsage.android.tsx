@@ -33,10 +33,22 @@ export function SubscriptionUsage(
   const scheme =
     configuration?.theme === "light" || configuration?.theme === "dark"
       ? configuration.theme
-      : environment.colorScheme === "dark"
+      : (configuration
+            ? environment.colorScheme
+            : (props.theme?.mode ?? environment.colorScheme)) === "dark"
         ? "dark"
         : "light";
-  const colors = getMaterialColors({ scheme });
+  const palette = props.theme?.[scheme];
+  const colors = palette
+    ? {
+        surface: palette.background,
+        onSurface: palette.foreground,
+        onSurfaceVariant: palette.secondary,
+        surfaceVariant: palette.track,
+        primary: palette.accent,
+        error: palette.danger,
+      }
+    : getMaterialColors({ scheme });
   // Cached snapshots from older app versions remain readable until publication.
   const groups =
     snapshot?.groups ??

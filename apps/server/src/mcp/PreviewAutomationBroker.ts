@@ -44,7 +44,6 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 const HOST_RESPONSE_GRACE_MS = 1_000;
 
 export interface PreviewAutomationInvokeInput {
-  /** Preview tabs belong to a thread, so only thread callers reach the broker. */
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
@@ -52,19 +51,10 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
   /** Background metadata reads must not change the agent's current tab. */
   readonly updateCurrentTab?: boolean;
-  /** Capture the routed tab before another request changes the current assignment. */
   readonly onTargetTab?: (tabId: PreviewTabId | undefined) => void;
-  /** Optional connection pin used by remote browser cloning. */
-  readonly clientId?: string;
-  readonly connectionId?: string;
 }
 
 export interface PreviewAutomationConnectOptions {
-  /**
-   * New agent work goes to a preferred host before any desktop. The server's
-   * own headless browser registers this way so a standalone environment keeps
-   * browsing when every desktop disconnects.
-   */
   readonly preferred?: boolean;
 }
 
@@ -79,12 +69,6 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
-    readonly invokePinned: <A = unknown>(
-      request: PreviewAutomationInvokeInput,
-    ) => Effect.Effect<
-      { readonly clientId: string; readonly connectionId: string; readonly result: A },
-      PreviewAutomationError
-    >;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -110,12 +94,9 @@ interface PendingRequest {
 }
 
 /**
- * A lease pinning one provider session to one desktop runtime. It lives exactly
- * as long as the connection it names: `connectionId`/`queue` identity is what
- * makes a lease valid, so a disconnected or replaced host is dropped on the next
- * lookup. The lease deliberately has no clock of its own — it used to inherit
- * the MCP credential's expiry, which coupled host stickiness to an unrelated
- * auth deadline and could migrate a live session to another runtime mid-flow.
+ * It lives exactly as long as the connection it names: `connectionId`/`queue`
+ * identity is what makes a lease valid, so a disconnected or replaced host is
+ * dropped on the next lookup.
  */
 interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
@@ -185,8 +166,13 @@ const selectorDiagnosticsFromInput = (
   return {};
 };
 
+/**
+ * One agent: a provider session on one thread. Codex and OpenCode run every
+ * thread of a provider instance in one session, so the session alone would
+ * share one current tab, tab budget, and tab ownership across chats.
+ */
 const hostAssignmentKey = (scope: McpInvocationContext.McpThreadInvocationScope): string =>
-  `${scope.environmentId}\u0000${scope.thread.providerSessionId}`;
+  `${scope.environmentId}\u0000${scope.thread.providerSessionId}\u0000${scope.thread.threadId}`;
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 const decodeControlReason = Schema.decodeUnknownOption(PreviewAutomationControlReason);
@@ -219,7 +205,6 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
   }
 }
 
-/** Enough for a browser's own error line, such as a refused connection and its URL. */
 const MAX_REASON_CHARS = 500;
 
 const classifyResponseError = (
@@ -349,7 +334,6 @@ const classifyResponseError = (
       return new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
-        // The server's own browser writes these; other hosts' text stays out of the agent's context.
         ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
           ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
           : {}),
@@ -395,7 +379,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     completeStream = false,
   ) {
     yield* SynchronizedRef.modifyEffect(state, (current) => {
-      // Retired generations were already closed by their replacement or eviction.
       if (current.clients.get(clientId)?.queue !== queue) {
         return Effect.succeed([undefined, current] as const);
       }
@@ -514,13 +497,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
-  const invokeRouted = Effect.fn("PreviewAutomationBroker.invokeRouted")(function* <A = unknown>(
-    input: PreviewAutomationInvokeInput,
-    retainAssignment: boolean,
-  ): Effect.fn.Return<
-    { readonly clientId: string; readonly connectionId: string; readonly result: A },
-    PreviewAutomationError
-  > {
+  const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
+    input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
+  ): Effect.fn.Return<A, PreviewAutomationError> {
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
@@ -533,19 +512,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }),
       );
       const assignmentKey = hostAssignmentKey(input.scope);
-      const assigned = retainAssignment ? assignments.get(assignmentKey) : undefined;
+      const assigned = assignments.get(assignmentKey);
       const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
-      const hasLiveAssignment =
-        assignedConnection?.environmentId === input.scope.environmentId &&
-        (input.clientId === undefined || assignedConnection.clientId === input.clientId) &&
-        (input.connectionId === undefined ||
-          assignedConnection.connectionId === input.connectionId);
+      const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
       // Keep one provider session on one physical desktop runtime so a
-      // multi-step browser interaction cannot jump between independent
-      // Electron cookie/DOM state. A live assignment that predates an
-      // operation is not silently moved to a newer client: the caller gets a
-      // capability failure and can deliberately start a fresh provider
-      // session. A dead lease is pruned above and may fail over.
+      // multi-step browser interaction cannot jump between independent Electron
+      // cookie/DOM state.
       const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
         host.liveTabs.some(
           (tab) =>
@@ -562,9 +534,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
                 .filter(
                   (host) =>
                     host.environmentId === input.scope.environmentId &&
-                    (input.clientId === undefined || host.clientId === input.clientId) &&
-                    (input.connectionId === undefined ||
-                      host.connectionId === input.connectionId) &&
                     supportsOperation(host, input.operation),
                 )
                 .sort(
@@ -589,16 +558,15 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         assigned !== undefined &&
         assigned.connectionId === connection.connectionId &&
         assigned.queue === connection.queue;
-      if (retainAssignment)
-        assignments.set(assignmentKey, {
-          clientId: connection.clientId,
-          connectionId: connection.connectionId,
-          queue: connection.queue,
-          ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
-          ...(canReuseAssignedTab && assigned.tabSequence !== undefined
-            ? { tabSequence: assigned.tabSequence }
-            : {}),
-        });
+      assignments.set(assignmentKey, {
+        clientId: connection.clientId,
+        connectionId: connection.connectionId,
+        queue: connection.queue,
+        ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
+        ...(canReuseAssignedTab && assigned.tabSequence !== undefined
+          ? { tabSequence: assigned.tabSequence }
+          : {}),
+      });
 
       const requestSequence = current.requestSequence;
       const requestId = `preview-${requestSequence}`;
@@ -682,10 +650,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
-            // An unanswered request invalidates this connection. Do not replay
-            // actions: the client may have applied them before becoming unreachable.
-            // A background metadata read has a short budget and changes nothing,
-            // so a slow one must not cut the host off from the agent's next call.
+            // Do not replay actions: the client may have applied them before
+            // becoming unreachable. A background metadata read has a short budget
+            // and changes nothing, so a slow one must not cut the host off from the
+            // agent's next call.
             if (input.updateCurrentTab !== false) {
               yield* disconnect(connection.clientId, connection.queue, true);
             }
@@ -695,15 +663,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       });
     });
     const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
-    const routedResult = {
-      clientId: connection.clientId,
-      connectionId: connection.connectionId,
-      result,
-    };
-    if (!retainAssignment || input.updateCurrentTab === false) return routedResult;
+    if (input.updateCurrentTab === false) return result;
     const responseTabId = readResultTabId(result);
     const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
-    if (resultTabId === undefined) return routedResult;
+    if (resultTabId === undefined) return result;
     const assignmentKey = hostAssignmentKey(input.scope);
     yield* SynchronizedRef.update(state, (current) => {
       const assignment = current.assignments.get(assignmentKey);
@@ -728,15 +691,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       }
       return { ...current, assignments };
     });
-    return routedResult;
+    return result;
   });
 
-  const invoke = <A = unknown>(input: PreviewAutomationInvokeInput) =>
-    invokeRouted<A>(input, true).pipe(Effect.map((response) => response.result));
-  const invokePinned = <A = unknown>(input: PreviewAutomationInvokeInput) =>
-    invokeRouted<A>(input, false);
-
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke, invokePinned });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
