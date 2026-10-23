@@ -853,6 +853,30 @@ it.live("only the controlling viewer's copy and cut keys reach its clipboard", (
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a viewer's copy key in a desktop tab reaches its clipboard", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.promise(() => desktopListening.promise);
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      expect(desktopConnections[0]!.context.sessions[0]!.send).toHaveBeenCalledWith(
+        "Page.addScriptToEvaluateOnNewDocument",
+        expect.objectContaining({ worldName: "t3-preview-clipboard" }),
+      );
+      keyCopy = "from desktop";
+      yield* viewer.input({ type: "key", action: "down", key: "c", code: "KeyC", modifiers: 4 });
+      const items = yield* Queue.clear(viewer.output);
+      expect(items.filter((item) => item._tag === "clipboard")).toEqual([
+        { _tag: "clipboard", text: "from desktop" },
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each([false, true])(
   "a page download is saved, offered to the controller, and listed for the agent (delete fails: %s)",
   (deleteFails) =>

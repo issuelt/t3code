@@ -797,7 +797,9 @@ const make = Effect.gen(function* () {
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
-    if (!desktop) await recordCopies(cdp);
+    // A copy in a desktop tab also lands on the desktop's own clipboard, as
+    // Electron copies natively; the recorder only adds the viewer's copy.
+    await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -882,7 +884,7 @@ const make = Effect.gen(function* () {
     page.on("framenavigated", (frame) => {
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
-      if (!desktop) void recordFrameCopies(tab, frame);
+      void recordFrameCopies(tab, frame);
     });
     // An adopted popup's frames may have loaded before the tab listened.
     if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
@@ -2239,8 +2241,7 @@ const make = Effect.gen(function* () {
           return;
         }
         const command = editingCommand(key, modifiers);
-        const copying =
-          !tab.desktop && (command?.commands[0] === "copy" || command?.commands[0] === "cut");
+        const copying = command?.commands[0] === "copy" || command?.commands[0] === "cut";
 
         if (copying) await takeCopiedText(tab);
         await session.send("Input.dispatchKeyEvent", {
