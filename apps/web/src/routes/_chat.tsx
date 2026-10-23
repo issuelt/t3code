@@ -9,7 +9,6 @@ import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
-import { isBrowserCloneSupportedInRuntime } from "../previewStateStore";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
@@ -132,10 +131,7 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
-        if (
-          !isPreviewAvailableFor(routeThreadRef.environmentId) &&
-          !isBrowserCloneSupportedInRuntime()
-        ) {
+        if (!isPreviewAvailableFor(routeThreadRef.environmentId)) {
           toastManager.add(
             stackedThreadToast({
               type: "info",

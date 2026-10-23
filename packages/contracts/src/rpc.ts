@@ -312,15 +312,7 @@ import {
   DictationStartResult,
   DictationState,
 } from "./dictation.ts";
-import {
-  PreviewAutomationError,
-  PreviewAutomationHost,
-  PreviewAutomationHostFocus,
-  PreviewAutomationResponse,
-  PreviewAutomationStreamEvent,
-  PreviewCloneResponse,
-  PreviewCloneInvokeInput,
-} from "./previewAutomation.ts";
+import {} from "./previewAutomation.ts";
 import {
   FleetHostRegistration,
   FleetHostRequest,
@@ -520,10 +512,6 @@ export const WS_METHODS = {
   previewClearProfile: "preview.clearProfile",
   previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
-  previewAutomationConnect: "previewAutomation.connect",
-  previewAutomationRespond: "previewAutomation.respond",
-  previewAutomationFocusHost: "previewAutomation.focusHost",
-  previewCloneInvoke: "previewClone.invoke",
 
   // Home and fleet methods
   homeEnable: "home.enable",
@@ -1672,29 +1660,6 @@ const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
-const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
-  payload: PreviewAutomationHost,
-  success: PreviewAutomationStreamEvent,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomationRespond, {
-  payload: PreviewAutomationResponse,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
-const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
-  payload: PreviewAutomationHostFocus,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsPreviewCloneInvokeRpc = Rpc.make(WS_METHODS.previewCloneInvoke, {
-  payload: PreviewCloneInvokeInput,
-  success: PreviewCloneResponse,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
 const WsHomeEnableRpc = Rpc.make(WS_METHODS.homeEnable, {
   payload: HomeEnableInput,
   success: HomeThreadResult,
@@ -2361,10 +2326,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewClearProfileRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
-  WsPreviewAutomationConnectRpc,
-  WsPreviewAutomationRespondRpc,
-  WsPreviewAutomationFocusHostRpc,
-  WsPreviewCloneInvokeRpc,
   WsHomeEnableRpc,
   WsHomeDisableRpc,
   WsHomeStartFreshRpc,

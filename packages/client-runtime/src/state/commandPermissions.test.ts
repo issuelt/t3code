@@ -352,9 +352,6 @@ it.effect.each([
   { method: WS_METHODS.providerLoginWrite, requiredScope: AuthProvidersManageScope },
   { method: WS_METHODS.providerLoginResize, requiredScope: AuthProvidersManageScope },
   { method: WS_METHODS.providerLoginCancel, requiredScope: AuthProvidersManageScope },
-  { method: WS_METHODS.previewCloneInvoke, requiredScope: AuthPreviewOperateScope },
-  { method: WS_METHODS.previewAutomationRespond, requiredScope: AuthPreviewOperateScope },
-  { method: WS_METHODS.previewAutomationFocusHost, requiredScope: AuthPreviewOperateScope },
 ] as const)("requires the destination grant for $method", ({ method, requiredScope }) =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -183,25 +183,28 @@ const make = Effect.gen(function* () {
    * queued runs, so after it no queued turn can start; a turn that started
    * before it is the active run, which is then interrupted.
    */
-  const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(function* (threadId: ThreadId) {
-    if ((yield* liveShell(threadId)) === null) return;
-    const commandId = crypto.randomUUIDv4().pipe(
-      Effect.orDie,
-      Effect.map((id) => CommandId.make(`home-stop:${id}`)),
-    );
-    yield* threads
-      .dispatch({ type: "queue.hold", commandId: yield* commandId, threadId })
-      .pipe(Effect.ignore);
-    const shell = yield* liveShell(threadId);
-    if (shell === null || shell.activeRunId === null) return;
-    yield* threads.dispatch({
-      type: "run.interrupt",
-      commandId: yield* commandId,
-      threadId,
-      runId: shell.activeRunId,
-      reason: "Home was turned off or started fresh.",
-    });
-  }, Effect.ignore);
+  const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(
+    function* (threadId: ThreadId) {
+      if ((yield* liveShell(threadId)) === null) return;
+      const commandId = crypto.randomUUIDv4().pipe(
+        Effect.orDie,
+        Effect.map((id) => CommandId.make(`home-stop:${id}`)),
+      );
+      yield* threads
+        .dispatch({ type: "queue.hold", commandId: yield* commandId, threadId })
+        .pipe(Effect.ignore);
+      const shell = yield* liveShell(threadId);
+      if (shell === null || shell.activeRunId === null) return;
+      yield* threads.dispatch({
+        type: "run.interrupt",
+        commandId: yield* commandId,
+        threadId,
+        runId: shell.activeRunId,
+        reason: "Home was turned off or started fresh.",
+      });
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.

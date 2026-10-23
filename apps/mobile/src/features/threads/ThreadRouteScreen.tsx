@@ -15,7 +15,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
-  AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
@@ -284,10 +283,6 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
-  const canOperatePreview = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
-    AuthPreviewOperateScope,
-  );
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -906,15 +901,6 @@ function ThreadRouteContent(
         <ThreadScreenBinding
           header={
             <ThreadHeader
-              onOpenBrowserClone={
-                canOperatePreview
-                  ? () =>
-                      navigation.navigate("BrowserClone", {
-                        environmentId: String(selectedThread.environmentId),
-                        threadId: String(selectedThread.id),
-                      })
-                  : undefined
-              }
               title={selectedThread.title}
               subtitle={headerSubtitle}
               headerColor={headerColor}

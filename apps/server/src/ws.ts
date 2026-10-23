@@ -558,12 +558,7 @@ function projectFileFailureContext(
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
-const ServerWsRpcGroup = WsRpcGroup.omit(
-  WS_METHODS.previewAutomationConnect,
-  WS_METHODS.previewAutomationRespond,
-  WS_METHODS.previewAutomationFocusHost,
-  WS_METHODS.previewCloneInvoke,
-).middleware(RpcInstrumentation);
+const ServerWsRpcGroup = WsRpcGroup.omit().middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that

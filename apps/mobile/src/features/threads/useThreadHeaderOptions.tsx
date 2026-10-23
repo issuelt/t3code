@@ -23,7 +23,6 @@ export function useThreadHeaderOptions(props: {
   readonly usesNativeHeaderGlass: boolean;
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
-  readonly onOpenBrowserClone?: (() => void) | undefined;
   readonly draft?: boolean;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -34,21 +33,6 @@ export function useThreadHeaderOptions(props: {
   const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
-  const extraHeaderItems = useMemo(
-    () =>
-      props.onOpenBrowserClone
-        ? [
-            withNativeGlassHeaderItem({
-              accessibilityLabel: "Open browser clone",
-              icon: { name: "safari", type: "sfSymbol" as const },
-              identifier: "thread-browser-clone",
-              onPress: props.onOpenBrowserClone,
-              type: "button" as const,
-            }),
-          ]
-        : [],
-    [props.onOpenBrowserClone],
-  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       ...(!usesDuoHeader
@@ -111,12 +95,8 @@ export function useThreadHeaderOptions(props: {
         ? undefined
         : () => compactHomeHeaderItems,
     // The workspace navigator adds compose to the Duo detail column's bar.
-    unstable_headerRightItems: () => [
-      ...(usesDuoHeader || layout.usesSplitView
-        ? threadCenterHeaderItems
-        : compactRightHeaderItems),
-      ...extraHeaderItems,
-    ],
+    unstable_headerRightItems: () =>
+      usesDuoHeader || layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
@@ -132,7 +112,6 @@ export function useThreadHeaderOptions(props: {
       splitLeftHeaderItems,
       threadCenterHeaderItems,
       compactRightHeaderItems,
-      extraHeaderItems,
       usesDuoHeader,
       environmentId,
       threadId,

@@ -9,15 +9,11 @@
 import * as NodeZlib from "node:zlib";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import { createClonePointerDispatcher } from "./ClonePointer.ts";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
-  PreviewAutomationFrame,
-  PreviewAutomationPressInput,
-  PreviewCloneInput,
   DesktopPreviewAnnotationTheme,
   DesktopPreviewColorScheme,
   DesktopPreviewFavicon,
@@ -2487,154 +2483,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  const decodeCloneViewport = Schema.decodeUnknownEffect(
-    Schema.Struct({
-      width: Schema.Int.check(Schema.isGreaterThan(0)),
-      height: Schema.Int.check(Schema.isGreaterThan(0)),
-    }),
-  );
-  const decodeCloneClipboardText = Schema.decodeUnknownEffect(Schema.String);
-  const automationCaptureFrame = Effect.fn("PreviewManager.automationCaptureFrame")(function* (
-    tabId: string,
-  ): Effect.fn.Return<PreviewAutomationFrame, PreviewManagerError> {
-    const wc = yield* requireWebContents(tabId);
-    const [image, capturedAt] = yield* Effect.all([
-      capturePageWithRetry(
-        { operation: "automationCaptureFrame.capturePage", tabId, webContentsId: wc.id },
-        tabId,
-        wc,
-      ),
-      currentMillis,
-    ]);
-    const size = image.getSize();
-    const scale = Math.min(1, 1600 / size.width, 1200 / size.height);
-    const frameImage =
-      scale < 1
-        ? image.resize({
-            width: Math.max(1, Math.round(size.width * scale)),
-            height: Math.max(1, Math.round(size.height * scale)),
-          })
-        : image;
-    const frameSize = frameImage.getSize();
-    const measured = yield* attemptPromise(
-      { operation: "automationCaptureFrame.measureViewport", tabId, webContentsId: wc.id },
-      () => wc.executeJavaScript("({ width: window.innerWidth, height: window.innerHeight })"),
-    );
-    const viewport = yield* decodeCloneViewport(measured).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PreviewOperationError({
-            operation: "automationCaptureFrame.decodeViewport",
-            tabId,
-            webContentsId: wc.id,
-            cause,
-          }),
-      ),
-    );
-    const data = yield* attempt(
-      { operation: "automationCaptureFrame.encode", tabId, webContentsId: wc.id },
-      () => frameImage.toJPEG(70).toString("base64"),
-    );
-    return {
-      data,
-      mimeType: "image/jpeg",
-      width: frameSize.width,
-      height: frameSize.height,
-      viewportWidth: viewport.width,
-      viewportHeight: viewport.height,
-      capturedAt,
-    };
-  });
-  const clonePointers = new WeakMap<
-    Electron.Debugger,
-    ReturnType<typeof createClonePointerDispatcher>
-  >();
-  const automationClonePointer = Effect.fn("PreviewManager.automationClonePointer")(function* (
-    tabId: string,
-    input: Extract<PreviewCloneInput, { action: "down" | "move" | "up" | "wheel" }>,
-  ) {
-    const wc = yield* requireWebContents(tabId);
-    const control = yield* ensureControlSession(wc);
-    let pointer = clonePointers.get(control.debugger);
-    if (!pointer) {
-      pointer = createClonePointerDispatcher((method, parameters) =>
-        control.debugger.sendCommand(method, parameters),
-      );
-      clonePointers.set(control.debugger, pointer);
-      const ownedPointer = pointer;
-      yield* Scope.addFinalizer(
-        control.scope,
-        Effect.promise(() => {
-          clonePointers.delete(control.debugger);
-          return ownedPointer.dispose();
-        }).pipe(Effect.ignore),
-      );
-    }
-    const activePointer = pointer;
-    yield* attemptPromise(
-      { operation: "automationClonePointer.dispatch", tabId, webContentsId: wc.id },
-      () => activePointer.dispatch(input),
-    );
-  });
-  const automationCloneText = Effect.fn("PreviewManager.automationCloneText")(function* (
-    tabId: string,
-    text: string,
-  ) {
-    const wc = yield* requireWebContents(tabId);
-    yield* attemptPromise({ operation: "clone.insertText", tabId }, () => wc.insertText(text));
-  });
-  const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
-    tabId: string,
-    input: PreviewAutomationPressInput,
-  ) {
-    const wc = yield* requireWebContents(tabId);
-    const modifiers = (input.modifiers ?? []).map((modifier) =>
-      modifier === "Alt"
-        ? ("alt" as const)
-        : modifier === "Control"
-          ? ("control" as const)
-          : modifier === "Meta"
-            ? ("meta" as const)
-            : ("shift" as const),
-    );
-    const keyCode = input.key.startsWith("Arrow") ? input.key.slice(5) : input.key;
-    yield* attempt({ operation: "clone.press", tabId }, () => {
-      wc.focus();
-      wc.sendInputEvent({ type: "keyDown", keyCode, modifiers });
-      if (input.key.length === 1 && !input.modifiers?.some((key) => key !== "Shift")) {
-        wc.sendInputEvent({ type: "char", keyCode: input.key, modifiers });
-      }
-      wc.sendInputEvent({ type: "keyUp", keyCode, modifiers });
-    });
-  });
-  const automationCloneClipboardCopy = Effect.fn("PreviewManager.automationCloneClipboardCopy")(
-    function* (tabId: string) {
-      const wc = yield* requireWebContents(tabId);
-      const selected = yield* attemptPromise(
-        { operation: "automationCloneClipboardCopy.select", tabId },
-        () =>
-          wc.executeJavaScript(`(() => {
-        let active = document.activeElement;
-        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-        const text = active && typeof active.selectionStart === "number" && typeof active.selectionEnd === "number"
-          ? active.value.slice(active.selectionStart, active.selectionEnd)
-          : window.getSelection()?.toString() ?? "";
-        return text.slice(0, 64000);
-      })()`),
-      );
-      return yield* decodeCloneClipboardText(selected).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PreviewOperationError({
-              operation: "automationCloneClipboardCopy.decode",
-              tabId,
-              cause,
-            }),
-        ),
-      );
-    },
-  );
-
   const captureScreenshot = Effect.fn("PreviewManager.captureScreenshot")(function* (
     tabId: string,
   ) {
@@ -3547,11 +3395,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   yield* Effect.addFinalizer(() => destroy().pipe(Effect.ignore));
 
   return {
-    automationCaptureFrame,
-    automationClonePointer,
-    automationCloneText,
-    automationCloneClipboardCopy,
-    automationPress,
     cancelPickElement,
     captureScreenshot,
     closeTab,
@@ -3742,24 +3585,6 @@ export type PreviewManagerError = typeof PreviewManagerError.Type;
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
-    readonly automationCaptureFrame: (
-      tabId: string,
-    ) => Effect.Effect<PreviewAutomationFrame, PreviewManagerError>;
-    readonly automationClonePointer: (
-      tabId: string,
-      input: Extract<PreviewCloneInput, { action: "down" | "move" | "up" | "wheel" }>,
-    ) => Effect.Effect<void, PreviewManagerError>;
-    readonly automationCloneText: (
-      tabId: string,
-      text: string,
-    ) => Effect.Effect<void, PreviewManagerError>;
-    readonly automationCloneClipboardCopy: (
-      tabId: string,
-    ) => Effect.Effect<string, PreviewManagerError>;
-    readonly automationPress: (
-      tabId: string,
-      input: PreviewAutomationPressInput,
-    ) => Effect.Effect<void, PreviewManagerError>;
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly setForwardedShortcuts: (
       shortcuts: ReadonlyArray<PreviewForwardedShortcut>,
@@ -3922,11 +3747,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   );
 
   return PreviewManager.of({
-    automationCaptureFrame: operations.automationCaptureFrame,
-    automationClonePointer: operations.automationClonePointer,
-    automationCloneText: operations.automationCloneText,
-    automationCloneClipboardCopy: operations.automationCloneClipboardCopy,
-    automationPress: operations.automationPress,
     setMainWindow: operations.setMainWindow,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(

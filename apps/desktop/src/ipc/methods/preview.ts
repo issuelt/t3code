@@ -1,9 +1,6 @@
 import {
   DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
-  DesktopPreviewAutomationFrameSchema,
-  DesktopPreviewAutomationPressInputSchema,
-  PreviewClonePointerInput,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
@@ -429,62 +426,6 @@ const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   }),
 });
 
-const automationPress = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL,
-  payload: DesktopPreviewAutomationPressInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationPress")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationPress(tabId, input);
-  }),
-});
-
-const automationCaptureFrame = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_CAPTURE_FRAME_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
-  result: DesktopPreviewAutomationFrameSchema,
-  handler: Effect.fn("desktop.ipc.preview.automationCaptureFrame")(function* ({ tabId }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationCaptureFrame(tabId);
-  }),
-});
-
-const automationClonePointer = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_CLONE_POINTER_CHANNEL,
-  payload: Schema.Struct({
-    tabId: DesktopPreviewTabInputSchema.fields.tabId,
-    input: PreviewClonePointerInput,
-  }),
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationClonePointer")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationClonePointer(tabId, input);
-  }),
-});
-
-const automationCloneText = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_CLONE_TEXT_CHANNEL,
-  payload: Schema.Struct({
-    tabId: DesktopPreviewTabInputSchema.fields.tabId,
-    text: Schema.String.check(Schema.isMaxLength(64_000)),
-  }),
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationCloneText")(function* ({ tabId, text }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationCloneText(tabId, text);
-  }),
-});
-
-const automationCloneClipboardCopy = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PREVIEW_AUTOMATION_CLONE_CLIPBOARD_COPY_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
-  result: Schema.String,
-  handler: Effect.fn("desktop.ipc.preview.automationCloneClipboardCopy")(function* ({ tabId }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationCloneClipboardCopy(tabId);
-  }),
-});
-
 const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
@@ -496,11 +437,6 @@ const saveRecording = DesktopIpc.makeIpcMethod({
 });
 
 export const methods = [
-  automationPress,
-  automationCaptureFrame,
-  automationClonePointer,
-  automationCloneText,
-  automationCloneClipboardCopy,
   setForwardedShortcuts,
   createTab,
   closeTab,

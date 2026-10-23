@@ -108,12 +108,6 @@ export const PREVIEW_COPY_ARTIFACT_CHANNEL = "desktop:preview-copy-artifact";
 export const PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL = "desktop:preview-pip-open";
 export const PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL = "desktop:preview-pip-close";
 export const PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL = "desktop:preview-pip-frame";
-export const PREVIEW_AUTOMATION_PRESS_CHANNEL = "desktop:preview-automation-press";
-export const PREVIEW_AUTOMATION_CAPTURE_FRAME_CHANNEL = "desktop:preview-automation-capture-frame";
-export const PREVIEW_AUTOMATION_CLONE_POINTER_CHANNEL = "desktop:preview-automation-clone-pointer";
-export const PREVIEW_AUTOMATION_CLONE_TEXT_CHANNEL = "desktop:preview-automation-clone-text";
-export const PREVIEW_AUTOMATION_CLONE_CLIPBOARD_COPY_CHANNEL =
-  "desktop:preview-automation-clone-clipboard-copy";
 export const PREVIEW_RECORDING_START_CHANNEL = "desktop:preview-recording-start";
 export const PREVIEW_RECORDING_STOP_CHANNEL = "desktop:preview-recording-stop";
 export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";

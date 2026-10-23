@@ -1,9 +1,4 @@
 import * as Schema from "effect/Schema";
-import {
-  PreviewAutomationFrame,
-  PreviewAutomationPressInput,
-  PreviewClonePointerInput,
-} from "./previewAutomation.ts";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -615,13 +610,6 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
-export const DesktopPreviewAutomationFrameSchema = PreviewAutomationFrame;
-export type DesktopPreviewAutomationFrame = typeof DesktopPreviewAutomationFrameSchema.Type;
-export const DesktopPreviewAutomationPressInputSchema = Schema.Struct({
-  tabId: DesktopPreviewTabIdSchema,
-  input: PreviewAutomationPressInput,
-});
-
 export interface DesktopPreviewPointerEvent {
   tabId: string;
   phase: "move" | "click";
@@ -1170,13 +1158,6 @@ export interface DesktopBridge {
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {
-  automation: {
-    captureFrame: (tabId: string) => Promise<DesktopPreviewAutomationFrame>;
-    clonePointer: (tabId: string, input: PreviewClonePointerInput) => Promise<void>;
-    cloneText: (tabId: string, text: string) => Promise<void>;
-    cloneClipboardCopy: (tabId: string) => Promise<string>;
-    press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
-  };
   setForwardedShortcuts?: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => Promise<void>;
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;

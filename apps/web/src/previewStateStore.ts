@@ -504,11 +504,6 @@ export function isPreviewSupportedInRuntime(): boolean {
   return Boolean(window.desktopBridge?.preview);
 }
 
-/** Remote web clients can clone a desktop owned tab through previewClone.invoke. */
-export function isBrowserCloneSupportedInRuntime(): boolean {
-  return typeof window !== "undefined" && !window.desktopBridge;
-}
-
 /**
  * The server closes their sessions too, but the desktop host keeps a page for
  * every session held here.

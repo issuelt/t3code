@@ -3,22 +3,6 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
-## View the desktop browser from your phone
-
-Keep T3's desktop app running with a browser tab open in your thread.
-Connect your phone to the same environment, open that thread, and choose
-**Browser**. Choose the desktop tab to view and control its existing page,
-including its signed-in session and pages served on the desktop's localhost.
-
-Tap to click and drag with one finger. Use two fingers to scroll, or pinch to
-zoom the phone's view; when zoomed in, two fingers pan. The bottom bar provides
-typing and clipboard controls. The menu offers trackpad mode and gesture help.
-**Done** closes the phone's view and leaves the desktop tab running.
-
-The desktop app must remain connected. A command-line server alone cannot host
-the browser. Browser cloning uses your existing T3 connection and needs
-no additional port or pairing link.
-
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

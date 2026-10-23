@@ -41,12 +41,6 @@ export function ThreadHeader(
         onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
       });
     }
-    if (props.onOpenBrowserClone)
-      actions.push({
-        accessibilityLabel: "Open browser clone",
-        icon: "safari",
-        onPress: props.onOpenBrowserClone,
-      });
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
       actions.push({
         accessibilityLabel: "Open terminal",
@@ -79,7 +73,6 @@ export function ThreadHeader(
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
-    props.onOpenBrowserClone,
   ]);
 
   return (
