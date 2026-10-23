@@ -8,7 +8,6 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
-  type ServerConfig,
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
@@ -132,15 +131,6 @@ export function deriveProviderEntriesByEnvironment(
     );
   }
   return byEnvironment;
-}
-
-/** Compatibility adapter for callers that already hold complete server configs. */
-export function indexProviderInstancesByEnvironment(
-  serverConfigs: ReadonlyMap<string, Pick<ServerConfig, "providers">>,
-): ReadonlyMap<string, ReadonlyMap<string, ProviderInstanceEntry>> {
-  return deriveProviderEntriesByEnvironment(
-    Array.from(serverConfigs, ([environmentId, config]) => [environmentId, config.providers]),
-  );
 }
 
 /**

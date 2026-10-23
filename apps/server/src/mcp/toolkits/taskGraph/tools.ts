@@ -28,7 +28,7 @@ const dependencies = [
 const GraphResult = Schema.Struct({ graph: TaskGraph });
 const GraphTarget = Schema.Struct({ graphId: TaskGraphId });
 
-export const TaskGraphCreateTool = Tool.make("task_graph_create", {
+const TaskGraphCreateTool = Tool.make("task_graph_create", {
   description:
     "Needs an agent running inside a T3 thread. Plan work as a graph of agent tasks and run it. Each node runs as its own T3 thread, in parallel where dependencies allow, and receives every dependency's final summary. Write each prompt so an agent with no access to this conversation can do it. " +
     "WORKSPACES: by default a node gets its own git worktree, branching from its first dependency's branch (or baseRef, default this thread's branch). workspace 'dependency' continues in the first dependency's worktree and branch instead, so several nodes build one branch in turn. workspace 'root' works in the project folder with no branch, commit or PR; use it for read-only work such as reviews and audits. " +

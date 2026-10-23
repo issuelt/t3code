@@ -126,7 +126,7 @@ function findCycle(nodes: Nodes): ReadonlyArray<string> | null {
 }
 
 /** Keys of every node below `key`, not including `key`. */
-export function taskGraphDescendants(nodes: Nodes, key: string): ReadonlySet<string> {
+function taskGraphDescendants(nodes: Nodes, key: string): ReadonlySet<string> {
   const found = new Set<string>();
   const queue = [key];
   while (queue.length > 0) {

@@ -14,7 +14,7 @@ import ForkMigration0001 from "./ForkMigrations/001_TaskGraphs.ts";
  */
 const forkMigrationEntries = [[1, "TaskGraphs", ForkMigration0001]] as const;
 
-export const FORK_MIGRATIONS_TABLE = "fork_sql_migrations";
+const FORK_MIGRATIONS_TABLE = "fork_sql_migrations";
 
 const runFork = Migrator.make({});
 

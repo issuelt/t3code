@@ -25,16 +25,20 @@ type DraftSelection = { readonly start: number; readonly end: number };
 
 type ComposerDictationInput = Parameters<typeof useComposerDictation>[0] & {
   readonly environmentId: EnvironmentId | null;
+  readonly modelLoaded: boolean;
 };
 
-/** Wires a controller to the composer's latest input, read when callbacks run. */
+/**
+ * Wires a controller to the composer's latest input, read when callbacks run.
+ * It owns that input instead of taking refs, so React Compiler can memoize the hook.
+ */
 function createComposerDictationController(input: {
   readonly registry: AtomRegistry.AtomRegistry;
-  readonly latest: { readonly current: ComposerDictationInput };
-  readonly committed: { current: boolean };
+  readonly initial: ComposerDictationInput;
   readonly setState: (state: VoiceInputState) => void;
 }) {
-  const { latest, committed } = input;
+  const latest = { current: input.initial };
+  const committed = { current: false };
   let controller: VoiceInputController | null = null;
   const streaming = createStreamingDictation({
     registry: input.registry,
@@ -66,7 +70,21 @@ function createComposerDictationController(input: {
     },
   });
   controller = created;
-  return { controller: created, level: streaming.level, capturedAudio: streaming.capturedAudio };
+  return {
+    controller: created,
+    level: streaming.level,
+    capturedAudio: streaming.capturedAudio,
+    latest: () => latest.current,
+    setLatest: (next: ComposerDictationInput) => {
+      latest.current = next;
+    },
+    /** Whether a transcript was committed since the last call. */
+    takeCommitted: () => {
+      const was = committed.current;
+      committed.current = false;
+      return was;
+    },
+  };
 }
 
 /**
@@ -92,17 +110,18 @@ export function useComposerDictation(input: {
   const environmentId = useDictationEnvironmentId(input.draftEnvironmentId);
   const { state: environmentState } = useDictationState(environmentId);
   const modelLoaded = environmentState?.loadedModel != null;
-  const latest = useRef({ ...input, environmentId, modelLoaded });
-  useLayoutEffect(() => {
-    latest.current = { ...input, environmentId, modelLoaded };
-  });
-  const committed = useRef(false);
   const [state, setState] = useState(IDLE_STATE);
-
-  // oxlint-disable-next-line react/refs -- The controller reads these refs only from its callbacks, after render.
-  const [{ controller, level, capturedAudio }] = useState(() =>
-    createComposerDictationController({ registry, latest, committed, setState }),
+  const [dictation] = useState(() =>
+    createComposerDictationController({
+      registry,
+      initial: { ...input, environmentId, modelLoaded },
+      setState,
+    }),
   );
+  const { controller, level, capturedAudio } = dictation;
+  useLayoutEffect(() => {
+    dictation.setLatest({ ...input, environmentId, modelLoaded });
+  });
 
   const ownerKey = useRef(input.ownerKey);
   useEffect(() => {
@@ -115,10 +134,9 @@ export function useComposerDictation(input: {
 
   // The editor is enabled again by the time this parent effect runs.
   useEffect(() => {
-    if (state.phase !== "idle" || !committed.current) return;
-    committed.current = false;
-    latest.current.onCommitted();
-  }, [state.phase]);
+    if (state.phase !== "idle" || !dictation.takeCommitted()) return;
+    dictation.latest().onCommitted();
+  }, [dictation, state.phase]);
 
   useEffect(() => {
     if (state.phase !== "error" || state.error === null) return;
@@ -128,7 +146,7 @@ export function useComposerDictation(input: {
 
   // Stable across renders so callers can run it from an effect keyed only on focus.
   const warm = useStableCallback(() => {
-    const { environmentId: target, modelLoaded: loaded } = latest.current;
+    const { environmentId: target, modelLoaded: loaded } = dictation.latest();
     if (target === null || loaded) return;
     void runAtomCommand(
       registry,
@@ -142,7 +160,7 @@ export function useComposerDictation(input: {
     void navigate({
       to: "/settings/integrations",
       hash: "dictation",
-      search: { machine: latest.current.draftEnvironmentId ?? undefined },
+      search: { machine: dictation.latest().draftEnvironmentId ?? undefined },
       state: { settingsTargetHighlight: true },
     });
 
@@ -159,7 +177,7 @@ export function useComposerDictation(input: {
     capturedAudio,
     /** Starts recording, or opens Dictation settings when no environment can transcribe. */
     start: () => {
-      if (latest.current.environmentId === null) {
+      if (dictation.latest().environmentId === null) {
         openSettings();
         return;
       }

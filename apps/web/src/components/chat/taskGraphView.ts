@@ -54,7 +54,7 @@ export interface TaskGraphProgress {
   readonly waiting: number;
 }
 
-export function taskGraphProgress(nodes: ReadonlyArray<TaskGraphNode>): TaskGraphProgress {
+function taskGraphProgress(nodes: ReadonlyArray<TaskGraphNode>): TaskGraphProgress {
   let succeeded = 0;
   let failed = 0;
   let active = 0;

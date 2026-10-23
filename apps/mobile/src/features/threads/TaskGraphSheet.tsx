@@ -149,17 +149,15 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
     action: () => Promise<AtomCommandResult<unknown, unknown>>,
   ) => {
     setPending((current) => new Set(current).add(key));
-    try {
-      const result = await action();
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        Alert.alert(failureTitle, String(squashAtomCommandFailure(result)));
-      }
-    } finally {
+    const result = await action().finally(() =>
       setPending((current) => {
         const next = new Set(current);
         next.delete(key);
         return next;
-      });
+      }),
+    );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      Alert.alert(failureTitle, String(squashAtomCommandFailure(result)));
     }
   };
 
