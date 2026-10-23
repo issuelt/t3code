@@ -71,6 +71,27 @@ describe("fork migrations", () => {
     }).pipe(Effect.provide(memory)),
   );
 
+  it.effect("upgrades a fork preview that recorded V2 before migrations 53 and 54", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 55 });
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id IN (53, 54)`;
+      yield* sql`DROP TABLE pull_request_files_viewed`;
+      yield* sql`ALTER TABLE projection_threads DROP COLUMN auto_settle_disabled_at`;
+      yield* shiftUp(33, 52);
+      yield* sql`UPDATE effect_sql_migrations SET migration_id = 54 WHERE migration_id = 55`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (33, 'ProjectionThreadShellActivitySummary')`;
+
+      yield* migrateAll;
+      yield* expectUpstreamHistoryAndTaskGraphs;
+      const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
+      assert.isTrue(columns.some((column) => column.name === "auto_settle_disabled_at"));
+      const viewed =
+        yield* sql`SELECT name FROM sqlite_master WHERE name = 'pull_request_files_viewed'`;
+      assert.strictEqual(viewed.length, 1);
+    }).pipe(Effect.provide(memory)),
+  );
+
   it.effect("leaves an upstream history alone", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 62 });

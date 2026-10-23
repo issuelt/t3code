@@ -4,6 +4,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest } from "./Migrations.ts";
 import ForkMigration0001 from "./ForkMigrations/001_TaskGraphs.ts";
+import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
+import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 /**
  * Fork-only schema lives in its own migrations table so its ids never collide
@@ -38,6 +40,11 @@ export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
 // Fork-only migrations that older fork builds recorded in effect_sql_migrations.
 const LEGACY_FORK_MIGRATIONS = new Set(["ProjectionThreadShellActivitySummary", "TaskGraphs"]);
 
+const PREVIEW_GAP_MIGRATIONS = [
+  ["PullRequestFilesViewed", PullRequestFilesViewed],
+  ["ProjectionThreadsAutoSettleDisabledAt", AutoSettleDisabledAt],
+] as const;
+
 /**
  * Older fork builds recorded fork migrations among upstream's and shifted
  * upstream's ids to make room. Rewrite such a history to upstream's ids by
@@ -71,6 +78,15 @@ export const reconcileForkMigrationHistory = Effect.fn("reconcileForkMigrationHi
         const names = new Set(
           recorded.map((row) => row.name).filter((name) => !LEGACY_FORK_MIGRATIONS.has(name)),
         );
+        // Fork previews recorded V2 before these two existed. Both are
+        // idempotent, so run the missing ones instead of leaving a gap.
+        if (names.has("OrchestrationV2")) {
+          for (const [name, migration] of PREVIEW_GAP_MIGRATIONS) {
+            if (names.has(name)) continue;
+            yield* migration;
+            names.add(name);
+          }
+        }
         const unknown = [...names].filter((name) => !upstreamIds.has(name));
         const rows = [...names]
           .flatMap((name) => {

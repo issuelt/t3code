@@ -168,11 +168,9 @@ jobs:
           echo "$requirement"
           grep -q "H\"$fingerprint\"" <<<"$requirement"
 
+      # setup-vp selects engines.node from package.json, the version the CLI executable embeds.
       - name: Build CLI single-executable
         shell: bash
-        env:
-          # Keep in step with SEA_NODE_VERSION in apps/server/vite.config.ts.
-          VP_NODE_VERSION: "26.8.2"
         run: node apps/server/scripts/cli.ts build-exe --verbose
 
       - name: Build CLI archive
