@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthEnvironmentMaintainScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -71,6 +72,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.taskGraphPeersSetWeight]: AuthEnvironmentMaintainScope,
   // The grant also needs every scope it hands out; the server checks that.
   [WS_METHODS.taskGraphPeersIssueGrant]: AuthEnvironmentMaintainScope,
+  // A guest link hands thread access to someone outside, like a pairing link.
+  [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

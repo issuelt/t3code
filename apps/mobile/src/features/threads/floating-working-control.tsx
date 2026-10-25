@@ -50,8 +50,7 @@ const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
 const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
 const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
 
-// Expo reapplies glass after native layout and window reattachment, when UIKit
-// can otherwise leave the label visible but lose the material behind it.
+// Expo reapplies glass after layout or reattachment, restoring material UIKit can lose behind visible labels.
 const UniwindGlassView = withUniwind(GlassView, {
   style: { fromClassName: "className" },
 });
@@ -60,9 +59,7 @@ const UniwindGlassContainer = withUniwind(GlassContainer, {
 });
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
-// The segment widths feed labelWidth, and labelWidth moves the segments. Pixel
-// rounding then flips a segment's width by one physical pixel per layout, which
-// re-ellipsizes a truncated label every frame. Sub-point changes are ignored.
+// Segment widths feed back into labelWidth; ignore sub-point changes to avoid rounding-driven ellipsis loops.
 function settleWidth(next: number) {
   return (current: number) => (Math.abs(current - next) < 1 ? current : next);
 }
@@ -132,10 +129,7 @@ export function FloatingWorkingControl(props: {
     opacity: separationProgress.value,
   }));
 
-  // Animate an in-flow sizer so native glass receives real layout updates.
-  // Measure labels in a separate, fixed-width host: measuring against the
-  // animated capsule constrains the incoming text to each intermediate width
-  // and repeatedly retargets the animation as it grows.
+  // Animate an in-flow sizer for native glass layout. Measure labels at fixed width to avoid repeated animation retargeting.
   const capsuleWidth = useSharedValue<number | null>(null);
   const measuredWidthRef = useRef<number | null>(null);
   const handleLabelLayout = (event: LayoutChangeEvent) => {
@@ -207,20 +201,24 @@ export function FloatingWorkingControl(props: {
     <View className="flex-row items-center">
       {statusContent}
       {action !== null ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={action.accessibilityLabel}
-          accessibilityState={{ disabled: action.disabled }}
-          disabled={action.disabled}
-          onPress={action.onPress}
+        <View
           onLayout={(event) => setActionWidth(settleWidth(event.nativeEvent.layout.width))}
-          className={`h-11 flex-row items-center gap-1.5 px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
+          className="h-11 flex-row items-center"
         >
-          <View className="mr-1 h-4 w-px bg-border" />
-          <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
-            {action.label}
-          </Text>
-        </Pressable>
+          <View className="h-4 w-px bg-border" />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={action.accessibilityLabel}
+            accessibilityState={{ disabled: action.disabled }}
+            disabled={action.disabled}
+            onPress={action.onPress}
+            className={`h-11 items-center justify-center px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
+          >
+            <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
+              {action.label}
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
       {hasPreview ? (
         <View
@@ -245,7 +243,7 @@ export function FloatingWorkingControl(props: {
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview ? <View className="mr-1 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasPreview ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
           <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {agents.label}
@@ -258,13 +256,13 @@ export function FloatingWorkingControl(props: {
           accessibilityLabel={`Open task graphs, ${taskGraph.accessibilityLabel}`}
           accessibilityHint="Opens this thread's task graphs"
           onPress={props.onOpenTaskGraph}
-          onLayout={(event) => setTaskGraphWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => setTaskGraphWidth(settleWidth(event.nativeEvent.layout.width))}
           // Capped like the queue so agents, graph and queue still fit on a narrow screen.
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.4 }}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
           {hasStatus || hasPreview || hasAgents ? (
-            <View className="mr-1 h-4 w-px bg-border" />
+            <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SubagentStatusDot tone={taskGraph.tone} />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
@@ -283,7 +281,7 @@ export function FloatingWorkingControl(props: {
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
           {hasStatus || hasPreview || hasAgents || hasTaskGraph ? (
-            <View className="mr-1 h-4 w-px bg-border" />
+            <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>

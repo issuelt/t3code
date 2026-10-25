@@ -11,12 +11,7 @@ const { AndroidConfig, withAndroidManifest, withMainActivity } = require("expo/c
 // lock in onCreate does not resize it until the user rotates the device. The lock is
 // applied before super.onCreate so phones request portrait before the activity's
 // content is created.
-// FULL_USER allows all four orientations while still respecting the user's
-// auto-rotate lock, matching iPad behavior. Foldables change smallestScreenWidthDp on
-// fold/unfold without recreating the activity (smallestScreenSize is in the
-// manifest's configChanges), so the policy is re-evaluated in onConfigurationChanged:
-// unfolding past the tablet breakpoint unlocks rotation, and folding back restores
-// the portrait lock.
+// FULL_USER respects rotation lock. Foldables change smallestScreenWidthDp without recreating the activity.
 
 const ORIENTATION_METHODS = `
   // Applied in onCreate and re-applied on fold/unfold; added by

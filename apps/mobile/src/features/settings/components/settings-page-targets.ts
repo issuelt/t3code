@@ -1,0 +1,31 @@
+/** Settings pages a Settings row opens. */
+export const SETTINGS_PAGE_TARGETS = [
+  "SettingsEnvironments",
+  "SettingsNotifications",
+  "SettingsThreads",
+  "SettingsAbout",
+  "SettingsArchive",
+  "SettingsAppearance",
+  "SettingsNavigation",
+  "SettingsOrganization",
+  "SettingsProjectOverview",
+  "SettingsEnvironmentNewThreads",
+  "SettingsEnvironmentSourceControl",
+  "SettingsEnvironmentAgentBehavior",
+  "SettingsEnvironmentMaintenance",
+  "SettingsProviderAccounts",
+  "SettingsKeyboard",
+  "SettingsMicrophone",
+  "SettingsFollowUp",
+  "SettingsScheduledTasks",
+  "SettingsProjectGrouping",
+  "SettingsClientStorage",
+  "SettingsDiagnostics",
+  "SettingsOpenSourceLicenses",
+  "SettingsUsage",
+  "SettingsUsageWidget",
+] as const;
+
+export type SettingsPageTarget = (typeof SETTINGS_PAGE_TARGETS)[number];
+
+export type SettingsLegalDocumentTarget = "SettingsLegal";

@@ -214,12 +214,7 @@ export function SettingsUsageWidgetRouteScreen() {
           <SettingsActionRow
             icon="chart.bar.xaxis"
             label="Open usage limits"
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsUsage" },
-              })
-            }
+            onPress={() => navigation.navigate("SettingsUsage")}
           />
         </SettingsSection>
         {!exists ? (
