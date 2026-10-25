@@ -2,6 +2,7 @@ import { useNavigation, useRoute, StackActions } from "@react-navigation/native"
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { useCallback } from "react";
 import { Platform } from "react-native";
+import { useAdaptiveWorkspaceLayout } from "../features/layout/adaptive-workspace-context";
 import { useSelectWorkspaceDetail } from "../features/workspace/useSelectWorkspaceDetail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
@@ -15,6 +16,7 @@ type PullRequestContext = { readonly environmentId: string; readonly projectId: 
 export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
+  const { usesSplitView } = useAdaptiveWorkspaceLayout().layout;
   const projects = useProjects();
   const replace = options?.replace;
   return useCallback(
@@ -28,13 +30,14 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
         (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
       );
       if (!params) return tryOpenExternalUrl(url, "pull-request");
-      // Android shows one page at a time; iOS opens it over the current page, so Back returns.
-      if (Platform.OS === "android") selectDetail({ name: "PullRequest", params });
+      // Android's split view shows it in the detail column. Elsewhere it opens over the current
+      // page, so Back returns to the chat it was opened from.
+      if (Platform.OS === "android" && usesSplitView) selectDetail({ name: "PullRequest", params });
       else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
       else navigation.dispatch(StackActions.push("PullRequest", params));
       return true;
     },
-    [navigation, projects, replace, selectDetail],
+    [navigation, projects, replace, selectDetail, usesSplitView],
   );
 }
 

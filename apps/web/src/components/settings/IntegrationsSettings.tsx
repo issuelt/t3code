@@ -5,12 +5,8 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { DictationSettingsSection } from "./DictationSettings";
 /**
- * Integrations settings - preferences for surfaces T3 Code embeds rather than
- * owns. Browser is the first section: the defaults a preview tab opens at,
- * applied to both hand-opened tabs and agent `preview_open` calls that don't
- * state their own size.
- *
- * @module IntegrationsSettings
+ * Preferences for surfaces T3 Code embeds rather than owns. The Browser section's defaults apply
+ * to hand-opened tabs and to agent `preview_open` calls that don't state their own size.
  */
 import { EasDeviceHostsSettings } from "./EasDeviceHostsSettings";
 import {

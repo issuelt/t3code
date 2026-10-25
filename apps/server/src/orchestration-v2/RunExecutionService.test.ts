@@ -1049,7 +1049,10 @@ it.effect.each(["declined", "rejected", "rejected after ingestion starts"] as co
         const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
         yield* runExecution.startRootRun({
           commandId: CommandId.make("command:run-execution-subscription-close"),
-          appThread: { id: threadId } as OrchestrationV2AppThread,
+          appThread: {
+            id: threadId,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          } as OrchestrationV2AppThread,
           providerSessionId: ProviderSessionId.make("session:run-execution-subscription-close"),
           session: {
             events: Stream.empty,

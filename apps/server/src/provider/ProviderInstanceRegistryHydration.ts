@@ -80,24 +80,10 @@ const readConfigCustomModels = (config: unknown): ReadonlyArray<string> => {
 };
 
 /**
- * Mirror each primary instance's `customModels` onto its non-primary
- * same-driver siblings.
- *
- * "Primary" is the instance whose id equals `defaultInstanceIdForDriver(driver)`
- * — literally the driver kind as a slug — matching how the rest of the server
- * routes the legacy single-instance-per-driver slot. Additional accounts of the
- * same driver (`codex-2`, `claude-3`, …) are non-primary siblings.
- *
- * For every non-primary sibling that hasn't opted out
- * (`mirrorPrimaryCustomModels === false`), we union the primary's custom
- * models onto the sibling's own list — the sibling's own entries keep their
- * order, and the primary's models are appended in order, skipping duplicates.
- * The primary's own config is never touched, and mirroring never crosses
- * driver kinds (each sibling only inherits from its own driver's primary).
- *
- * Purity contract: the same map reference is returned when nothing needs
- * mirroring (no siblings, no primary customs, opted out, or every primary
- * model already present), so downstream reference-equality checks stay stable.
+ * Appends each primary instance's (id `defaultInstanceIdForDriver(driver)`) `customModels` to
+ * its same-driver siblings unless they set `mirrorPrimaryCustomModels: false`, skipping
+ * duplicates. Returns the same map reference when nothing changes, so reference-equality
+ * checks downstream stay stable.
  */
 export const withMirroredPrimaryCustomModels = (
   map: ProviderInstanceConfigMap,

@@ -264,11 +264,8 @@ export const ServerProvider = Schema.Struct({
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
-  // Volatile auto-fallback cooldown state for this instance. Set while the
-  // instance is within the limit cooldown window after a usage/rate-limit hit;
-  // never persisted to disk. Optional for back-compat — absent means "not
-  // recently limited". `limitedUntil` is populated only when the provider
-  // surfaced reset timing; otherwise `recentlyLimited` alone is set.
+  // Volatile auto-fallback cooldown after a usage limit; never persisted, absent means not
+  // limited. `limitedUntil` is set only when the provider reported reset timing.
   recentlyLimited: Schema.optionalKey(Schema.Boolean),
   limitedUntil: Schema.optionalKey(IsoDateTime),
 });

@@ -52,18 +52,9 @@ function providerInstanceHomePathIsEmpty(config: unknown): boolean {
 }
 
 /**
- * Inject a default isolated `homePath` into every provider instance that is
- * *newly* present in `nextInstances` (absent from `currentInstances`), is not a
- * bare driver-default id (`instanceId !== driver`), uses a driver that supports
- * an isolated home, and does not already declare a non-empty `homePath`.
- *
- * Backward compatible by construction: existing instances (including the bare
- * driver ids like `codex` / `claudeAgent`) are never touched, so their shared
- * default-home behaviour is preserved exactly.
- *
- * `computeHome` maps an instance id to its absolute home path — kept as a
- * callback so path joining stays with the caller that owns the server paths.
- * Returns the same reference when nothing changed.
+ * Gives each newly added, non-default-id instance of a driver that supports isolated homes a
+ * `computeHome(instanceId)` `homePath` unless it already has one. Existing instances and bare
+ * driver ids keep their shared default home. Returns the same reference when nothing changed.
  */
 export function withDefaultProviderInstanceHomes(
   currentInstances: ServerSettings["providerInstances"] | undefined,

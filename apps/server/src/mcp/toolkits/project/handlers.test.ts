@@ -285,7 +285,7 @@ it.effect(
       expect(belowCeiling.result).toMatchObject({
         projectId: belowCeiling.projectId,
         modelSelection: belowCeiling.modelSelection,
-        link: `[Fix](t3-thread://v1/${belowCeiling.launched[0]?.threadId})`,
+        link: `[Fix](t3-thread://v1/${belowCeiling.launched[0]?.threadId}?environmentId=environment)`,
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
