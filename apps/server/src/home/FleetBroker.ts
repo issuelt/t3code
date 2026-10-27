@@ -127,7 +127,7 @@ const make = Effect.gen(function* () {
   });
 
   return FleetBroker.of({
-    connect: (registration) =>
+    connect: Effect.fn("FleetBroker.connect")((registration) =>
       Effect.succeed(
         Stream.unwrap(
           Effect.acquireRelease(acquire(registration), retire).pipe(
@@ -135,6 +135,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
+    ),
 
     respond: Effect.fn("FleetBroker.respond")(function* (response) {
       const entry = yield* SynchronizedRef.modify(state, (current) => {

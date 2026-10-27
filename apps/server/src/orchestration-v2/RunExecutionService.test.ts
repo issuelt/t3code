@@ -1034,6 +1034,7 @@ it.effect.each(["declined", "rejected", "rejected after ingestion starts"] as co
         Layer.provide(
           Layer.mergeAll(
             McpAppModelContext.layerEmpty,
+            PreviewAgentActivity.layer,
             layerTurnItemPositionsTest,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               captureBaseline: () => Effect.void,

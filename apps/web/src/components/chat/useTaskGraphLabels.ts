@@ -16,7 +16,7 @@ import {
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
-import { getTriggerDisplayModelLabel } from "./providerIconUtils";
+import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { taskGraphNodeMachine, taskGraphNodeModel } from "./taskGraphView";
 
 const EMPTY_PEERS: ReadonlyArray<TaskGraphPeer> = [];
@@ -56,7 +56,7 @@ export function useTaskGraphLabels(environmentId: EnvironmentId, graph: TaskGrap
       (candidate) => candidate.instanceId === selection.instanceId,
     );
     const model = entry?.models.find((candidate) => candidate.slug === selection.model);
-    return model ? getTriggerDisplayModelLabel(model) : selection.model;
+    return model ? getTriggerDisplayModelName(model, entry?.driverKind) : selection.model;
   };
   const machineLabel = (id: EnvironmentId): string =>
     id === environmentId

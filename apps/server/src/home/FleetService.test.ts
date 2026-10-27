@@ -76,9 +76,10 @@ const setup = () => {
         }),
         Layer.mock(Project.ProjectService)({
           getById: (projectId) =>
-            Effect.succeed(
-              Option.some({ id: projectId, workspaceRoot: `/${projectId}` } as ContractProject),
-            ),
+            Effect.succeedSome({
+              id: projectId,
+              workspaceRoot: `/${projectId}`,
+            } as ContractProject),
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",

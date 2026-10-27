@@ -137,17 +137,23 @@ export const layerNone = Layer.succeed(
   TaskGraphPeers,
   TaskGraphPeers.of({
     hasPeers: Effect.succeed(false),
-    candidates: () => Effect.succeed([]),
-    startNode: () => Effect.fail(new TaskGraphError({ message: "No peer machines are paired." })),
-    track: () => Effect.void,
-    interruptNode: () => Effect.void,
+    candidates: Effect.fn("TaskGraphPeers.candidates")(() => Effect.succeed([])),
+    startNode: Effect.fn("TaskGraphPeers.startNode")(() =>
+      Effect.fail(new TaskGraphError({ message: "No peer machines are paired." })),
+    ),
+    track: Effect.fn("TaskGraphPeers.track")(() => Effect.void),
+    interruptNode: Effect.fn("TaskGraphPeers.interruptNode")(() => Effect.void),
     completions: Stream.never,
     list: Effect.succeed({ peers: [] }),
     subscribe: Stream.make({ peers: [] }),
-    add: () => Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
-    remove: () => Effect.succeed({ peers: [] }),
-    issueGrant: () => Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
-    setWeight: () => Effect.succeed({ peers: [] }),
+    add: Effect.fn("TaskGraphPeers.add")(() =>
+      Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
+    ),
+    remove: Effect.fn("TaskGraphPeers.remove")(() => Effect.succeed({ peers: [] })),
+    issueGrant: Effect.fn("TaskGraphPeers.issueGrant")(() =>
+      Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
+    ),
+    setWeight: Effect.fn("TaskGraphPeers.setWeight")(() => Effect.succeed({ peers: [] })),
   }),
 );
 

@@ -104,12 +104,10 @@ it.effect("makes Home name a project and watches the thread before launching it"
       }),
       Layer.mock(Project.ProjectService)({
         getById: (projectId) =>
-          Effect.succeed(
-            Option.some({
-              id: projectId,
-              workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
-            } as never),
-          ),
+          Effect.succeedSome({
+            id: projectId,
+            workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
+          } as never),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -118,6 +116,7 @@ it.effect("makes Home name a project and watches the thread before launching it"
         root: "/data/home",
         contains: (candidate) => Effect.succeed(candidate.startsWith("/data/home")),
       }),
+      Layer.mock(DocumentText.DocumentText)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-home-launch-" }).pipe(
         Layer.provide(NodeServices.layer),

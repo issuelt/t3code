@@ -241,7 +241,7 @@ const make = Effect.gen(function* () {
   return HomeService.of({
     available,
 
-    enable: (input) =>
+    enable: Effect.fn("HomeService.enable")((input) =>
       withLock(
         Effect.gen(function* () {
           yield* requireAvailable;
@@ -254,6 +254,7 @@ const make = Effect.gen(function* () {
           return { threadId };
         }),
       ),
+    ),
 
     disable: withLock(
       Effect.gen(function* () {
@@ -288,15 +289,16 @@ const make = Effect.gen(function* () {
       }),
     ),
 
-    isHome: (threadId) =>
+    isHome: Effect.fn("HomeService.isHome")((threadId) =>
       available
         ? readHome.pipe(
             Effect.map((home) => home.threadId === threadId),
             Effect.orElseSucceed(() => false),
           )
         : Effect.succeed(false),
+    ),
 
-    updateWatches: (homeThreadId, update) =>
+    updateWatches: Effect.fn("HomeService.updateWatches")((homeThreadId, update) =>
       withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
@@ -305,10 +307,11 @@ const make = Effect.gen(function* () {
           return yield* writeHome(update(home));
         }),
       ),
+    ),
 
     // Under the lock, so turning Home off or starting fresh cannot slip in
     // between choosing the Home thread and waking it.
-    report: ({ events }) =>
+    report: Effect.fn("HomeService.report")(({ events }) =>
       withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
@@ -334,6 +337,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.ignore);
         }),
       ),
+    ),
   });
 });
 

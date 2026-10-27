@@ -17,6 +17,7 @@ import {
   OrchestrationV2DispatchCommandResult,
   ThreadId,
   RunId,
+  RuntimeRequestId,
   NonNegativeInt,
   ProjectId,
 } from "@t3tools/contracts";

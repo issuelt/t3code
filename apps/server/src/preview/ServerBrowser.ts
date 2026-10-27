@@ -2395,7 +2395,7 @@ const make = Effect.gen(function* () {
           const notifications = dropped.value.filter((item) =>
             ["fileChooserClosed", "popup", "download", "clipboard"].includes(item._tag),
           );
-          const room = VIEWER_OUTPUT_LIMIT - Effect.runSync(Queue.size(output));
+          const room = VIEWER_OUTPUT_LIMIT - Queue.sizeUnsafe(output);
           for (const item of notifications.slice(Math.max(0, notifications.length - room)))
             Queue.offerUnsafe(output, item);
           for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);

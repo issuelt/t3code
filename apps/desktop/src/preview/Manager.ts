@@ -3631,13 +3631,13 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         NodeFSP.copyFile(source, target, NodeFS.constants.COPYFILE_EXCL),
       ).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          attempt < 99 &&
-          error.cause instanceof Error &&
-          "code" in error.cause &&
-          error.cause.code === "EEXIST"
-            ? Effect.succeed(false)
-            : Effect.fail(error),
+        Effect.catchIf(
+          (error) =>
+            attempt < 99 &&
+            error.cause instanceof Error &&
+            "code" in error.cause &&
+            error.cause.code === "EEXIST",
+          () => Effect.succeed(false),
         ),
       );
       if (!copied) continue;

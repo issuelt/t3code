@@ -258,10 +258,9 @@ const make = Effect.gen(function* () {
 
   const requireGraph = (graphId: TaskGraphId) =>
     readGraph(graphId).pipe(
-      Effect.flatMap((graph) =>
-        graph === null
-          ? Effect.fail(graphError("Task graph not found.", graphId))
-          : Effect.succeed(graph),
+      Effect.filterOrFail(
+        (graph): graph is NonNullable<typeof graph> => graph !== null,
+        () => graphError("Task graph not found.", graphId),
       ),
     );
 

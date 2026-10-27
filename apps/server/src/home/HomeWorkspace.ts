@@ -156,12 +156,13 @@ const make = Effect.gen(function* () {
   return HomeWorkspace.of({
     root,
     ensureProject: ensureProject(),
-    contains: (candidate) =>
+    contains: Effect.fn("HomeWorkspace.contains")((candidate) =>
       Effect.sync(() => {
         const relative = path.relative(root, path.resolve(candidate));
         const leaves = relative === ".." || relative.startsWith(`..${path.sep}`);
         return !leaves && !path.isAbsolute(relative);
       }),
+    ),
   });
 });
 

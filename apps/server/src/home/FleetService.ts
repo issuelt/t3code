@@ -142,10 +142,9 @@ const make = Effect.gen(function* () {
   const loadShell = (threadId: ThreadId) =>
     threads.getThreadShell(threadId).pipe(
       Effect.mapError(threadManagementFailure),
-      Effect.flatMap((shell) =>
-        shell === null || shell.deletedAt !== null
-          ? Effect.fail(failure("thread_not_found", `Thread ${threadId} was not found.`))
-          : Effect.succeed(shell),
+      Effect.filterOrFail(
+        (shell): shell is NonNullable<typeof shell> => shell !== null && shell.deletedAt === null,
+        () => failure("thread_not_found", `Thread ${threadId} was not found.`),
       ),
     );
 
@@ -169,9 +168,9 @@ const make = Effect.gen(function* () {
 
   const handlers: Handlers = {
     capabilities: Effect.fn("FleetService.capabilities")(function* (input) {
-      const catalogInput = yield* Schema.decodeUnknownEffect(OrchestratorMcpCapabilitiesInput)(
-        input,
-      ).pipe(Effect.mapError(orchestrationError));
+      const catalogInput = yield* Schema.decodeEffect(OrchestratorMcpCapabilitiesInput)(input).pipe(
+        Effect.mapError(orchestrationError),
+      );
       const providers = yield* providerRegistry.getProviders;
       const capable = new Set<string>(yield* adapters.list());
       // Models the user hid from pickers stay out of the catalog Home chooses from.
@@ -519,10 +518,9 @@ const make = Effect.gen(function* () {
     )(request.input as never, actor);
 
   return FleetService.of({
-    execute: ({ actor, request }) =>
-      run(request, actor).pipe(
-        Effect.withSpan("FleetService.execute", { attributes: { "fleet.op": request.op } }),
-      ),
+    execute: Effect.fn("FleetService.execute")(({ actor, request }) =>
+      Effect.annotateCurrentSpan("fleet.op", request.op).pipe(Effect.andThen(run(request, actor))),
+    ),
   });
 });
 

@@ -341,18 +341,17 @@ const make = Effect.gen(function* () {
         // Retired recognizers must release their handle before their files are deleted.
         yield* native.withPermit(artifacts.remove(input.model)).pipe(
           Effect.catchTags({
-            DictationError: (error) =>
-              Effect.gen(function* () {
-                const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
-                yield* progress(
-                  input.model,
-                  snapshot?.models.get(input.model) ?? {
-                    _tag: "failed",
-                    message: "Could not remove dictation files.",
-                  },
-                );
-                return yield* error;
-              }),
+            DictationError: Effect.fn("Dictation.removeModelFailed")(function* (error) {
+              const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
+              yield* progress(
+                input.model,
+                snapshot?.models.get(input.model) ?? {
+                  _tag: "failed",
+                  message: "Could not remove dictation files.",
+                },
+              );
+              return yield* error;
+            }),
           }),
         );
       }).pipe(Effect.uninterruptible),

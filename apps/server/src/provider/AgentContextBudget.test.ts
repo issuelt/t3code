@@ -11,6 +11,13 @@ import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { FleetBroker } from "../home/FleetBroker.ts";
+import { FleetService } from "../home/FleetService.ts";
+import { HomeService } from "../home/HomeService.ts";
+import { HomeWorkspace } from "../home/HomeWorkspace.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import { TaskGraphPeers } from "../taskGraph/TaskGraphPeers.ts";
+import { TaskGraphService } from "../taskGraph/TaskGraphService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
@@ -67,6 +74,13 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  Layer.mock(FleetBroker)({}),
+  Layer.mock(FleetService)({}),
+  Layer.mock(HomeService)({ available: false }),
+  Layer.mock(HomeWorkspace)({ root: "" }),
+  Layer.mock(PullRequestService)({}),
+  Layer.mock(TaskGraphPeers)({}),
+  Layer.mock(TaskGraphService)({}),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
