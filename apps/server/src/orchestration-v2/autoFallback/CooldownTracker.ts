@@ -1,15 +1,8 @@
 // @effect-diagnostics globalDate:off - Cooldown snapshots cross a JSON boundary as ISO timestamps.
 /**
- * AutoFallbackCooldownTracker — shared in-memory limit-cooldown state.
- *
- * Written by the auto-fallback coordinator when a provider instance dies with
- * a usage/rate-limit error; read by candidate selection (skip limited
- * instances) and by the ws snapshot path (decorate `ServerProvider` with
- * `recentlyLimited` / `limitedUntil` for the settings card badge). Never
- * persisted — a server restart clears all cooldowns, which is the desired
- * behaviour for volatile provider-side state.
- *
- * @module orchestration-v2/autoFallback/CooldownTracker
+ * Shared in-memory limit-cooldown state, read by candidate selection and the
+ * ws snapshot path (`recentlyLimited` / `limitedUntil`). Never persisted: a
+ * restart clears all cooldowns, which suits volatile provider-side limits.
  */
 import type { ServerProvider } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";

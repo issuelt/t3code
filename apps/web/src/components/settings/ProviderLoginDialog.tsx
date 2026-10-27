@@ -51,11 +51,9 @@ function themeFromElement(element: HTMLElement): ITheme {
 }
 
 /**
- * A real interactive login terminal: the login CLI (codex device-auth /
- * claude setup-token) needs stdin (press a key, paste a token), so the dialog
- * hosts a full xterm surface wired to the additive `providerLogin.*` WS
- * methods. The first verification URL and device code parsed from the stream
- * are surfaced prominently above the raw output.
+ * A full xterm surface, because the login CLIs need stdin (press a key, paste
+ * a token). The first verification URL and device code parsed from the stream
+ * are shown above the raw output.
  */
 export function ProviderLoginDialog({
   open,
@@ -79,6 +77,7 @@ export function ProviderLoginDialog({
   // without making `state.output` a dependency of it (which would tear down and
   // recreate the terminal on every streamed byte).
   const outputRef = useRef(state.output);
+  // oxlint-disable-next-line t3code/react-effect-budget -- refs must not be written during render
   useLayoutEffect(() => {
     outputRef.current = state.output;
   }, [state.output]);
@@ -106,6 +105,7 @@ export function ProviderLoginDialog({
   };
 
   // Create the xterm surface when the dialog opens; tear it down on close.
+  // oxlint-disable-next-line t3code/react-effect-budget -- xterm mounts into a DOM node React has rendered
   useEffect(() => {
     if (!open) return;
     const mount = containerRef.current;
@@ -126,13 +126,9 @@ export function ProviderLoginDialog({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    // Flush whatever output already accumulated before this terminal existed.
-    // The write effect below only reacts to *changes* in `state.output`; the
-    // login CLIs (codex device-auth / claude setup-token) emit their URL and
-    // prompts in an initial burst and then go quiet while the user authorizes,
-    // so any output that landed before the terminal was created (buffered
-    // snapshot replay on attach, a re-open, or a StrictMode remount) would
-    // otherwise never be painted, leaving the pane blank the whole time.
+    // The write effect only reacts to output *changes*, and login CLIs go quiet
+    // after an initial burst, so output buffered before this terminal existed
+    // (replay, re-open, StrictMode remount) must be flushed here or never paints.
     const initialOutput = outputRef.current;
     if (initialOutput.length > 0) {
       terminal.write(initialOutput);
@@ -190,6 +186,7 @@ export function ProviderLoginDialog({
   }, [open, environmentId, instanceId, write, resize]);
 
   // Write output deltas to the terminal as they stream in.
+  // oxlint-disable-next-line t3code/react-effect-budget -- pushes streamed output into the imperative xterm instance
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;

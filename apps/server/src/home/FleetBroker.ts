@@ -1,16 +1,7 @@
 /**
- * FleetBroker - relays Home's calls to other environments through the
- * desktop renderer.
- *
- * Only the renderer holds live, authenticated connections to the user's other
- * environments (T3 Connect, SSH, LAN, Tailscale). It registers here with
- * `fleet.connect`, receives requests on that stream, runs each one with
- * `fleet.invoke` on the target environment, and answers with `fleet.respond`.
- * The newest registration wins, so the renderer re-registers when the list of
- * environments it reaches changes. With no renderer connected, Home can still
- * act in its own environment, but nowhere else.
- *
- * @module FleetBroker
+ * Relays Home's calls to other environments through the desktop renderer, the only holder of
+ * live connections to them. The newest `fleet.connect` registration wins; with no renderer,
+ * Home can act only in its own environment.
  */
 import {
   type EnvironmentId,
@@ -127,7 +118,7 @@ const make = Effect.gen(function* () {
   });
 
   return FleetBroker.of({
-    connect: (registration) =>
+    connect: Effect.fn("FleetBroker.connect")((registration) =>
       Effect.succeed(
         Stream.unwrap(
           Effect.acquireRelease(acquire(registration), retire).pipe(
@@ -135,6 +126,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
+    ),
 
     respond: Effect.fn("FleetBroker.respond")(function* (response) {
       const entry = yield* SynchronizedRef.modify(state, (current) => {

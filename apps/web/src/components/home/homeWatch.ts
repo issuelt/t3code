@@ -26,20 +26,10 @@ export const homeWatchKey = (environmentId: string, threadId: string) =>
 const UNSEEN = { attention: null, completion: null, ended: false };
 
 /**
- * Compares the threads Home watches with the last pass and returns what Home
- * should hear about. Uses the same transitions as desktop notifications.
- *
- * A thread seen for the first time only sets a baseline, so opening the app
- * never replays old state. The exception is a thread Home launched after the
- * reporter started (its watch is not in `knownWatchKeys`): it can ask or fail
- * before its watch arrives, so the first pass that sees it watched compares
- * it with an empty state.
- *
- * A first look at a thread only counts in a live environment's list. A cached
- * or offline list proves nothing, so threads seen before keep their last state
- * there. In a live list, a watched thread that is missing (archived or
- * deleted) or settled ends its watch. That covers a thread seen before, and a
- * watch that existed at start-up.
+ * First sight of a thread only sets a baseline, except threads launched after
+ * start (not in `knownWatchKeys`), which compare against empty state. Only live
+ * lists count: cached ones keep last state, and in a live list a missing or
+ * settled watched thread ends its watch.
  */
 export function diffWatchedThreads(input: {
   readonly previous: ReadonlyMap<string, WatchedThreadState>;

@@ -12,14 +12,10 @@ interface PromptSuggestionChange {
 }
 
 /**
- * The latest suggested next prompt per thread, in memory only. Adapters
- * publish `null` when the next turn starts or the session closes, which bounds
- * the map to live sessions.
- *
- * The default reference drops everything, keeping adapter construction
- * dependency-free in tests. The live layer must be the same layer reference in
- * the adapter infrastructure and the WebSocket routes so layer memoization
- * yields one shared map.
+ * Latest suggested prompt per thread, in memory; adapters publish `null` on
+ * turn start or close, bounding it to live sessions. The live layer must be
+ * the same reference in adapters and WebSocket routes so memoization shares
+ * one map. The default reference drops everything for dependency-free tests.
  */
 export class PromptSuggestions extends Context.Reference<{
   readonly publish: (

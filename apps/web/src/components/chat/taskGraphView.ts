@@ -226,7 +226,7 @@ export function taskGraphWorkspaceLabel(
   return "New worktree";
 }
 
-/** "#123" for a GitHub, GitLab or Bitbucket pull request URL, otherwise "PR". */
+/** Short pull request label from a GitHub, GitLab or Bitbucket URL, else "PR". */
 export function pullRequestLabel(url: string): string {
   const number = /\/(?:pull|merge_requests|pull-requests)\/(\d+)/.exec(url)?.[1];
   return number === undefined ? "PR" : `#${number}`;

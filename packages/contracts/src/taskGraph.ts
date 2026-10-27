@@ -24,12 +24,9 @@ export const TaskGraphNodeKey = TrimmedNonEmptyString.check(
 export type TaskGraphNodeKey = typeof TaskGraphNodeKey.Type;
 
 /**
- * - `pending`: waiting for its dependencies, or for the graph to run.
- * - `running`: its thread has a turn in progress.
- * - `waiting`: held until `waitUntil`: a scheduled start, or a usage limit reset. A node
- *   with a thread was stopped by the limit and continues on that thread at the reset.
- * - `delivering`: the turn finished and the branch is being committed, pushed and opened as a PR.
- * - `skipped`: a dependency failed or was cancelled, so it never started.
+ * `waiting` holds until `waitUntil` (a scheduled start or usage limit reset); a node with a
+ * thread was stopped by the limit and continues on that thread. `delivering` commits, pushes
+ * and opens the PR. `skipped` means a dependency failed or was cancelled.
  */
 export const TaskGraphNodeStatus = Schema.Literals([
   "pending",
@@ -62,12 +59,9 @@ const nodeFields = {
 };
 
 /**
- * Where a node works:
- * - `worktree`: its own new worktree and branch.
- * - `dependency`: continues in its first dependency's worktree and branch, so
- *   several nodes can build one branch in turn. Runs on that node's machine.
- * - `root`: the project folder itself, with no branch, commit or pull request.
- *   For read-only work such as reviews.
+ * `worktree`: a new worktree and branch. `dependency`: continues in the first
+ * dependency's worktree, branch and machine, so nodes build one branch in turn.
+ * `root`: the project folder, with no branch, commit or PR (read-only work).
  */
 export const TaskGraphNodeWorkspace = Schema.Literals(["worktree", "dependency", "root"]);
 export type TaskGraphNodeWorkspace = typeof TaskGraphNodeWorkspace.Type;

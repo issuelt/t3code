@@ -34,16 +34,21 @@ export const layer = Layer.effect(
       FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
     >();
     return CursorAccountReader.of({
-      resolve: (source) =>
+      resolve: Effect.fn("CursorAccountReader.resolve")((source) =>
         readCursorCredential(source, CursorKeychain.freshAccessToken(keychain)).pipe(
           Effect.provideContext(context),
         ),
+      ),
       // Only a Keychain login asks the Keychain. The dashboard reader turns
       // its outcome, a failure included, into the source's message.
-      read: (credentialSource, sinceMs, untilMs) =>
-        readCursorAccountUsage(credentialSource, sinceMs, untilMs, keychain.accessToken).pipe(
-          Effect.provideContext(context),
-        ),
+      read: Effect.fn("CursorAccountReader.read")(function (credentialSource, sinceMs, untilMs) {
+        return readCursorAccountUsage(
+          credentialSource,
+          sinceMs,
+          untilMs,
+          keychain.accessToken,
+        ).pipe(Effect.provideContext(context));
+      }),
     });
   }),
 );

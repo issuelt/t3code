@@ -3,11 +3,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /**
- * Agents mention another thread in Markdown as `[title](t3-thread://v1/<threadId>)`. The id is
- * the reference and resolves in the environment of the message that holds it. Titles change, so
- * clients show the thread's current title; the label only stands in for a thread they cannot see.
- * A link to a thread in another environment, which only Home writes, adds
- * `?environmentId=<percent-encoded id>`; thread tools return it ready-made as `link`.
+ * `[title](t3-thread://v1/<threadId>)` resolves in the holding message's environment; clients
+ * show the current title, the label only stands in for an unseen thread. Cross-environment links
+ * (only Home writes them) add `?environmentId=<percent-encoded id>`.
  */
 export const THREAD_LINK_PROTOCOL = "t3-thread";
 const THREAD_LINK_HREF_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;

@@ -24,7 +24,10 @@ export function formatProviderSkillDisplayName(
 const SKILL_TOKEN_REGEX =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-export function* matchInlineSkills(text: string, skills: readonly InlineSkill[]) {
+export function* matchInlineSkills<Skill extends InlineSkill>(
+  text: string,
+  skills: readonly Skill[],
+) {
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const name = match[2] ?? "";
     const skill = skills.find((candidate) => candidate.name === name);
@@ -79,12 +82,9 @@ function closestSpokenSkill<T extends InlineSkill>(spoken: string, skills: reado
 }
 
 /**
- * Turns spoken skill references in a dictated transcript into `$name` tokens,
- * which the composer renders as skill chips. Only phrases anchored by the word
- * "skill" ("the review skill", "skill review") or "dollar" ("dollar review")
- * are rewritten, so ordinary words that happen to name a skill stay text. A
- * leading "the" is folded into the token, and punctuation touching the
- * rewritten phrase is dropped so the token still parses.
+ * Turns spoken skill references in a dictated transcript into `$name` tokens. Only phrases
+ * anchored by "skill" ("the review skill", "skill review") or "dollar" ("dollar review") are
+ * rewritten, so ordinary words that name a skill stay text.
  */
 export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]): string {
   if (skills.length === 0) return text;

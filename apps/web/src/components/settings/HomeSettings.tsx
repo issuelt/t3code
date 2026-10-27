@@ -28,7 +28,7 @@ import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { getTriggerDisplayModelLabel } from "../chat/providerIconUtils";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import {
@@ -191,7 +191,7 @@ function HomeOnRows(props: {
     modelSelection === null
       ? null
       : model
-        ? getTriggerDisplayModelLabel(model)
+        ? getTriggerDisplayModelName(model, modelEntry?.driverKind)
         : modelSelection.model;
 
   const runStartFresh = async () => {

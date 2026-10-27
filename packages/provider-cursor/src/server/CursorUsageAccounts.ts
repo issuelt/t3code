@@ -72,11 +72,7 @@ const make = Effect.gen(function* () {
   let activeCredentialKey: string | undefined;
   let preparationGeneration = 0;
   let cacheDirty = false;
-  /**
-   * The last failed refresh per credential, standing for a TTL so a
-   * client refetching a broken login does not refetch Cursor each time. A
-   * `null` error means there is no login: no source to report.
-   */
+  /** Per-credential failures share the cache TTL to prevent repeated requests; null means no login. */
   const failures = new Map<string, { readonly atMs: number; readonly error: string | null }>();
   /** The refresh in flight per credential, which every read joins. */
   const refreshes = new Map<string, Deferred.Deferred<void>>();
@@ -91,9 +87,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // Serialized so an older snapshot never lands after a newer one. The dirty
-  // flag is cleared before encoding, so a change while the write is in flight
-  // marks it dirty again; a failed write restores it so the next persist retries.
+  // Serialize snapshots; clear dirty before encoding and restore it on failure so changes retry.
   const persistLock = yield* Semaphore.make(1);
   const persist = Effect.gen(function* () {
     if (!cacheDirty) return;
@@ -177,8 +171,7 @@ const make = Effect.gen(function* () {
     credentialKey: string,
     retentionStartMs: number,
   ) =>
-    // Enrollment and fork are atomic, so an interrupted caller cannot leave a
-    // registered refresh that nothing will finish.
+    // Enroll and fork atomically so interruption cannot strand a registered refresh.
     Effect.uninterruptible(
       Effect.gen(function* () {
         const current = refreshes.get(credentialKey);
@@ -248,8 +241,7 @@ const make = Effect.gen(function* () {
           : { files: null, message: failureMessage ?? CURSOR_ACCOUNT_READ_ERROR }),
       } satisfies ProviderUsageScan;
     }
-    // The same account includes CLI and desktop history from every machine.
-    // A stable remote fingerprint prevents connected environments counting it twice.
+    // Account history spans machines; a stable fingerprint prevents duplicate environment counts.
     const source = `cursor-account:${cache.accountKey}`;
     return {
       dir: source,

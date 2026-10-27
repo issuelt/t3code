@@ -33,6 +33,7 @@ export function UsageWidgetPreview(props: {
   const [expanded, setExpanded] = useState(true);
   const [currentTime, setCurrentTime] = useState(Date.now);
   const focused = useIsFocused();
+  // oxlint-disable-next-line t3code/react-effect-budget -- a ticking clock while the preview is visible
   useEffect(() => {
     if (!focused || !expanded) return;
     const initial = setTimeout(() => setCurrentTime(Date.now()), 0);

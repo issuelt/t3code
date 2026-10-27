@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { Keyboard, View } from "react-native";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
@@ -25,29 +25,23 @@ import {
   SHOWCASE_PENDING_TASK_DEFINITIONS,
 } from "./showcasePendingTasks";
 import { buildShowcaseAgentActivity } from "./showcaseAgentActivity";
+import {
+  isShowcaseThemeApplied,
+  SHOWCASE_THREAD_ID,
+  showcaseReadinessKey,
+  showcaseSceneOnScreen,
+} from "./showcaseCaptureModel";
 import { retryShowcaseOperation } from "./showcaseRetry";
 import {
   clearShowcaseRenderSignal,
-  getShowcaseRenderSignal,
-  isShowcaseNativeContentReady,
+  getShowcaseRenderSnapshot,
   subscribeToShowcaseRenderSignal,
 } from "./showcaseRenderSignal";
 import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
+import { openSettings } from "../settings/settings-navigation";
+import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
-const SHOWCASE_THREAD_ID = "remote-command-center";
-
-function sceneFromPathname(pathname: string): ShowcaseScene | null {
-  const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
-  if (routePath === "/settings" || routePath.endsWith("/settings/environments")) {
-    return "environments";
-  }
-  if (routePath.endsWith("/terminal")) return "terminal";
-  if (routePath.endsWith("/review")) return "review";
-  if (routePath.startsWith("/threads/")) return "thread";
-  if (routePath === "/") return "threads";
-  return null;
-}
 
 export function ShowcaseCaptureCoordinator(props: { readonly pathname: string }) {
   if (!SHOWCASE_ENABLED) return null;
@@ -89,16 +83,12 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const [orientationSettled, setOrientationSettled] = useState(false);
   const [agentActivityStaged, setAgentActivityStaged] = useState(false);
   const requestedSceneRef = useRef<ShowcaseScene | null>(null);
-  // Staging reads the latest entities without restarting on every shell
-  // update, which would re-enter a permission prompt that is still open.
-  const entitiesRef = useRef({ threads, projects });
-  useEffect(() => {
-    entitiesRef.current = { threads, projects };
-  }, [projects, threads]);
-  const renderSignal = useSyncExternalStore(
+  // Read current entities without restarting on shell updates and re-entering open permission prompts.
+  const readFixtureEntities = useEffectEvent(() => ({ threads, projects }));
+  const { signal: renderSignal, reports: renderReports } = useSyncExternalStore(
     subscribeToShowcaseRenderSignal,
-    getShowcaseRenderSignal,
-    getShowcaseRenderSignal,
+    getShowcaseRenderSnapshot,
+    getShowcaseRenderSnapshot,
   );
 
   useEffect(() => {
@@ -120,12 +110,12 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     if (orientationSettled) return;
     const orientation = getNativeShowcaseOrientation();
     if (orientation === null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- Capture readiness follows the native orientation change.
       setOrientationSettled(true);
       return;
     }
 
     let cancelled = false;
-    let lastOutcome: string | null = null;
     void retryShowcaseOperation(async () => applyNativeShowcaseOrientation(orientation), {
       isCancelled: () => cancelled,
     }).then((applied) => {
@@ -141,8 +131,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       const value = getNativeShowcaseScene();
       if (!value || requestedSceneRef.current === value) return;
       requestedSceneRef.current = value;
-      // A native draw belongs only to the scene request that produced it. In
-      // particular, revisiting review must wait for its newly mounted surface.
+      // Draws belong to their scene request; revisiting review must wait for its new surface.
       clearShowcaseRenderSignal();
       setAgentActivityStaged(false);
       setRequestedScene(value);
@@ -152,10 +141,11 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     return () => clearInterval(interval);
   }, []);
 
-  const themeApplied =
-    requestedTheme === null
-      ? themeRequestSettled
-      : themeIds.light === requestedTheme && themeIds.dark === requestedTheme;
+  const themeApplied = isShowcaseThemeApplied({
+    launchRequestRead: themeRequestSettled,
+    requestedTheme,
+    themeIds,
+  });
 
   useEffect(() => {
     if (requestedTheme === null || themeApplied || !appearancePreferencesReady) {
@@ -184,9 +174,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     };
   }, [connectPairingUrl, pairingUrls]);
 
-  const routeScene = sceneFromPathname(props.pathname);
-  const scene =
-    requestedScene === "agent-activity" && routeScene === "threads" ? "agent-activity" : routeScene;
+  const scene = showcaseSceneOnScreen(requestedScene, props.pathname);
   const hasServerFixture =
     workspace.state.hasReadyEnvironment &&
     workspace.environments.length >= 3 &&
@@ -243,12 +231,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       return;
     }
     if (requestedScene === "environments") {
-      navigation.dispatch(
-        CommonActions.navigate("SettingsSheet", {
-          screen: "SettingsContent",
-          params: { screen: "SettingsEnvironments" },
-        }),
-      );
+      openSettings(navigation, "SettingsEnvironments");
     } else if (requestedScene === "terminal") {
       navigation.dispatch(
         CommonActions.navigate("ThreadTerminal", { ...params, terminalId: "term-1" }),
@@ -256,7 +239,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     } else if (requestedScene === "review") {
       navigation.dispatch(CommonActions.navigate("ThreadReview", params));
     } else {
-      navigation.dispatch(CommonActions.navigate("Thread", params));
+      navigation.dispatch(selectWorkspaceDetail({ name: "Thread", params }));
     }
   }, [hasFixture, navigation, requestedScene, scene, showcaseThread]);
 
@@ -269,7 +252,7 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     void retryShowcaseOperation(
       async () => {
         const now = Date.now();
-        const { threads: latestThreads, projects: latestProjects } = entitiesRef.current;
+        const { threads: latestThreads, projects: latestProjects } = readFixtureEntities();
         const activity = buildShowcaseAgentActivity(latestThreads, latestProjects, now);
         const outcome =
           activity === null
@@ -290,20 +273,22 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     };
   }, [agentActivityStaged, hasFixture, scene]);
 
+  const readinessKey = showcaseReadinessKey({
+    scene,
+    requestedScene,
+    hasFixture,
+    orientationSettled,
+    themeApplied,
+    agentActivityStaged,
+    themeId,
+    renderSignal,
+    renderReports,
+  });
+  // Losing readiness hides the marker. A redraw or theme change while ready keeps it and re-settles.
+  if (readinessKey === null && readyScene !== null) setReadyScene(null);
+
   useEffect(() => {
-    if (
-      scene === null ||
-      requestedScene === null ||
-      scene !== requestedScene ||
-      !hasFixture ||
-      !orientationSettled ||
-      !themeApplied ||
-      (scene === "agent-activity" && !agentActivityStaged) ||
-      !isShowcaseNativeContentReady({ scene, themeId, renderSignal })
-    ) {
-      setReadyScene(null);
-      return;
-    }
+    if (readinessKey === null || scene === null) return;
     if (scene === "terminal") Keyboard.dismiss();
 
     let renderFrame: number | null = null;
@@ -321,19 +306,9 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       if (renderFrame !== null) cancelAnimationFrame(renderFrame);
       if (readyFrame !== null) cancelAnimationFrame(readyFrame);
     };
-  }, [
-    agentActivityStaged,
-    hasFixture,
-    orientationSettled,
-    renderSignal,
-    requestedScene,
-    scene,
-    themeApplied,
-    themeId,
-  ]);
+  }, [readinessKey, scene]);
 
   if (readyScene === null) return null;
-
   return (
     <View
       pointerEvents="none"

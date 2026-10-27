@@ -44,13 +44,34 @@ vi.mock("react-native", () => ({
     },
   },
 }));
+// A phone: one page at a time, so contextual opens push instead of selecting a detail.
+vi.mock("../layout/adaptive-workspace-context", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ layout: { usesSplitView: false } }),
+}));
+vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+  useSelectWorkspaceDetail: () => () => {
+    throw new Error("selected a detail instead of pushing");
+  },
+}));
 vi.mock("../workspace/WorkspaceTabsContext", () => ({
   useWorkspaceTabs: () => ({ dispatch: selectTab }),
 }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: () => ({ projectId: "project-a" }),
   useEnvironmentServerConfig: () => null,
+  useProjects: () => [],
 }));
+vi.mock("../../lib/pullRequestNavigation", () => ({
+  nativePullRequestDestination: () => ({
+    environmentId: "environment-a",
+    projectId: "project-a",
+    repository: "owner/repository",
+    number: 42,
+    host: "github.com",
+  }),
+}));
+vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { get: () => new Map() } }));
+vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/pull-requests", () => ({ composerPullRequests: {} }));

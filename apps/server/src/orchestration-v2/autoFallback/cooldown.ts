@@ -1,13 +1,8 @@
 // @effect-diagnostics globalDate:off - This pure boundary helper stores cooldown deadlines as ISO timestamps.
 /**
- * Per-instance auto-fallback cooldown bookkeeping (pure).
- *
- * A provider instance that just hit a usage/rate limit is flagged for a
- * cooldown window so the candidate selector skips it — both within the failing
- * turn (giving "each instance at most once per turn") and briefly across turns.
- * The state is in-memory only and never persisted.
- *
- * @module orchestration-v2/autoFallback/cooldown
+ * Pure cooldown bookkeeping: an instance that hit a usage/rate limit is
+ * skipped within the failing turn (each instance at most once per turn) and
+ * briefly across turns. In-memory only.
  */
 
 import type { ProviderLimitKind } from "./limitClassifier.ts";

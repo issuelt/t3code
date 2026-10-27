@@ -39,6 +39,7 @@ function handler(
         _tag: "loaded",
       } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult);
     },
+    reconcilePendingWork: () => Effect.void,
   };
 }
 

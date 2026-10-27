@@ -39,9 +39,7 @@ function projectFailure(error: Project.ProjectServiceError) {
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
 
-/**
- * Without this check a launch could point an agent at any directory on the machine.
- */
+/** Require project worktrees so launches cannot target arbitrary host directories. */
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
   worktreePath: string,
@@ -66,11 +64,9 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 /**
- * Threads Home launches are watched for it, wherever they run. The watch is
- * saved before the launch, and a launch whose watch cannot be saved does not
- * run. A failed launch keeps its watch: a relay timeout does not prove the
- * thread was not created, and a watch whose thread never appears ends at the
- * next start.
+ * Home watches the threads it launches. The watch is saved first; if it cannot be, the launch
+ * does not run. A failed launch keeps its watch, since a relay timeout does not prove the thread
+ * was not created; a watch whose thread never appears ends at the next start.
  */
 const watchLaunched = (homeThreadId: ThreadId, environmentId: EnvironmentId, threadId: ThreadId) =>
   HomeService.HomeService.pipe(
@@ -193,8 +189,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             });
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
-        // A launch is accepted before its worktree is provisioned, so a base
-        // ref that cannot resolve is refused while the agent can still act on it.
+        // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
         if (strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
@@ -326,8 +321,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
       if (workspaceRoot === undefined) {
-        // Project creation records no model default (only an update does), so
-        // reject what this mode would otherwise drop silently.
+        // Only updates record model defaults; reject defaults that creation would silently drop.
         if (
           input.scripts !== undefined ||
           input.createWorkspaceRootIfMissing !== undefined ||

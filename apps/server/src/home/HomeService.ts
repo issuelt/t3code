@@ -1,13 +1,7 @@
 /**
- * HomeService - owns Home, the fleet-wide agent thread, on a desktop-hosted
- * server.
- *
- * Home's state (its thread and what it watches) lives in server settings, so
- * every client sees it with the settings stream it already has. The grant is
- * "this thread is `home.threadId`", read on every call: turning Home off or
- * starting fresh takes the old thread's reach away at once.
- *
- * @module HomeService
+ * Owns Home, the fleet-wide agent thread. Its state lives in server settings. The grant is
+ * "this thread is `home.threadId`", read on every call, so turning Home off or starting fresh
+ * takes the old thread's reach away at once.
  */
 import {
   CommandId,
@@ -176,13 +170,9 @@ const make = Effect.gen(function* () {
 
   const withLock = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
 
-  /**
-   * Stops a former Home once its grant is gone, so it does not keep working
-   * next to the new Home. Best effort: the grant already moved. Holding the
-   * queue commits under the orchestrator's thread lock, which also starts
-   * queued runs, so after it no queued turn can start; a turn that started
-   * before it is the active run, which is then interrupted.
-   */
+  // Best effort: the grant already moved. Holding the queue commits under the thread lock that
+  // starts queued runs, so after it no queued turn can start; one that started before it is
+  // the active run, which is then interrupted.
   const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(
     function* (threadId: ThreadId) {
       if ((yield* liveShell(threadId)) === null) return;
@@ -241,7 +231,7 @@ const make = Effect.gen(function* () {
   return HomeService.of({
     available,
 
-    enable: (input) =>
+    enable: Effect.fn("HomeService.enable")((input) =>
       withLock(
         Effect.gen(function* () {
           yield* requireAvailable;
@@ -254,6 +244,7 @@ const make = Effect.gen(function* () {
           return { threadId };
         }),
       ),
+    ),
 
     disable: withLock(
       Effect.gen(function* () {
@@ -288,15 +279,16 @@ const make = Effect.gen(function* () {
       }),
     ),
 
-    isHome: (threadId) =>
+    isHome: Effect.fn("HomeService.isHome")((threadId) =>
       available
         ? readHome.pipe(
             Effect.map((home) => home.threadId === threadId),
             Effect.orElseSucceed(() => false),
           )
         : Effect.succeed(false),
+    ),
 
-    updateWatches: (homeThreadId, update) =>
+    updateWatches: Effect.fn("HomeService.updateWatches")((homeThreadId, update) =>
       withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
@@ -305,10 +297,11 @@ const make = Effect.gen(function* () {
           return yield* writeHome(update(home));
         }),
       ),
+    ),
 
     // Under the lock, so turning Home off or starting fresh cannot slip in
     // between choosing the Home thread and waking it.
-    report: ({ events }) =>
+    report: Effect.fn("HomeService.report")(({ events }) =>
       withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
@@ -334,6 +327,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.ignore);
         }),
       ),
+    ),
   });
 });
 

@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -103,12 +104,10 @@ it.effect("makes Home name a project and watches the thread before launching it"
       }),
       Layer.mock(Project.ProjectService)({
         getById: (projectId) =>
-          Effect.succeed(
-            Option.some({
-              id: projectId,
-              workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
-            } as never),
-          ),
+          Effect.succeedSome({
+            id: projectId,
+            workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
+          } as never),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -117,6 +116,7 @@ it.effect("makes Home name a project and watches the thread before launching it"
         root: "/data/home",
         contains: (candidate) => Effect.succeed(candidate.startsWith("/data/home")),
       }),
+      Layer.mock(DocumentText.DocumentText)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-home-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -206,8 +206,8 @@ const clientLaunchHarness = (input: {
             thread: {
               id: launch.threadId,
               projectId: launch.projectId,
-              modelSelection: launch.modelSelection,
               title: launch.title,
+              modelSelection: launch.modelSelection,
             },
             runs: [],
           },
@@ -228,7 +228,7 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-    NodeServices.layer,
+    DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),
@@ -285,6 +285,7 @@ it.effect(
       expect(belowCeiling.result).toMatchObject({
         projectId: belowCeiling.projectId,
         modelSelection: belowCeiling.modelSelection,
+        link: `[Fix](t3-thread://v1/${belowCeiling.launched[0]?.threadId}?environmentId=environment)`,
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();

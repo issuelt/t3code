@@ -1,15 +1,7 @@
 /**
- * Provider-login contracts.
- *
- * An additive, provider-scoped login session. Structured provider APIs emit a
- * challenge directly; interactive CLI-only providers stream a PTY whose
- * environment is isolated to the instance's home.
- *
- * The methods are keyed by `ProviderInstanceId` (one active login session per
- * instance). They are purely additive: old clients never call them, so adding
- * them cannot break existing transports.
- *
- * @module providerLogin
+ * One login session per `ProviderInstanceId`. Structured provider APIs emit a
+ * challenge directly; CLI-only providers stream a PTY isolated to the
+ * instance's home.
  */
 import * as Schema from "effect/Schema";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";

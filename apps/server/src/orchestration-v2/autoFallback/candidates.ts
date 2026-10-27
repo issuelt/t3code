@@ -1,13 +1,7 @@
 /**
- * Fallback candidate selection (pure).
- *
- * Given the failed instance and the configured instance map (in settings
- * order), pick the next same-driver instance that can continue the turn:
- * enabled, health-check authenticated, opted into fallback, not itself inside
- * a limit cooldown, not already attempted this turn, and — critically —
- * resolving the IDENTICAL model the failed turn was running.
- *
- * @module orchestration-v2/autoFallback/candidates
+ * Picks the next same-driver instance, in settings order, that is enabled,
+ * authenticated, opted into fallback, not cooling down, not yet tried this
+ * turn, and resolves the IDENTICAL model the failed turn was running.
  */
 
 export interface FallbackCandidateInstance {

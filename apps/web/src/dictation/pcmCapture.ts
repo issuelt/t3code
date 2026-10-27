@@ -26,13 +26,9 @@ export type MicrophoneAccess =
   | { readonly granted: false; readonly message: string };
 
 /**
- * One microphone capture producing 16 kHz mono int16 PCM frames.
- *
- * `open` asks for the microphone and must be called synchronously from the
- * click or key press that started dictation, since it creates the
- * AudioContext before its first await. `prepare` loads the worklet, `start`
- * delivers frames, `stop` flushes the last partial frame, and `release` frees
- * the microphone and the AudioContext. `release` is idempotent and safe at any
+ * One microphone capture producing 16 kHz mono int16 PCM frames. Call `open`
+ * synchronously from the starting click or key press: it creates the
+ * AudioContext before its first await. `release` is idempotent and safe at any
  * point; work it overtakes stops instead of reacquiring anything.
  */
 export class PcmCapture {

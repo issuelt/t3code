@@ -7,6 +7,7 @@ import {
   CircleAlertIcon,
   AlarmClockIcon,
   CircleCheckIcon,
+  UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -42,6 +43,12 @@ const SIDEBAR_TOP_STATUS: Record<
     icon: "input",
     Icon: MessageCircleQuestionIcon,
     className: "text-indigo-600 dark:text-indigo-300",
+  },
+  request: {
+    label: "Request",
+    icon: "request",
+    Icon: UserRoundIcon,
+    className: "text-guest-foreground",
   },
   limited: { label: "Limited", icon: "failed", Icon: CircleAlertIcon, className: "text-warning" },
   failed: { label: "Failed", icon: "failed", Icon: CircleAlertIcon, className: "text-error" },

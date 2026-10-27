@@ -46,29 +46,18 @@ export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnviron
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
-/**
- * The driver-specific config payload is left as `Schema.Unknown`; each driver
- * registers its own decoder with the runtime registry, and envelopes for
- * unknown drivers are preserved verbatim so they round-trip across version
- * changes without data loss.
- */
+/** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
-  // Whether this instance may be picked as an auto-fallback target when
-  // another same-driver account hits a usage limit. Absent ⇒ opted in for
-  // non-primary instances (the common case); read as
-  // `participateInFallback ?? true`. The global master switch is
-  // `ServerSettings.autoFallbackBetweenAccounts`.
+  // May be an auto-fallback target when a same-driver account hits a usage limit. Read as
+  // `participateInFallback ?? true`; `ServerSettings.autoFallbackBetweenAccounts` is the master switch.
   participateInFallback: Schema.optionalKey(Schema.Boolean),
-  // Whether this non-primary instance inherits the primary same-driver
-  // instance's `customModels` at model-resolution time, so custom-model pools
-  // stay equivalent across accounts without duplicate maintenance. Absent ⇒
-  // true for non-primary instances; read via
-  // `mirrorPrimaryCustomModels ?? !isPrimary`.
+  // Inherits the primary same-driver instance's `customModels` at resolution time.
+  // Read as `mirrorPrimaryCustomModels ?? !isPrimary`.
   mirrorPrimaryCustomModels: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
@@ -95,11 +84,6 @@ export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
 export const ProviderInstanceConfigMap = Schema.Record(ProviderInstanceId, ProviderInstanceConfig);
 export type ProviderInstanceConfigMap = typeof ProviderInstanceConfigMap.Type;
 
-/**
- * The legacy single-instance-per-driver world used the driver kind itself as
- * the instance id; preserving that mapping keeps existing persisted threads,
- * bindings, and cache files routable across the migration without rewriting
- * their stored selection payloads.
- */
+/** Driver-kind ids keep stored selections routable without migration. */
 export const defaultInstanceIdForDriver = (driver: ProviderDriverKind): ProviderInstanceId =>
   ProviderInstanceId.make(driver);
