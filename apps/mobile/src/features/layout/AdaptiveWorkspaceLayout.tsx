@@ -1,6 +1,6 @@
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
-import { createDeferredNavigation } from "./deferred-navigation";
+import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
 import type {
   EnvironmentProject,
@@ -10,16 +10,7 @@ import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3too
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
-import {
-  use,
-  useDeferredValue,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { use, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
@@ -45,6 +36,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
+import { useThreadCwd } from "../../state/use-selected-thread-worktree";
 import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -95,9 +87,13 @@ import {
   currentWorkspaceSelections,
   workspaceSelectionCheck,
 } from "../workspace/workspace-selection-store";
-import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
+import {
+  workspaceTabColumns,
+  workspaceTabNavigationState,
+} from "../workspace/workspace-tab-navigation";
 import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
+import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -124,38 +120,11 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     );
   })();
 
-  const focusedRef = useRef(false);
-  const deactivateRef = useRef<(() => void) | null>(null);
-
-  const syncRegistration = useEffectEvent(() => {
-    if (!focusedRef.current || wrappedRender === undefined) {
-      deactivateRef.current?.();
-      return;
-    }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
-  });
-
-  useFocusEffect(() => {
-    focusedRef.current = true;
-    syncRegistration();
-    return () => {
-      focusedRef.current = false;
-      syncRegistration();
-    };
-  });
-
-  useEffect(() => {
-    if (focusedRef.current) {
-      syncRegistration();
-    }
-  }, [wrappedRender]);
-
-  useEffect(
-    () => () => {
-      deactivateRef.current?.();
-      deactivateRef.current = null;
-    },
-    [],
+  // useFocusEffect re-runs when the renderer changes while focused, so the
+  // pane always shows this render's content, and its cleanup deactivates on
+  // blur and unmount.
+  useFocusEffect(() =>
+    wrappedRender === undefined ? undefined : registerWorkspaceInspector(wrappedRender),
   );
 }
 
@@ -163,6 +132,8 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
+  readonly workspaceRouteName: string | undefined;
+  readonly workspaceRouteKeys: ReadonlyArray<string>;
   readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -189,6 +160,8 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
+    readonly workspaceRouteName: string | undefined;
+    readonly workspaceRouteKeys: ReadonlyArray<string>;
     readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
@@ -324,6 +297,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
+        nativeWorkspace,
         primarySidebarPreferredVisible: showPrimarySidebar,
         auxiliaryPanePreferredVisible,
         auxiliaryPaneRole,
@@ -334,6 +308,7 @@ function AdaptiveWorkspaceLayoutContent(
       auxiliaryPaneRole,
       auxiliaryPanePreferredWidth,
       layout,
+      nativeWorkspace,
       showPrimarySidebar,
       width,
     ],
@@ -341,16 +316,52 @@ function AdaptiveWorkspaceLayoutContent(
   const activeThread = parseActiveThreadPath(pathname);
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
-  const selectedThreadKey = (() => {
+  const selectedThreadRef = (() => {
     if (environmentId === null || threadId === null) {
       return null;
     }
     try {
-      return scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+      return {
+        environmentId: EnvironmentId.make(environmentId),
+        threadId: ThreadId.make(threadId),
+      };
     } catch {
       return null;
     }
   })();
+  const selectedThreadKey =
+    selectedThreadRef === null
+      ? null
+      : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
+  const isFilesRoute = props.workspaceRouteName === "ThreadFiles";
+  // Same resolution the Files screen uses: without a cwd it shows "Files unavailable" and
+  // registers no inspector, so revealing would only hide the sidebar beside that screen.
+  const filesCwd = useThreadCwd(isFilesRoute && fileInspector.supported ? selectedThreadRef : null);
+  // Opening a review or the files route reveals its inspector once per route and thread.
+  // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
+  const revealsInspector =
+    props.workspaceRouteName === "ThreadReview" || (isFilesRoute && filesCwd !== null);
+  const [revealedInspectors, setRevealedInspectors] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  if (
+    revealsInspector &&
+    props.workspaceRouteKey !== undefined &&
+    selectedThreadKey !== null &&
+    revealedInspectors.get(props.workspaceRouteKey) !== selectedThreadKey
+  ) {
+    const next = new Map<string, string>();
+    for (const routeKey of props.workspaceRouteKeys) {
+      const revealedThreadKey = revealedInspectors.get(routeKey);
+      if (revealedThreadKey !== undefined) {
+        next.set(routeKey, revealedThreadKey);
+      }
+    }
+    next.set(props.workspaceRouteKey, selectedThreadKey);
+    setRevealedInspectors(next);
+    setFocusedAuxiliaryPaneRole("inspector");
+    setFileInspectorPreferredVisible(true);
+  }
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
     readonly active: boolean;
@@ -475,7 +486,7 @@ function AdaptiveWorkspaceLayoutContent(
       tab,
       currentWorkspaceSelections(),
       {
-        columns: Platform.OS === "ios" && (options?.columns ?? layout.usesSplitView),
+        columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
         check: workspaceSelectionCheck,
         overlays,
       },
@@ -488,10 +499,9 @@ function AdaptiveWorkspaceLayoutContent(
   };
   const handleOpenSettings = () => openWorkspaceTab("settings");
 
-  const deferredThreadSelection = useMemo(() => createDeferredNavigation(), []);
   /** The one way to show a page in the detail column; see `selectWorkspaceDetail`. */
   function handleSelectDetail(detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) {
-    deferredThreadSelection.run(() => {
+    threadSelectionDeferral.run(() => {
       if (Platform.OS === "android") Keyboard.dismiss();
       setFileInspectorPreferredVisible(false);
       if (layout.primarySidebarOverlaysContent) setPrimarySidebarVisible(false);
@@ -521,24 +531,27 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const first = (value: string | string[] | undefined) =>
       Array.isArray(value) ? value[0] : value;
-    const thread = appAtomRegistry
-      .get(environmentThreadShells.navigationThreadShellsAtom)
-      .find(
-        (candidate) =>
-          candidate.environmentId === first(params?.environmentId) &&
-          candidate.id === first(params?.threadId),
-      );
-    const draft = params?.draft;
-    const draftEnvironmentId = first(draft?.environmentId);
-    const draftProjectId = first(draft?.projectId);
-    const currentProject = thread
-      ? { environmentId: thread.environmentId, id: thread.projectId }
-      : projects.find(
-          (project) =>
-            project.environmentId === draftEnvironmentId && project.id === draftProjectId,
-        );
+    const environmentId = first(params?.environmentId);
+    const threadId = first(params?.threadId);
+    // The full index, not the sidebar list: subagent and archived threads are current threads too.
+    const projectId =
+      environmentId && threadId
+        ? appAtomRegistry
+            .get(
+              environmentThreadShells.environmentThreadIndexAtom(EnvironmentId.make(environmentId)),
+            )
+            .get(ThreadId.make(threadId))?.projectId
+        : undefined;
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
     handleSelectThreadRoute(
-      newTaskDestination(layout.usesSplitView, projects, currentProject, uuidv4()),
+      newTaskDestination({
+        projects,
+        requestId: uuidv4(),
+        useLastProject: saved?.useLastProjectForNewThreads,
+        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+        lastProject: saved?.lastThreadProject,
+      }),
     );
   };
 
@@ -743,13 +756,30 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
+  // Rotating flips the overlay; until the new size reaches JS, predict the reset above.
+  const sidebarOverRotates =
+    nativeWorkspace && nativeMetrics?.hasHinge === true && layout.usesSplitView;
+  // The current orientation's panes already account for an inspector that needs the sidebar's room.
+  const sidebarInLandscape = baseLayout.primarySidebarOverlaysContent
+    ? primarySidebarPinned || primarySidebarPreferredVisible
+    : panes.primarySidebarVisible;
+  const sidebarInPortrait =
+    primarySidebarPinned ||
+    (baseLayout.primarySidebarOverlaysContent
+      ? overlaySidebar.visible
+      : isWorkspaceListPath(pathname));
+  const sidebarByOrientation = useMemo(
+    () =>
+      sidebarOverRotates ? { landscape: sidebarInLandscape, portrait: sidebarInPortrait } : null,
+    [sidebarInLandscape, sidebarInPortrait, sidebarOverRotates],
+  );
+
   const contextValue = {
     layout,
     panes,
     fileInspector,
     primarySidebarSearchQuery,
     startNewTask: handleStartNewTask,
-    deferThreadSelectionUntil: deferredThreadSelection.waitFor,
     selectDetail: handleSelectDetail,
     activateAuxiliaryPaneRole,
     registerWorkspaceInspector,
@@ -762,6 +792,7 @@ function AdaptiveWorkspaceLayoutContent(
     setAuxiliaryPaneWidth,
     composerKeyboardActive,
     setComposerEditing,
+    sidebarByOrientation,
   };
 
   if (nativeWorkspace) {
@@ -885,7 +916,9 @@ function AdaptiveWorkspaceLayoutContent(
                         compactAndroidSettings ? { ...safeAreaInsets, bottom: 0 } : safeAreaInsets
                       }
                     >
-                      <View className="flex-1">{props.children}</View>
+                      <View className="flex-1">
+                        <SettingsWorkspaceLayout>{props.children}</SettingsWorkspaceLayout>
+                      </View>
                     </SafeAreaInsetsContext>
                     {compactAndroidSettings ? (
                       <AndroidWorkspaceNavigation onNewThread={handleStartNewTask} />

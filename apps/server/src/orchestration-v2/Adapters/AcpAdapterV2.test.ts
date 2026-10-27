@@ -13,6 +13,7 @@ import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../../provider/DocumentText.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -100,6 +101,7 @@ const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factor
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
 const layerTest = Layer.mergeAll(
+  DocumentText.layer.pipe(Layer.provide(NodeServices.layer)),
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
@@ -393,7 +395,7 @@ function assertReinjectedInstructions(
 ) {
   const text = blocks[0]?.text ?? "";
   assert.include(text, "T3 Code interaction mode: Default");
-  assert.include(text, "T3 Code collaborative browser");
+  assert.include(text, "## T3 Code browser");
   assert.include(text, "T3 Code orchestration");
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
 }
@@ -980,7 +982,7 @@ describe("AcpAdapterV2", () => {
       const firstDefault = yield* runTurn(2, defaultPolicy, "First default request.");
       assert.equal(firstDefault.textBlockCount, 2);
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
-      assert.include(firstDefault.prompt, "T3 Code collaborative browser");
+      assert.include(firstDefault.prompt, "## T3 Code browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
       assert.notInclude(
         firstDefault.methods,
@@ -2052,6 +2054,88 @@ describe("AcpAdapterV2", () => {
       );
       assert.isFalse(
         items.some((item) => item.threadId === threadId && item.type === "dynamic_tool"),
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("advertises ACP session notices and shows them as system notices", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-notice");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_EMIT_NOTICE: "1" },
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-notice");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-notice"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+      );
+      const items = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+
+      const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
+        (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
+      );
+      assert.deepEqual(
+        initialize === undefined
+          ? undefined
+          : Reflect.get(
+              Object(rawProtocolRequestParam(initialize, "clientCapabilities")),
+              "session",
+            ),
+        { notices: {} },
+      );
+      const title =
+        "skill discovery warning: candidate was skipped because its metadata is invalid";
+      assert.deepEqual(
+        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
+        [title],
+      );
+      const replies = new Map(
+        items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
+      );
+      assert.deepEqual(
+        [...replies.values()],
+        ["before the notice, after the notice"],
+        "a notice neither joins the reply nor splits it",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
@@ -4167,6 +4251,7 @@ describe("AcpAdapterV2", () => {
       const responseWritten = yield* Deferred.make<void>();
       const releaseResponseAcknowledgement = yield* Deferred.make<void>();
       const responseLifecycle: Array<string> = [];
+      const responseFailed = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test-normal-close-held-response");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -4189,6 +4274,7 @@ describe("AcpAdapterV2", () => {
           onNativeResponseLifecycle: (event) =>
             Effect.sync(() => {
               responseLifecycle.push(event.type);
+              if (event.type === "failed") Deferred.doneUnsafe(responseFailed, Effect.void);
             }),
         },
       });
@@ -4242,9 +4328,7 @@ describe("AcpAdapterV2", () => {
       yield* Deferred.await(responseWritten);
 
       const closeFiber = yield* Scope.close(sessionScope, Exit.void).pipe(Effect.forkScoped);
-      while (!responseLifecycle.includes("failed")) {
-        yield* Effect.yieldNow;
-      }
+      yield* Deferred.await(responseFailed);
       const responseExit = yield* Fiber.join(responseFiber);
       if (Exit.isSuccess(responseExit)) {
         assert.fail("normal close must fail a response whose transport acknowledgement is held");
@@ -6232,6 +6316,7 @@ describe("AcpAdapterV2", () => {
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const promptGates: Array<Deferred.Deferred<EffectAcpSchema.PromptResponse, never>> = [];
+        const promptStarted = yield* Queue.unbounded<void>();
         const capturedMutation: {
           current:
             | ((mutation: {
@@ -6302,6 +6387,7 @@ describe("AcpAdapterV2", () => {
                   Effect.gen(function* () {
                     const gate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
                     promptGates.push(gate);
+                    yield* Queue.offer(promptStarted, undefined);
                     return yield* Deferred.await(gate);
                   }),
               }),
@@ -6352,9 +6438,7 @@ describe("AcpAdapterV2", () => {
             makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
           )
           .pipe(Effect.forkScoped);
-        while (promptGates.length < 1) {
-          yield* Effect.yieldNow;
-        }
+        yield* Queue.take(promptStarted);
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
         const applyMutation = capturedMutation.current;
         if (applyMutation === null) {
@@ -6487,9 +6571,7 @@ describe("AcpAdapterV2", () => {
             }),
           )
           .pipe(Effect.forkScoped);
-        while (promptGates.length < 2) {
-          yield* Effect.yieldNow;
-        }
+        yield* Queue.take(promptStarted);
         if (sessionUpdateHandler === undefined || capturedMutation.current === null) {
           return yield* Effect.die("extensions and session handler must be wired for turn 2");
         }

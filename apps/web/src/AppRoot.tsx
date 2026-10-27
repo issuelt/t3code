@@ -5,7 +5,6 @@ import { subscribeComposerDraftModelReconciliation } from "./composerDraftStore"
 import { environmentThreadShells } from "./state/threads";
 import { environmentShell } from "./state/shell";
 
-import { BrowserProfileReporter } from "./browser/BrowserProfileReporter";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { HomeFleetHost } from "./components/home/HomeFleetHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
@@ -29,7 +28,6 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
       <RouterProvider router={router} />
       <HomeFleetHost />
       <ElectronBrowserHost />
-      <BrowserProfileReporter />
       <QuitHoldOverlay />
     </AppAtomRegistryProvider>
   );

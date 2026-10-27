@@ -54,28 +54,30 @@ const useDismissedTaskGraphs = create<{
 const openExternal = (url: string) => void readLocalApi()?.shell.openExternal(url);
 
 /**
- * The task graphs a thread proposed, docked above its composer, each drawn as
+ * The task graphs a thread proposed, at the end of its timeline, each drawn as
  * a left-to-right diagram. Any graph collapses to a summary line, and finished
  * ones can be dismissed. Fed by the live subscription, so status needs no refresh.
  */
-export function TaskGraphCards(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-}) {
+export function useVisibleTaskGraphs(environmentId: EnvironmentId, threadId: ThreadId | null) {
   const graphsQuery = useEnvironmentQuery(
-    serverEnvironment.taskGraphsLive({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    }),
+    threadId === null
+      ? null
+      : serverEnvironment.taskGraphsLive({ environmentId, input: { threadId } }),
   );
   const dismissed = useDismissedTaskGraphs((state) => state.ids);
-  const dismiss = useDismissedTaskGraphs((state) => state.dismiss);
   // A load error renders nothing: servers from before task graphs reject the
   // subscription, and every thread on them would otherwise carry an error row.
-  const graphs = (graphsQuery.data?.graphs ?? EMPTY_GRAPHS).filter(
+  return (graphsQuery.data?.graphs ?? EMPTY_GRAPHS).filter(
     (graph) => !(dismissed.has(graph.id) && isTaskGraphFinished(graph.status)),
   );
-  return graphs.map((graph) => (
+}
+
+export function TaskGraphCards(props: {
+  readonly environmentId: EnvironmentId;
+  readonly graphs: ReadonlyArray<TaskGraph>;
+}) {
+  const dismiss = useDismissedTaskGraphs((state) => state.dismiss);
+  return props.graphs.map((graph) => (
     <TaskGraphCard
       key={graph.id}
       environmentId={props.environmentId}
