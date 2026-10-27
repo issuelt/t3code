@@ -1,11 +1,8 @@
 /**
- * Home: one agent thread per desktop install that can act across every
- * project and environment the user has connected.
- *
- * The desktop's local server (the hub) runs Home and owns its state. Calls
- * that target another environment go through the desktop renderer, which
- * already holds a live connection to each one, and land on that
- * environment's `fleet.invoke`. See docs/internals/home.md.
+ * Home: one agent thread per desktop install, run by its local server (the
+ * hub). Calls targeting another environment go through the desktop renderer's
+ * live connection and land on that environment's `fleet.invoke`. See
+ * docs/internals/home.md.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

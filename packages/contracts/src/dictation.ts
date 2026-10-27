@@ -1,11 +1,7 @@
 /**
- * Dictation - speech-to-text for the composer, run by an environment.
- *
- * Clients capture 16 kHz mono int16 PCM and stream it in chunks to the
- * environment they picked while the user speaks. The environment transcribes
- * with an opt-in local model (sherpa-onnx) and returns the text on finish.
- *
- * @module Dictation
+ * Composer speech-to-text run by an environment. Clients stream 16 kHz mono
+ * int16 PCM chunks while the user speaks; the environment transcribes with an
+ * opt-in local model (sherpa-onnx) and returns the text on finish.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

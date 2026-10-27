@@ -1137,6 +1137,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = useComposerFocusState();
   // Focusing the composer usually comes right before dictating; load the speech model early.
   const warmDictation = dictation.warm;
+  // oxlint-disable-next-line t3code/react-effect-budget -- many paths focus the composer; warming follows the focus state, not one handler
   useEffect(() => {
     if (isComposerFocused) warmDictation();
   }, [isComposerFocused, warmDictation]);

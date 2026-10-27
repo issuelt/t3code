@@ -1,22 +1,9 @@
 // @effect-diagnostics anyUnknownInErrorContext:off - Provider CLI and PTY adapters expose unknown external failures at this boundary.
 /**
- * ProviderLoginManager — ephemeral provider login sessions.
- *
- * Codex uses app-server's structured device-code API. Providers that only
- * expose an interactive CLI (currently Claude) run inside an isolated PTY.
- *
- * It deliberately reuses the terminal stack's low-level primitive (`PtyAdapter`)
- * and the same subscribe/buffer/attach fan-out idiom as `TerminalManager`, but
- * is intentionally NOT the thread-`TerminalManager`: login output is security
- * sensitive (verification URLs, and in-flight auth), so it is kept in a small
- * in-memory ring buffer only and is NEVER written to disk or the Effect logger.
- *
- * On PTY exit the manager re-runs the provider's health check via
- * `ProviderRegistry.refreshInstance`, which pushes the refreshed status to every
- * connected client through the existing `subscribeServerConfig` channel — so the
- * provider card flips to "authenticated" automatically.
- *
- * @module provider/ProviderLoginManager
+ * Ephemeral provider logins: Codex via the device-code API, CLI-only providers
+ * in an isolated PTY. Not `TerminalManager` because login output is sensitive:
+ * it stays in an in-memory ring buffer, NEVER disk or the logger. PTY exit
+ * re-runs the health check so clients see the new auth status.
  */
 import {
   ClaudeSettings,

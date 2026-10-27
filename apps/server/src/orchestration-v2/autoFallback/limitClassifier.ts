@@ -1,23 +1,9 @@
 // @effect-diagnostics globalDate:off - Provider retry metadata is normalized at this pure boundary as ISO timestamps.
 /**
- * Provider usage/rate-limit error classifiers.
- *
- * When a turn dies, its terminal error surfaces at the orchestration ingestion
- * layer as a free-text message (plus, for codex, a raw structured `detail`).
- * Only genuine usage/rate-limit deaths should trigger auto-fallback to another
- * account; everything else must surface unchanged. These classifiers are pure
- * so they can be unit-tested against real driver error fixtures.
- *
- * Detection is per driver:
- *  - codex: the reliable discriminator is `error.codexErrorInfo` equaling
- *    "usageLimitExceeded" inside the raw `V2ErrorNotification` (carried in
- *    `runtime.error.payload.detail`). Rate-limit windows arrive via a separate
- *    notification whose `resetsAt` we opportunistically read. Free-text
- *    fallbacks cover message-only surfaces (`turn.completed.errorMessage`).
- *  - claudeAgent: string-only. The result `errors[0]` carries "Claude usage
- *    limit reached" / rate-limit phrasing; there is no structured code.
- *
- * @module orchestration-v2/autoFallback/limitClassifier
+ * Only genuine usage/rate-limit deaths may trigger auto-fallback. Codex is
+ * detected by `codexErrorInfo === "usageLimitExceeded"` in the raw error
+ * `detail`, with free-text fallbacks; Claude has no structured code, so it is
+ * matched on the "usage limit reached" / rate-limit phrasing.
  */
 
 export type ProviderLimitKind = "usage_limit" | "rate_limit";

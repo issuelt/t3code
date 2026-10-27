@@ -167,13 +167,9 @@ export function taskGraphNodeSharesPullRequestBranch(nodes: Nodes, node: TaskGra
 }
 
 /**
- * The branch a node's pull request targets. Walking up first dependencies past
- * the nodes sharing its branch, the first ancestor with a pull request of its
- * own is the layer below it in a stack; with none, the PR carries everything
- * since the graph's base. So branch ends alone give one PR each against the
- * base, and PRs on inner nodes too give a stack. Null when that base is "HEAD"
- * (a thread with no branch): it is no branch to target, so git picks the
- * repository's default branch.
+ * The PR target: the first ancestor (via first dependencies, past nodes sharing
+ * the branch) with its own PR, so inner PRs form a stack; else the graph base.
+ * Null when the base is "HEAD" (no branch), letting git pick the default branch.
  */
 export function taskGraphPullRequestBase(
   graph: Pick<TaskGraph, "nodes" | "baseRef">,

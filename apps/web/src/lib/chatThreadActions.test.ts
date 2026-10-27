@@ -9,7 +9,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   defaultNewThreadProjectRef,
   resolveThreadActionProjectRef,
-  hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,

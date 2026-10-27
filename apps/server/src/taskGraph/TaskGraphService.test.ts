@@ -40,7 +40,7 @@ interface Harness {
   /** Node threads the service settled, in order. */
   readonly settled: Queue.Queue<ThreadId>;
   /** Commands the service dispatched to threads, such as arming usage limit recovery. */
-  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  readonly dispatched: Queue.Queue<OrchestrationV2ServerCommand>;
   /** Replaces a node thread's projection, then emits a run event with `status`. */
   readonly setThread: (
     threadId: ThreadId,
@@ -56,8 +56,11 @@ interface Harness {
     launch: ThreadLaunch.ThreadLaunchInput,
     result: { readonly reply: string; readonly branch: string; readonly status?: string },
   ) => Effect.Effect<void>;
-  /** Holds every launch until the returned effect runs. */
-  readonly holdLaunches: () => Effect.Effect<void>;
+  /** Holds every launch until `release` runs; `arrived` completes once a launch is waiting. */
+  readonly holdLaunches: () => {
+    readonly release: Effect.Effect<void>;
+    readonly arrived: Deferred.Deferred<void>;
+  };
   /** Launches and interrupts in the order they happened, as `launch:<thread>` or `interrupt:<thread>`. */
   readonly calls: Array<string>;
   /** Makes the next git deliveries fail in `phase`, or succeed again with null. */
@@ -116,11 +119,12 @@ const withServiceOnDatabase = <A, E>(
       ...threadsAtStart.map((thread) => [thread.thread.id, thread] as const),
     ]);
     const calls: Array<string> = [];
-    let launchGate: Deferred.Deferred<void> | null = null;
+    let launchGate: { gate: Deferred.Deferred<void>; arrived: Deferred.Deferred<void> } | null =
+      null;
     const gitActions: Array<GitRunStackedActionInput> = [];
     const interrupted: Array<ThreadId> = [];
     const settled = yield* Queue.unbounded<ThreadId>();
-    const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    const dispatched = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
     let gitFailurePhase: "commit" | "push" | "pr" | null = null;
 
     const harness: Harness = {
@@ -128,11 +132,14 @@ const withServiceOnDatabase = <A, E>(
         gitFailurePhase = phase;
       },
       holdLaunches: () => {
-        const gate = Deferred.makeUnsafe<void>();
-        launchGate = gate;
-        return Effect.sync(() => {
-          launchGate = null;
-        }).pipe(Effect.andThen(Deferred.succeed(gate, undefined)), Effect.asVoid);
+        const held = { gate: Deferred.makeUnsafe<void>(), arrived: Deferred.makeUnsafe<void>() };
+        launchGate = held;
+        return {
+          arrived: held.arrived,
+          release: Effect.sync(() => {
+            launchGate = null;
+          }).pipe(Effect.andThen(Deferred.succeed(held.gate, undefined)), Effect.asVoid),
+        };
       },
       calls,
       launches,
@@ -177,7 +184,11 @@ const withServiceOnDatabase = <A, E>(
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
             launch: (input) =>
               Effect.suspend(() =>
-                launchGate === null ? Effect.void : Deferred.await(launchGate),
+                launchGate === null
+                  ? Effect.void
+                  : Deferred.succeed(launchGate.arrived, undefined).pipe(
+                      Effect.andThen(Deferred.await(launchGate.gate)),
+                    ),
               ).pipe(
                 Effect.andThen(
                   Effect.sync(() => {
@@ -203,11 +214,7 @@ const withServiceOnDatabase = <A, E>(
             streamDomainEvents: Stream.fromQueue(events),
             sendToThread: (input) =>
               Deferred.succeed(report, input.text).pipe(Effect.as({} as never)),
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatched.push(command);
-                return {} as never;
-              }),
+            dispatch: (command) => Queue.offer(dispatched, command).pipe(Effect.as({} as never)),
             settleThread: (input) =>
               Queue.offer(settled, input.threadId).pipe(Effect.as({ sequence: 0 })),
             interruptThread: (input) =>
@@ -373,7 +380,7 @@ it.effect("cutting off a running branch stops its thread and skips what depends 
 it.effect("cancelling while a node is launching stops the thread the launch creates", () =>
   withService((service, harness) =>
     Effect.gen(function* () {
-      const release = harness.holdLaunches();
+      const { release, arrived } = harness.holdLaunches();
       const graph = yield* service.create({
         threadId: PARENT,
         title: "Features",
@@ -381,10 +388,9 @@ it.effect("cancelling while a node is launching stops the thread the launch crea
         run: false,
       });
       const running = yield* Effect.forkChild(service.run(graph.id));
-      // Wait until the node is marked running and its launch is held.
-      while ((yield* service.get(graph.id)).nodes[0]!.status !== "running") {
-        yield* Effect.yieldNow;
-      }
+      // The launch runs after the node is recorded as running.
+      yield* Deferred.await(arrived);
+      assert.equal((yield* service.get(graph.id)).nodes[0]!.status, "running");
       yield* service.cancel(graph.id);
       yield* release;
       yield* Fiber.join(running);
@@ -641,8 +647,7 @@ it.effect("holds a node stopped by a usage limit and continues it on its thread 
       yield* harness.setThread(a.threadId!, limitedThread(a.threadId!, resetAt), "failed");
 
       // The arm command is the last thing the service does for the limited run.
-      while (harness.dispatched.length === 0) yield* Effect.yieldNow;
-      assert.deepEqual(harness.dispatched[0], {
+      assert.deepEqual(yield* Queue.take(harness.dispatched), {
         type: "thread.metadata.update",
         commandId: `task-graph-limit-arm:${a.threadId}:run-1`,
         threadId: a.threadId,

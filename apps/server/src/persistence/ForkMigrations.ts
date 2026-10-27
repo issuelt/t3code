@@ -8,11 +8,9 @@ import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 /**
- * Fork-only schema lives in its own migrations table so its ids never collide
- * with upstream's. Upstream's migrator skips every id up to the highest one
- * recorded, so fork migrations in `effect_sql_migrations` would hide every
- * upstream migration added after them. Append new fork migrations here, never
- * to `Migrations.ts`.
+ * Fork migrations use their own table: upstream's migrator skips every id up
+ * to the highest recorded, so fork rows in `effect_sql_migrations` would hide
+ * later upstream migrations. Append fork migrations here, never `Migrations.ts`.
  */
 const forkMigrationEntries = [[1, "TaskGraphs", ForkMigration0001]] as const;
 
@@ -46,11 +44,9 @@ const PREVIEW_GAP_MIGRATIONS = [
 ] as const;
 
 /**
- * Older fork builds recorded fork migrations among upstream's and shifted
- * upstream's ids to make room. Rewrite such a history to upstream's ids by
- * name so upstream's later migrations run. Fork rows are dropped; the fork
- * migrator re-runs them, and they are idempotent. Runs before upstream's
- * migrator and does nothing on an upstream-shaped history.
+ * Rewrites older fork histories (fork rows mixed in, upstream ids shifted) to
+ * upstream's ids by name. Fork rows are dropped and re-run idempotently by the
+ * fork migrator. Must run before upstream's migrator; no-op on upstream shape.
  */
 export const reconcileForkMigrationHistory = Effect.fn("reconcileForkMigrationHistory")(
   function* () {

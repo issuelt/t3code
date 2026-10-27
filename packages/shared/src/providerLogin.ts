@@ -1,11 +1,6 @@
 /**
- * Pure parsers for provider-login PTY output.
- *
- * Login CLIs (codex device-auth, claude setup-token) print a verification URL
- * and — for device flows — a short user code the user must confirm. The web
- * login dialog surfaces these prominently above the raw terminal output. These
- * helpers are intentionally dependency-free and side-effect-free so they can be
- * unit-tested and reused across surfaces.
+ * Pure parsers for the verification URL and device user code that login CLIs
+ * (codex device-auth, claude setup-token) print to their PTY.
  */
 
 // ANSI/OSC control sequences the terminal emits around URLs; stripped so a URL

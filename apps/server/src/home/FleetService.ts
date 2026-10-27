@@ -1,12 +1,7 @@
 /**
- * FleetService - runs one Home operation in this environment.
- *
- * Every T3 server has it. Home's own server calls it in process; the user's
- * other environments receive the same operations over `fleet.invoke`, relayed
- * by the desktop renderer. It acts with the reach of the user's client: any
- * project, no calling-project limit. Nothing here deletes data.
- *
- * @module FleetService
+ * Runs one Home operation in this environment, in process on Home's own server and over
+ * `fleet.invoke` elsewhere. It acts with the reach of the user's client: any project, no
+ * calling-project limit. Nothing here deletes data.
  */
 import {
   CommandId,
@@ -55,6 +50,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_LIST_LIMIT = 50;
+const decodeCapabilitiesInput = Schema.decodeEffect(OrchestratorMcpCapabilitiesInput);
 
 export class FleetService extends Context.Service<
   FleetService,
@@ -168,7 +164,7 @@ const make = Effect.gen(function* () {
 
   const handlers: Handlers = {
     capabilities: Effect.fn("FleetService.capabilities")(function* (input) {
-      const catalogInput = yield* Schema.decodeEffect(OrchestratorMcpCapabilitiesInput)(input).pipe(
+      const catalogInput = yield* decodeCapabilitiesInput(input).pipe(
         Effect.mapError(orchestrationError),
       );
       const providers = yield* providerRegistry.getProviders;

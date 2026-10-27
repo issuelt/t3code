@@ -6,14 +6,10 @@ import type { ComposerDictation } from "./useComposerDictation";
 const MODIFIER_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "Shift"]);
 
 /**
- * Hold-to-talk for the `composer.dictate` command while this window has focus.
- * Pressing the shortcut starts dictation; releasing its key or any modifier,
- * or the window losing focus, stops and transcribes. Escape cancels, except
- * in the terminal. A press while a click-started recording runs stops it.
- *
- * `isDictateShortcut` resolves the event against the keybindings, so the
- * command stays rebindable. Matching presses are always claimed, which keeps
- * macOS from typing Option+Space's non-breaking space into the editor.
+ * Hold-to-talk for `composer.dictate`: releasing the key or any modifier, or
+ * losing focus, stops and transcribes; Escape cancels outside the terminal.
+ * Matching presses are always claimed so macOS doesn't type Option+Space's
+ * non-breaking space into the editor.
  */
 export function useDictationHoldShortcut(input: {
   readonly dictation: ComposerDictation;
@@ -22,10 +18,12 @@ export function useDictationHoldShortcut(input: {
   readonly isDictateShortcut: (event: KeyboardEvent) => boolean;
 }) {
   const latest = useRef(input);
+  // oxlint-disable-next-line t3code/react-effect-budget -- refs must not be written during render
   useLayoutEffect(() => {
     latest.current = input;
   });
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to window key events for the hook's lifetime
   useEffect(() => {
     // The physical key that started the hold, so only its release ends it.
     let heldCode: string | null = null;

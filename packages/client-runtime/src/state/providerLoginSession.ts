@@ -63,12 +63,9 @@ export function applyProviderLoginStreamEvent(
       };
     case "output": {
       const output = boundOutput(`${current.output}${event.data}`);
-      // Re-parse the accumulated buffer rather than locking onto the first
-      // match: PTY output is chunked arbitrarily, so a verification URL or code
-      // can arrive split across frames. The first occurrence's start position is
-      // fixed as the buffer only grows, so re-parsing keeps the same (first) URL
-      // while letting a partially-received one complete instead of freezing a
-      // truncated fragment.
+      // Re-parse the whole buffer instead of locking onto the first match: PTY
+      // chunks can split a URL or code, and since the buffer only grows the first
+      // match stays first while a partial one gets to complete.
       return {
         ...current,
         output,

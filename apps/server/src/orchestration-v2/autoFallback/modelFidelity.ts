@@ -1,15 +1,7 @@
 /**
- * Model-fidelity resolution for auto-fallback (pure).
- *
- * Fallback continues the thread with the EXACT same underlying model id (and,
- * via the copied `ModelSelection.options`, the same reasoning effort). It may
- * only proceed if the target instance actually resolves that identical model —
- * never silently substituting a different one. Instances of the same driver
- * share the built-in model catalog, so the only variable is custom models,
- * which `mirrorPrimaryCustomModels` can inherit from the primary instance so
- * pools stay equivalent without duplicate maintenance.
- *
- * @module orchestration-v2/autoFallback/modelFidelity
+ * Fallback may only proceed when the target resolves the EXACT same model id,
+ * never a substitute. Same-driver instances share the built-in catalog, so
+ * only custom models vary; `mirrorPrimaryCustomModels` inherits the primary's.
  */
 
 /**

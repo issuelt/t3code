@@ -54,20 +54,10 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
 }
 
 /**
- * Streams microphone audio into one environment's dictation session for a
- * `VoiceInputController`, through the same seams the mobile file recorder
- * uses. The controller's permission step does the time-critical work at once:
- * it asks the environment for a session (which starts loading the model) while
- * the microphone opens, and starts capturing as soon as the microphone is live,
- * holding frames until the session exists. So nothing said right after the
- * click or key press is lost, however slow the connection. `prepare` waits for
- * the session, `record` only arms the recording cap, and `transcribe` finishes
- * the session. The recorder `uri` is a session token, since the audio already
- * lives on the server.
- *
- * Feed every controller state to `settle`. Leaving the active phases releases
- * the microphone and cancels an unfinished session, whichever path the
- * controller took to get there. `level` follows the microphone while recording.
+ * The permission step requests the session and opens the microphone at once,
+ * buffering frames until the session exists, so no early speech is lost. The
+ * recorder `uri` is a session token. Feed every controller state to `settle`:
+ * leaving the active phases releases the mic and cancels an unfinished session.
  */
 export function createStreamingDictation(input: {
   readonly registry: AtomRegistry.AtomRegistry;

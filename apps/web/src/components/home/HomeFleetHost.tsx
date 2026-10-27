@@ -43,6 +43,7 @@ function HomeHub({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const home = settings?.home ?? DEFAULT_HOME_SETTINGS;
   const on = home.threadId !== null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- keeps the desktop shell alive while this relay is mounted
   useEffect(() => {
     void window.desktopBridge?.setKeepAliveOnClose?.(on);
     // Without a relay running, closing the window should quit as usual.
@@ -129,6 +130,7 @@ function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId })
   // The consumer outlives renders, so it reads the latest handler from an atom.
   const [handlerAtom] = useState(() => Atom.make({ handle }));
   const setHandler = useAtomSet(handlerAtom);
+  // oxlint-disable-next-line t3code/react-effect-budget -- the long-lived consumer reads the latest handler, which must not be written during render
   useEffect(() => {
     setHandler({ handle });
   }, [handle, setHandler]);
@@ -173,6 +175,7 @@ function HomeWatchReporter({
   const sending = useRef(false);
   const stopped = useRef(false);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- reports watched-thread changes to the server, a side effect of new shells
   useEffect(() => {
     const { next, events } = diffWatchedThreads({
       previous: previous.current,
@@ -210,6 +213,7 @@ function HomeWatchReporter({
     timer.current = setTimeout(() => void send(), WATCH_REPORT_DELAY_MS);
   }, [environmentId, home, knownWatchKeys, labels, liveEnvironmentIds, report, shells]);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- cancels the pending report timer on unmount
   useEffect(() => {
     stopped.current = false;
     return () => {

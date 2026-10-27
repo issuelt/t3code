@@ -157,6 +157,7 @@ const NODE_TYPES = { task: TaskCanvasNode };
 /** Fits the view on mount; keyed by layout so it refits on structure changes, not status updates. */
 function FitViewOnMount() {
   const { fitView } = useReactFlow();
+  // oxlint-disable-next-line t3code/react-effect-budget -- React Flow can fit only after it has measured the mounted nodes
   useEffect(() => {
     void fitView({ maxZoom: 1 });
   }, [fitView]);
@@ -961,6 +962,7 @@ function TaskNodeStartAtField(props: {
                 selected={value.date}
                 defaultMonth={value.date}
                 {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
+                // oxlint-disable-next-line react/purity -- the calendar renders only while its popover is open, so each opening reads a fresh day.
                 disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
                 onSelect={(selected) => {
                   props.onChange({ ...value, date: selected });

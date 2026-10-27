@@ -1,13 +1,7 @@
 /**
- * HomeService - owns Home, the fleet-wide agent thread, on a desktop-hosted
- * server.
- *
- * Home's state (its thread and what it watches) lives in server settings, so
- * every client sees it with the settings stream it already has. The grant is
- * "this thread is `home.threadId`", read on every call: turning Home off or
- * starting fresh takes the old thread's reach away at once.
- *
- * @module HomeService
+ * Owns Home, the fleet-wide agent thread. Its state lives in server settings. The grant is
+ * "this thread is `home.threadId`", read on every call, so turning Home off or starting fresh
+ * takes the old thread's reach away at once.
  */
 import {
   CommandId,
@@ -176,13 +170,9 @@ const make = Effect.gen(function* () {
 
   const withLock = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermits(1)(effect);
 
-  /**
-   * Stops a former Home once its grant is gone, so it does not keep working
-   * next to the new Home. Best effort: the grant already moved. Holding the
-   * queue commits under the orchestrator's thread lock, which also starts
-   * queued runs, so after it no queued turn can start; a turn that started
-   * before it is the active run, which is then interrupted.
-   */
+  // Best effort: the grant already moved. Holding the queue commits under the thread lock that
+  // starts queued runs, so after it no queued turn can start; one that started before it is
+  // the active run, which is then interrupted.
   const stopFormerHome = Effect.fn("HomeService.stopFormerHome")(
     function* (threadId: ThreadId) {
       if ((yield* liveShell(threadId)) === null) return;

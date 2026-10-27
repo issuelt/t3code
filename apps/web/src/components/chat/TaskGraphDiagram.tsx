@@ -39,6 +39,7 @@ export function TaskGraphDiagram(props: {
   const scrollLeft = taskGraphDiagramScrollLeft(layers);
   const rootRef = useRef<HTMLDivElement>(null);
   // Runs only when the leading column changes, so status updates never undo a manual scroll.
+  // oxlint-disable-next-line t3code/react-effect-budget -- scrolls the enclosing viewport, which lives outside this component
   useEffect(() => {
     rootRef.current?.closest('[data-slot="scroll-area-viewport"]')?.scrollTo({ left: scrollLeft });
   }, [scrollLeft, rootRef]);

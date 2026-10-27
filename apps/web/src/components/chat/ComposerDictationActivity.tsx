@@ -16,6 +16,7 @@ const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
 /** Recording time, counted here so the ticking clock re-renders only this label. */
 function RecordingElapsed() {
   const [seconds, setSeconds] = useState(0);
+  // oxlint-disable-next-line t3code/react-effect-budget -- a ticking clock for the mounted label
   useEffect(() => {
     const startedAt = Date.now();
     const interval = setInterval(
@@ -36,6 +37,7 @@ function DictationWaveform(props: { readonly level: DictationLevel; readonly liv
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const animate = props.live && !reduceMotion;
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- drives bar transforms directly so audio levels never re-render React
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -61,11 +63,9 @@ function DictationWaveform(props: { readonly level: DictationLevel; readonly liv
 }
 
 /**
- * What the dictation control reveals beside its button: cancel, a live
- * waveform, and the elapsed time. It stays mounted while idle (resting, no
- * frame loop) so the control can fold it away smoothly when dictation ends.
- * The waveform is live from the moment the microphone opens; transcribing dims
- * it to resting dots instead of showing a spinner.
+ * Cancel, live waveform, and elapsed time beside the dictation button. Stays
+ * mounted while idle (resting, no frame loop) so the control can fold it away
+ * smoothly; transcribing dims the waveform to resting dots instead of a spinner.
  */
 export function ComposerDictationActivity(props: {
   readonly phase: VoiceInputPhase;

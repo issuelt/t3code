@@ -63,15 +63,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TaskGraphPeers from "./TaskGraphPeers.ts";
 
 /**
- * Runs task graphs: plans of agent tasks with dependencies, where each node is
- * its own thread in its own worktree. The orchestrator stays unaware of graphs;
- * this service launches node threads through `ThreadLaunchService`, reads their
- * outcome from the domain event stream, and opens a pull request per branch end.
- *
- * Every graph change goes through one lock and is written whole, so a crash
- * leaves either the old graph or the new one. Thread launches and git work run
- * outside the lock against state already recorded as `running`/`delivering`,
- * and are idempotent by command id so recovery can repeat them.
+ * Runs task graphs, each node its own thread and worktree. Graph changes go through one lock
+ * and are written whole, so a crash leaves the old graph or the new one. Launches and git work
+ * run outside the lock against state already recorded as `running`/`delivering`, and are
+ * idempotent by command id so recovery can repeat them.
  */
 export class TaskGraphService extends Context.Service<
   TaskGraphService,

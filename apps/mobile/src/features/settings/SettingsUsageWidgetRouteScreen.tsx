@@ -114,6 +114,7 @@ export function SettingsUsageWidgetRouteScreen() {
   }
   const { target } = selection;
   const setTarget = (target: string) => setSelection({ params: route.params, target });
+  // oxlint-disable-next-line t3code/react-effect-budget -- widgets added from the home screen show up only after the app returns to the foreground
   useEffect(() => {
     if (!focused) return;
     const update = () => setWidgetIds(native?.getWidgetIds() ?? []);
