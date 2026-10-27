@@ -595,14 +595,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "task-graph-auto-run",
     title: "Run task graphs automatically",
-    to: "/settings/general",
+    to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["agent plan parallel tasks worktrees draft start immediately wait edit run"],
   },
   {
     id: "task-graph-concurrency",
     title: "Task graph nodes at once",
-    to: "/settings/general",
+    to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["parallel concurrent limit maximum agents running worktrees"],
   },
