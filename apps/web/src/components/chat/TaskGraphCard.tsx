@@ -114,12 +114,13 @@ function TaskGraphCard(props: {
   const pullRequests = taskGraphPullRequestLinks(graph.nodes);
 
   return (
-    <ComposerBanner.Attachment>
+    <div>
+      {/* The banner surface is cut to tuck under the composer; here it stands alone in the timeline. */}
       <ComposerBanner.Root
         role="region"
         aria-label={`Task graph: ${graph.title}`}
         data-chat-composer-collapsed-controls="true"
-        className="relative z-0"
+        className="relative z-0 before:rounded-2xl before:mask-none after:hidden"
       >
         <ComposerBanner.Row>
           <ComposerBanner.Icon>
@@ -263,7 +264,7 @@ function TaskGraphCard(props: {
           ) : null}
         </DialogPopup>
       </Dialog>
-    </ComposerBanner.Attachment>
+    </div>
   );
 }
 

@@ -3104,7 +3104,7 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         {taskGraphs.length > 0 ? (
-          <div className="chat-content-lane">
+          <div className="chat-content-lane flex flex-col gap-2 pb-4">
             <TaskGraphCards environmentId={environmentId} graphs={taskGraphs} />
           </div>
         ) : null}
