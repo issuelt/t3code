@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "../home/HomeShortcuts";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -689,6 +690,14 @@ function ThreadNavigationSidebarPane(
     </Text>
   );
 
+  const homeShortcuts = (
+    <HomeShortcuts
+      selectedEnvironmentId={options.selectedEnvironmentId}
+      selectedThreadKey={props.selectedThreadKey}
+      onSelectThread={onSelectThread}
+    />
+  );
+
   if (props.nativeChrome) {
     return (
       <>
@@ -752,6 +761,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={homeShortcuts}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -788,7 +798,10 @@ function ThreadNavigationSidebarPane(
         }
       >
         {Platform.OS === "android" && listItems.length === 0 ? (
-          <View className="flex-1 items-center justify-center">{listEmpty}</View>
+          <View className="flex-1">
+            {homeShortcuts}
+            <View className="flex-1 items-center justify-center">{listEmpty}</View>
+          </View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
@@ -821,6 +834,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={homeShortcuts}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

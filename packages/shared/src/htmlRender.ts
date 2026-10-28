@@ -380,7 +380,7 @@ function bootstrapMarkup(markup: string): string {
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="t3-theme">${defaultCss}</style>`,
-    `<script>${BOOTSTRAP_SCRIPT}</script>`,
+    `<script data-t3-html-render-bootstrap="1">${BOOTSTRAP_SCRIPT}</script>`,
   ].join("");
 }
 
@@ -412,8 +412,11 @@ const blankNonMarkup = (html: string) => {
 };
 
 export function injectHtmlRenderBootstrap(html: string): string {
+  return injectHeadMarkup(html, bootstrapMarkup(blankNonMarkup(html)));
+}
+
+function injectHeadMarkup(html: string, markup: string): string {
   const scan = blankNonMarkup(html);
-  const markup = bootstrapMarkup(scan);
   const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
@@ -430,4 +433,35 @@ export function injectHtmlRenderBootstrap(html: string): string {
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;
+}
+
+export function stripHtmlRenderBootstrap(html: string): string {
+  // Legacy snapshots predate the marker; recognize their protocol rather than a release's source.
+  return html.replace(/<!--[\s\S]*?(?:-->|$)|<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, (script) => {
+    if (script.startsWith("<!--")) return script;
+    const marked = /^<script\b[^>]*\bdata-t3-html-render-bootstrap(?:\s|=|>)/i.test(script);
+    const legacy =
+      /getElementById\s*\(\s*["']t3-theme["']\s*\)/.test(script) &&
+      script.includes(HOST_CONTEXT_CHANGED_METHOD) &&
+      script.includes(OPEN_LINK_METHOD);
+    return marked || legacy ? "" : script;
+  });
+}
+
+export const HTML_ARTIFACT_SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox";
+
+export function htmlArtifactDocument(html: string, theme: HtmlRenderTheme): string {
+  const initialTheme = JSON.stringify(theme).replace(/</g, "\\u003c");
+  const script = `(function(){var s=document.getElementById("t3-theme");if(!s){s=document.createElement("style");document.head.prepend(s);}function apply(t){if(!t||!t.variables)return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+${JSON.stringify(BASE_CSS)}+"html{scrollbar-width:auto}img{cursor:auto}";}apply(${initialTheme});window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)apply({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var a=e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");});if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#"){e.preventDefault();try{var t=document.getElementById(decodeURIComponent(h.slice(1)));if(t)t.scrollIntoView();}catch(x){}return;}var u;try{u=new URL(h);}catch(x){e.preventDefault();return;}if(!/^https?:$/.test(u.protocol)){e.preventDefault();return;}a.target="_blank";a.rel="noopener noreferrer";a.removeAttribute("download");},true);})();`;
+  // HTTPS resources retain browser destination-cookie rules; the opaque sandbox denies host access.
+  const policy =
+    "default-src 'none'; script-src https: 'unsafe-inline' 'unsafe-eval'; style-src https: 'unsafe-inline'; img-src https: data: blob:; font-src https: data:; connect-src https:; base-uri about:; form-action 'none'";
+  const withoutBridge = stripHtmlRenderBootstrap(html).replace(
+    /<style\b[^>]*\bid\s*=\s*["']t3-theme["'][^>]*>[\s\S]*?<\/style\s*>/gi,
+    "",
+  );
+  return injectHeadMarkup(
+    withoutBridge,
+    `<meta http-equiv="Content-Security-Policy" content="${policy}"><base href="about:blank"><style id="t3-theme"></style><script>${script}</script>`,
+  );
 }

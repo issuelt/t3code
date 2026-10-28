@@ -28,6 +28,8 @@ import { BinaryFilePreview } from "./BinaryFilePreview";
 import { PreviewImage } from "./PreviewImage";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
+import { HtmlArtifactFrame } from "./HtmlArtifactFrame";
+import { loadHtmlArtifact } from "./htmlArtifact";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
@@ -129,6 +131,8 @@ export function AttachmentFilePreview(props: {
     props.file ? null : resource,
   );
   const prepareDownload = useAssetUrlRefresh(props.asset?.environmentId ?? null, downloadResource);
+  const [artifact, setArtifact] = useState<string | null>(null);
+  const [artifactError, setArtifactError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
@@ -210,7 +214,25 @@ export function AttachmentFilePreview(props: {
     });
     return () => controller.abort();
   }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
-  const failure = error ?? (needsText ? contentError : null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Load the authorized artifact bytes in the host without exposing its signed URL to the frame.
+  useEffect(() => {
+    if (!props.htmlRender || !url) return;
+    const controller = new AbortController();
+    // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous document when its resource changes.
+    setArtifact(null);
+    setArtifactError(null);
+    void loadHtmlArtifact(url, controller.signal, revision > 0)
+      .then((html) => {
+        if (!controller.signal.aborted) setArtifact(html);
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setArtifactError(cause instanceof Error ? cause.message : "Could not load this page.");
+      });
+    return () => controller.abort();
+  }, [props.htmlRender, url, revision]);
+  const failure =
+    error ?? (props.htmlRender && rendered ? artifactError : needsText ? contentError : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const showsRawText =
     failure === null &&
@@ -312,6 +334,12 @@ export function AttachmentFilePreview(props: {
         sizeBytes={props.sizeBytes}
       />
     </Suspense>
+  ) : kind === "html" && props.htmlRender ? (
+    artifact === null ? (
+      <FileSurfaceLoading />
+    ) : (
+      <HtmlArtifactFrame key={`${url}:${revision}`} title={props.name} html={artifact} />
+    )
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame
       src={url}

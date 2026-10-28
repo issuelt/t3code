@@ -39,6 +39,27 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("opens and reopens CI beside a thread", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "ci");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "ci",
+      kind: "ci",
+    });
+    store.closeSurface(refA, "ci");
+    expect(
+      await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+        workspaceAvailable: true,
+        openPreview: () => {
+          throw new Error("Unexpected browser");
+        },
+      }),
+    ).toBe(true);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "ci",
+      kind: "ci",
+    });
+  });
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -943,6 +964,34 @@ describe("rightPanelStore", () => {
       activeSurfaceId: null,
       surfaces: [],
     });
+  });
+
+  it("persists an artifact in its own thread and environment", async () => {
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, ThreadId.make("thread-A"));
+    const attachment = {
+      type: "file" as const,
+      id: "thread-A-artifact-html",
+      name: "Chart.html",
+      mimeType: "text/html",
+      sizeBytes: 0,
+      htmlRender: true,
+    };
+    useRightPanelStore.getState().openAttachment(refA, attachment);
+    await reloadRightPanelStore();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "attachment:thread-A-artifact-html",
+      surfaces: [{ attachment }],
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, otherEnvironment)
+        .surfaces,
+    ).toEqual([]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
   });
 
   it("keeps attachment previews when their workspace is unavailable", () => {

@@ -13,13 +13,12 @@ import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
-// `GitHubRest.layerWithDependencies` carries the quota reserve every GitHub reader shares, so it
-// must be built once; the driver is.
-const services = GitHubPullRequestApi.layer.pipe(
+// The server provides these services to the driver and other GitHub readers to share quota.
+export const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(GitHubRest.layerWithDependencies),
 );
 
-const makeInstance = Effect.all({
+export const make = Effect.all({
   sourceControl: GitHubSourceControlProvider.make,
   discovery: GitHubSourceControlProvider.makeDiscovery,
   pullRequests: GitHubPullRequestProvider.make,
@@ -29,5 +28,5 @@ const makeInstance = Effect.all({
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
-  make: withOwnServices(makeInstance, services),
+  make: withOwnServices(make, services),
 });

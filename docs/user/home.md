@@ -10,6 +10,11 @@ Home runs in the desktop app. Open **Settings → Home**, choose a model and tur
 it on. Home then sits at the top of the sidebar. Open it from there, from the
 command palette, or with its keyboard shortcut.
 
+On mobile, connect to the environment hosted by that desktop, then select
+**Home** in the thread list or sidebar. This opens the same conversation.
+If several connected environments have Home enabled, each shortcut names its
+environment. Keep the desktop app running for access to other machines.
+
 Home always runs in full access. It can approve requests in your other threads,
 so choose a model you trust with that.
 

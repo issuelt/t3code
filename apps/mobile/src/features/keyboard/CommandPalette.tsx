@@ -83,6 +83,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   appearance: "paintbrush",
   environments: "desktopcomputer",
   usage: "chart.bar.xaxis",
+  ci: "checkmark.circle",
   archive: "archivebox",
   files: "doc.text",
   terminal: "terminal",
@@ -309,6 +310,13 @@ export function CommandPalette(props: {
         title: "Scheduled tasks",
         searchTerms: ["schedule", "automations", "recurring"],
         run: () => openSettings(navigation, "SettingsScheduledTasks"),
+      },
+      {
+        key: "ci",
+        kind: "action",
+        title: "CI runs",
+        searchTerms: ["builds", "pipelines", "actions", "jobs"],
+        run: () => selectTab("ci"),
       },
       {
         key: "usage",

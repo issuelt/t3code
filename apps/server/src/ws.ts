@@ -1,3 +1,4 @@
+import * as ProjectCi from "./sourceControl/ProjectCi.ts";
 import { AutoFallbackCooldownTracker } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -1385,6 +1386,7 @@ export const layerWsRpc = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const projectCi = yield* ProjectCi.ProjectCi;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const sourceControlRepositories =
@@ -2732,6 +2734,8 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
+        [WS_METHODS.projectCiRead]: (input) => projectCi.read(input),
+        [WS_METHODS.projectCiReadRun]: (input) => projectCi.readRun(input),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>

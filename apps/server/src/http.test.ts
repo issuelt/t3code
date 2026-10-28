@@ -94,6 +94,37 @@ describe("MCP app asset responses", () => {
 });
 
 describe("browser API CORS", () => {
+  it.each(["https://app.t3.codes", "https://other-environment.example", "http://localhost:5173"])(
+    "makes artifact attachment bytes readable from %s without cookies",
+    async (origin) => {
+      const html = "<button>Interactive artifact</button>";
+      const layerRoute = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("GET", "/api/assets/artifact", HttpServerResponse.html(html));
+        }),
+      );
+      const layerApp = Layer.merge(layerRoute, ServerHttp.layerBrowserApiCors).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "artifact-cors-test-" })),
+        Layer.provide(NodeServices.layer),
+      );
+      const { handler, dispose } = HttpRouter.toWebHandler(layerApp, { disableLogger: true });
+      try {
+        const response = await handler(
+          new Request("https://backend.example/api/assets/artifact", {
+            headers: { origin },
+            credentials: "omit",
+          }),
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("access-control-allow-origin")).toBe("*");
+        expect(await response.text()).toBe(html);
+      } finally {
+        await dispose();
+      }
+    },
+  );
+
   it("accepts protocol negotiation with authenticated browser headers", async () => {
     const layerRoute = Layer.effectDiscard(
       Effect.gen(function* () {
