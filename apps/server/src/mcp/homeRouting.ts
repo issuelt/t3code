@@ -42,6 +42,7 @@ const CHANGES_STATE = {
   "projects.list": false,
   "threads.list": false,
   "threads.read": false,
+  "threads.wait": false,
   "requests.list": false,
   "requests.read": false,
   "threads.launch": true,

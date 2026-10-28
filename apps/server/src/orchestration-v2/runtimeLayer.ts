@@ -55,8 +55,6 @@ import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
-import * as TaskGraphPeers from "../taskGraph/TaskGraphPeers.ts";
-import * as TaskGraphService from "../taskGraph/TaskGraphService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
@@ -264,6 +262,8 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
 );
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
+  // Whether a thread came from a linked environment, which skips setup.
+  Layer.provide(ProjectionStore.layer),
 );
 const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
   Layer.provide(layerProjectService),
@@ -293,18 +293,6 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
-    ),
-  ),
-);
-const layerTaskGraphPeersProvided = TaskGraphPeers.layer.pipe(Layer.provide(layerProjectService));
-const layerTaskGraphProvided = TaskGraphService.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerTaskGraphPeersProvided,
-      layerThreadLaunchProvided,
-      layerThreadManagementProvided,
-      layerOrchestratorProvided,
-      layerProjectService,
     ),
   ),
 );
@@ -382,8 +370,6 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
-  layerTaskGraphProvided,
-  layerTaskGraphPeersProvided,
   layerSecretRequestsProvided,
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),

@@ -54,6 +54,7 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -103,8 +104,6 @@ import * as FleetService from "./home/FleetService.ts";
 import * as HomeService from "./home/HomeService.ts";
 import * as HomeWorkspace from "./home/HomeWorkspace.ts";
 import { ProviderLoginManager } from "./provider/ProviderLoginManager.ts";
-import * as TaskGraphPeers from "./taskGraph/TaskGraphPeers.ts";
-import * as TaskGraphs from "./taskGraph/TaskGraphService.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -428,6 +427,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
+  Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PortScanner.PortDiscovery)({}),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
@@ -477,8 +477,6 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(HomeService.HomeService)({ available: false }),
   Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home-test" }),
   Layer.mock(ProviderLoginManager)({}),
-  Layer.mock(TaskGraphPeers.TaskGraphPeers)({}),
-  Layer.mock(TaskGraphs.TaskGraphService)({}),
 );
 
 const layerConfigSources = Layer.mergeAll(

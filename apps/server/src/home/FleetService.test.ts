@@ -5,6 +5,7 @@ import {
   type ExecutionEnvironmentDescriptor,
   type Project as ContractProject,
   ProjectId,
+  ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -63,6 +64,7 @@ const shell = (
 
 const setup = () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const layer = FleetService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -88,11 +90,29 @@ const setup = () => {
           contains: (candidate) =>
             Effect.succeed(candidate === "/home" || candidate.startsWith("/home/")),
         }),
-        Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: (input) => {
+            launched.push(input);
+            return Effect.succeed({
+              projection: {
+                thread: {
+                  id: input.threadId,
+                  title: input.title,
+                  projectId: input.projectId,
+                  modelSelection: input.modelSelection,
+                },
+                runs: [],
+              },
+            } as never);
+          },
+        }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) => Effect.succeed(shell(id, "a", 1)),
+          getThreadProjection: (id) => Effect.succeed({ thread: shell(id, "a", 1) } as never),
+          waitForThread: (input) =>
+            Effect.succeed({ threadId: input.threadId, run: null, timedOut: false }),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -125,7 +145,7 @@ const setup = () => {
       ),
     ),
   );
-  return { layer, dispatched };
+  return { layer, dispatched, launched };
 };
 
 it.effect("lists threads from every project, newest first, with snooze state", () => {
@@ -288,5 +308,35 @@ it.effect("only launches with a Home launch id it was given", () => {
       })
       .pipe(Effect.asVoid, Effect.flip);
     expect(error.code).toBe("invalid_request");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("replays a Home launch with the same thread id", () => {
+  const { layer, launched } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const input = {
+      threadId: ThreadId.make("home-launched:retry"),
+      projectId: ProjectId.make("app"),
+      title: "Worker",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      message: "Work",
+    };
+    yield* fleet.execute({ actor, request: { op: "threads.launch", input } });
+    yield* fleet.execute({ actor, request: { op: "threads.launch", input } });
+    expect(launched[0]?.commandId).toBe(launched[1]?.commandId);
+    expect(launched[0]?.initialMessage?.messageId).toBe(launched[1]?.initialMessage?.messageId);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("waits for a thread in another project", () => {
+  const { layer } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const result = yield* fleet.execute({
+      actor,
+      request: { op: "threads.wait", input: { threadId } },
+    });
+    expect(result).toMatchObject({ threadId, runId: null, status: "idle", timedOut: false });
   }).pipe(Effect.provide(layer));
 });

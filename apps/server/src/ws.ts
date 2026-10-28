@@ -3,6 +3,7 @@ import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as PeerLinks from "./peer/PeerLinks.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -125,8 +126,6 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
-import * as TaskGraphPeers from "./taskGraph/TaskGraphPeers.ts";
-import * as TaskGraphs from "./taskGraph/TaskGraphService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1298,8 +1297,6 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
-      const taskGraphs = yield* TaskGraphs.TaskGraphService;
-      const taskGraphPeers = yield* TaskGraphPeers.TaskGraphPeers;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -1366,6 +1363,7 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const dictation = yield* Dictation.Dictation;
+      const peerLinks = yield* PeerLinks.PeerLinks;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2209,21 +2207,6 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
-        [WS_METHODS.taskGraphsSubscribe]: (input) => taskGraphs.subscribeThread(input.threadId),
-        [WS_METHODS.taskGraphsCreate]: (input) =>
-          taskGraphs.create(input).pipe(Effect.map((graph) => ({ graph }))),
-        [WS_METHODS.taskGraphsEdit]: (input) =>
-          taskGraphs.edit(input.graphId, input.edits).pipe(Effect.map((graph) => ({ graph }))),
-        [WS_METHODS.taskGraphsRun]: (input) =>
-          taskGraphs.run(input.graphId).pipe(Effect.map((graph) => ({ graph }))),
-        [WS_METHODS.taskGraphsCancel]: (input) =>
-          taskGraphs.cancel(input.graphId).pipe(Effect.map((graph) => ({ graph }))),
-        [WS_METHODS.taskGraphPeersSubscribe]: (_input) => taskGraphPeers.subscribe,
-        [WS_METHODS.taskGraphPeersAdd]: (input) => taskGraphPeers.add(input),
-        [WS_METHODS.taskGraphPeersRemove]: (input) => taskGraphPeers.remove(input.environmentId),
-        [WS_METHODS.taskGraphPeersIssueGrant]: (input) => taskGraphPeers.issueGrant(input.label),
-        [WS_METHODS.taskGraphPeersSetWeight]: (input) =>
-          taskGraphPeers.setWeight(input.environmentId, input.weight),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
@@ -2577,6 +2560,11 @@ export const layerWsRpc = (
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
+        [WS_METHODS.peerLinksList]: (_input) =>
+          peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+        [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
+        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
+          peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]:
@@ -3389,6 +3377,7 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+    const peerLinks = yield* PeerLinks.PeerLinks;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3477,6 +3466,7 @@ export const layer = Layer.unwrap(
                   reviewGuides,
                 ),
               ),
+              Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

@@ -92,6 +92,30 @@ describe("fork migrations", () => {
     }).pipe(Effect.provide(memory)),
   );
 
+  it.effect("preserves historical graph and peer rows when migrations run again", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* migrateAll;
+      yield* sql`INSERT INTO task_graphs VALUES ('graph-1', 'project-1', 'thread-1', 'completed', '{"nodes":[]}', '2026-01-01', '2026-01-01')`;
+      yield* sql`INSERT INTO task_graph_peers VALUES ('peer-1', 'Peer', 'https://example.test', 1, '2026-01-01')`;
+      yield* migrateAll;
+      const graphs = yield* sql<{
+        readonly graph_json: string;
+      }>`SELECT graph_json FROM task_graphs WHERE graph_id = 'graph-1'`;
+      const peers = yield* sql<{
+        readonly label: string;
+      }>`SELECT label FROM task_graph_peers WHERE environment_id = 'peer-1'`;
+      assert.deepStrictEqual(
+        graphs.map((row) => row.graph_json),
+        ['{"nodes":[]}'],
+      );
+      assert.deepStrictEqual(
+        peers.map((row) => row.label),
+        ["Peer"],
+      );
+    }).pipe(Effect.provide(memory)),
+  );
+
   it.effect("leaves an upstream history alone", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 62 });

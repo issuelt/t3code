@@ -70,7 +70,6 @@ import {
   ProviderInteractionMode,
   resolveIdleCompaction,
   RuntimeMode,
-  type TaskGraphNode,
 } from "@t3tools/contracts";
 import {
   deriveProviderSubagentStatus,
@@ -181,7 +180,7 @@ import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
-import { newMessageId, newThreadId } from "~/lib/utils";
+import { newMessageId } from "~/lib/utils";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -301,8 +300,6 @@ import {
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
-import { DraftTaskGraphDialog, TaskGraphCards, useVisibleTaskGraphs } from "./chat/TaskGraphCard";
-import { useNewTaskGraph } from "./chat/useTaskGraphCommands";
 
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -339,7 +336,6 @@ import {
   resolveSendEnvMode,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
-  waitForServerThreadShell,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -426,8 +422,6 @@ export default function ChatView(props: ChatViewProps) {
       currentRouteThreadKeyRef.current = null;
     };
   }, [routeThreadKey]);
-  const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
-  const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2807,80 +2801,6 @@ export default function ChatView(props: ChatViewProps) {
   });
   const onImplementPlanInNewThreadStable = useStableCallback(onImplementPlanInNewThread);
 
-  const newTaskGraph = useNewTaskGraph(environmentId);
-  // On a new chat the graph is drafted in the client; its thread and the
-  // graph are only created when the user runs it.
-  const [draftTaskGraphOpen, setDraftTaskGraphOpen] = useState(false);
-  // The composer's model when the draft opened: shown as the graph default and used on Run.
-  const [draftTaskGraphModel, setDraftTaskGraphModel] = useState<ModelSelection | null>(null);
-  const onNewTaskGraph = async () => {
-    if (!activeThread) return;
-    if (!isServerThread) {
-      setDraftTaskGraphModel(composerRef.current?.getSendContext()?.selectedModelSelection ?? null);
-      setDraftTaskGraphOpen(true);
-      return;
-    }
-    const error = await newTaskGraph.start(activeThread.id);
-    if (error !== null) {
-      toastManager.add({
-        type: "error",
-        title: "Could not start a task graph",
-        description: error,
-      });
-    }
-  };
-
-  const onRunDraftTaskGraph = async (
-    nodes: ReadonlyArray<TaskGraphNode>,
-  ): Promise<string | null> => {
-    const modelSelection = draftTaskGraphModel;
-    if (!activeThread || !activeProject || !modelSelection) {
-      return "Pick a project and model before running the graph.";
-    }
-    const nextThreadId = newThreadId();
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: "New task graph",
-        modelSelection,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt: new Date().toISOString(),
-      },
-    });
-    if (createResult._tag === "Failure") {
-      const failure = squashAtomCommandFailure(createResult);
-      return failure instanceof Error ? failure.message : "Could not create the thread.";
-    }
-    const created = await newTaskGraph.createAndRun(nextThreadId, nodes);
-    if (created.outcome === "failed") {
-      await deleteThread({ environmentId, input: { threadId: nextThreadId } });
-      return created.error;
-    }
-    // An interrupted request may have started the graph: keep its thread and open it
-    // rather than risk running the same tasks twice from the draft.
-    if (created.outcome === "uncertain") {
-      toastManager.add({
-        type: "warning",
-        title: "The task graph request was interrupted",
-        description: "Check the new chat to see whether the graph started.",
-      });
-    }
-    // The graph is running now, so its thread stays even if the shell is slow to arrive;
-    // waiting only keeps the route from opening before the thread is known.
-    await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId));
-    setDraftTaskGraphOpen(false);
-    await navigate({
-      to: "/$environmentId/$threadId",
-      params: { environmentId, threadId: nextThreadId },
-    });
-    return null;
-  };
-
   // Off unless the thread's provider instance turned prompt suggestions on.
   const promptSuggestionInstanceId =
     activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId;
@@ -3042,10 +2962,6 @@ export default function ChatView(props: ChatViewProps) {
     backgroundWorkNow !== null ||
     goalNow !== null ||
     shownThreadSyncPhase !== null;
-  const taskGraphs = useVisibleTaskGraphs(
-    environmentId,
-    isServerThread && activeThread ? activeThread.id : null,
-  );
   const queuedRunCount = serverProjection ? getUserQueuedThreadRuns(serverProjection).length : 0;
   // The queue control is mounted for every server thread but joins the footer only while it shows
   // something, by its own rule: an optimistic message stops counting once the server has it.
@@ -3070,7 +2986,6 @@ export default function ChatView(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
-    taskGraphs.length === 0 &&
     !hasQueuedTurns ? null : (
       <>
         {pendingHandoff === null ? null : (
@@ -3097,11 +3012,6 @@ export default function ChatView(props: ChatViewProps) {
             onImageExpand={onExpandTimelineImageStable}
             onFileOpen={openFileAttachmentStable}
           />
-        ) : null}
-        {taskGraphs.length > 0 ? (
-          <div className="chat-content-lane flex flex-col gap-2 pb-4">
-            <TaskGraphCards environmentId={environmentId} graphs={taskGraphs} />
-          </div>
         ) : null}
         {hasQueuedTurns ? queuedRunsControl : null}
       </>
@@ -3545,11 +3455,6 @@ export default function ChatView(props: ChatViewProps) {
                               promptHistoryMessages={timelineMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
-                              onNewTaskGraph={
-                                newTaskGraph.canCreate && canOperateThread
-                                  ? () => void onNewTaskGraph()
-                                  : null
-                              }
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState
                               }
@@ -3942,18 +3847,6 @@ export default function ChatView(props: ChatViewProps) {
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
       <LinkPullRequestDialogHost />
-      {!isServerThread && activeThread && activeProject ? (
-        <DraftTaskGraphDialog
-          environmentId={environmentId}
-          projectId={activeProject.id}
-          threadId={activeThread.id}
-          baseRef={activeThreadBranch}
-          modelSelection={draftTaskGraphModel}
-          open={draftTaskGraphOpen}
-          onOpenChange={setDraftTaskGraphOpen}
-          onRun={onRunDraftTaskGraph}
-        />
-      ) : null}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>

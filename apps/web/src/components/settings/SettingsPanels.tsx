@@ -1,10 +1,3 @@
-import {
-  NumberField,
-  NumberFieldGroup,
-  NumberFieldDecrement,
-  NumberFieldInput,
-  NumberFieldIncrement,
-} from "../ui/number-field";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
@@ -401,13 +394,6 @@ export function useSettingsRestore(onRestored?: () => void) {
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = [
-    ...(settings.taskGraphAutoRun !== DEFAULT_UNIFIED_SETTINGS.taskGraphAutoRun
-      ? ["Run task graphs automatically"]
-      : []),
-    ...(settings.taskGraphMaxConcurrentNodes !==
-    DEFAULT_UNIFIED_SETTINGS.taskGraphMaxConcurrentNodes
-      ? ["Task graph nodes at once"]
-      : []),
     ...(theme !== "system" ? ["Theme"] : []),
     ...(!followSystem ? ["Follow system"] : []),
     ...(themeHalves !== null ? ["Theme mix"] : []),
@@ -625,8 +611,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
-      taskGraphAutoRun: DEFAULT_UNIFIED_SETTINGS.taskGraphAutoRun,
-      taskGraphMaxConcurrentNodes: DEFAULT_UNIFIED_SETTINGS.taskGraphMaxConcurrentNodes,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1563,7 +1547,6 @@ export function ThreadsSettingsPanel() {
     textGenerationModelInstanceEntries,
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
-  const mixedTaskGraphMaxConcurrentNodes = useScopedSettingsMixed(["taskGraphMaxConcurrentNodes"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
 
   return (
@@ -1597,79 +1580,6 @@ export function ThreadsSettingsPanel() {
               spellCheck={false}
               aria-label="Add project base directory"
             />
-          }
-        />
-        <SettingsRow
-          serverScoped
-          settingKeys={["taskGraphAutoRun"]}
-          {...searchableSetting("task-graph-auto-run")}
-          description="Task graphs agents propose start right away. When off, they wait as a draft you can edit and run. Agents follow your explicit wording either way."
-          resetAction={
-            settings.taskGraphAutoRun !== DEFAULT_UNIFIED_SETTINGS.taskGraphAutoRun ? (
-              <SettingResetButton
-                label="run task graphs automatically"
-                onClick={() =>
-                  updateSettings({ taskGraphAutoRun: DEFAULT_UNIFIED_SETTINGS.taskGraphAutoRun })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["taskGraphAutoRun"]}
-              checked={settings.taskGraphAutoRun}
-              onCheckedChange={(checked) => updateSettings({ taskGraphAutoRun: Boolean(checked) })}
-              aria-label="Run task graphs automatically"
-            />
-          }
-        />
-        <SettingsRow
-          serverScoped
-          settingKeys={["taskGraphMaxConcurrentNodes"]}
-          {...searchableSetting("task-graph-concurrency")}
-          description={
-            mixedTaskGraphMaxConcurrentNodes
-              ? "The selected targets run different numbers of task graph nodes at once."
-              : "Most task graph nodes that run at the same time on this environment, from 1 to 16."
-          }
-          resetAction={
-            settings.taskGraphMaxConcurrentNodes !==
-            DEFAULT_UNIFIED_SETTINGS.taskGraphMaxConcurrentNodes ? (
-              <SettingResetButton
-                label="task graph nodes at once"
-                onClick={() =>
-                  updateSettings({
-                    taskGraphMaxConcurrentNodes:
-                      DEFAULT_UNIFIED_SETTINGS.taskGraphMaxConcurrentNodes,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <NumberField
-              value={mixedTaskGraphMaxConcurrentNodes ? null : settings.taskGraphMaxConcurrentNodes}
-              min={1}
-              max={16}
-              step={1}
-              size="sm"
-              className="w-32"
-              onValueChange={(value) => {
-                if (value === null) return;
-                updateSettings({
-                  taskGraphMaxConcurrentNodes: Math.min(16, Math.max(1, Math.round(value))),
-                });
-              }}
-            >
-              <NumberFieldGroup>
-                <NumberFieldDecrement aria-label="Decrease task graph nodes at once" />
-                <NumberFieldInput
-                  aria-label="Task graph nodes at once"
-                  placeholder={mixedTaskGraphMaxConcurrentNodes ? "Mixed" : undefined}
-                />
-                <NumberFieldIncrement aria-label="Increase task graph nodes at once" />
-              </NumberFieldGroup>
-            </NumberField>
           }
         />
       </SettingsSection>

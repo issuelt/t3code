@@ -45,3 +45,8 @@ describe("WebSocket RPC contracts", () => {
     expect(Exit.isFailure(decode({ ...request, path: "/repo/.git/hooks" }))).toBe(true);
   });
 });
+
+it("does not expose task graph RPC methods", () => {
+  expect(Object.values(WS_METHODS).some((method) => /task.?graph/i.test(method))).toBe(false);
+  expect([...WsRpcGroup.requests.keys()].some((method) => /task.?graph/i.test(method))).toBe(false);
+});

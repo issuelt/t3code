@@ -1,10 +1,4 @@
-import {
-  EnvironmentId,
-  HomeWatch,
-  OrchestratorMcpEnvironmentTarget,
-  OrchestratorMcpFailure,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, HomeWatch, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -50,7 +44,7 @@ const ThreadWatchTool = Tool.make("t3_thread_watch", {
     "Home only. Choose which threads wake Home. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment. Threads Home launches are already watched. A watch ends when its thread is settled or archived. Returns what Home now watches.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "unwatch", "watch_all", "unwatch_all"]),
-    environmentId: OrchestratorMcpEnvironmentTarget,
+    environmentId: Schema.optional(EnvironmentId),
     threadId: Schema.optional(ThreadId),
   }),
   success: Schema.Struct({ watchAll: Schema.Boolean, watches: Schema.Array(HomeWatch) }),

@@ -130,7 +130,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_search: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readCaller();
+      const { caller, scope } = yield* readCaller();
       // Like the other project tools, an omitted project means the caller's own; a client
       // outside a thread, or Home, searches every project.
       const projectId =
@@ -142,7 +142,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       return {
         matches: matches.map((match) => ({
           ...match,
-          link: formatThreadLink(match.threadId, match.title),
+          link: formatThreadLink(match.threadId, match.title, scope.environmentId),
         })),
       };
     }),

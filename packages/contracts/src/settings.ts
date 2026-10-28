@@ -1121,10 +1121,6 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
-export const TaskGraphMaxConcurrentNodes = Schema.Int.check(
-  Schema.isBetween({ minimum: 1, maximum: 16 }),
-);
-
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1145,16 +1141,6 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /**
-   * Whether a task graph an agent proposes starts at once. Off leaves it as a
-   * draft for the user to edit and run. The agent may override this per graph
-   * when the user's wording asks for one or the other.
-   */
-  taskGraphAutoRun: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Most task graph nodes running at once on this environment. */
-  taskGraphMaxConcurrentNodes: TaskGraphMaxConcurrentNodes.pipe(
-    Schema.withDecodingDefault(Effect.succeed(4)),
-  ),
   // Retain the update-era key. On by default so restarts resume the work they
   // interrupted; recovery stops after three automatic continuations in a row.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
@@ -1523,8 +1509,6 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
-  taskGraphAutoRun: Schema.optionalKey(Schema.Boolean),
-  taskGraphMaxConcurrentNodes: Schema.optionalKey(TaskGraphMaxConcurrentNodes),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(

@@ -32,6 +32,8 @@ import {
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
+  OrchestratorMcpThreadWaitInput,
+  OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 import {
   OrchestrationV2DispatchCommandResult,
@@ -294,6 +296,7 @@ export const FleetRequest = Schema.Union([
   operation("projects.list", FleetProjectListInput),
   operation("threads.list", OrchestratorMcpThreadListInput),
   operation("threads.read", OrchestratorMcpThreadReadInput),
+  operation("threads.wait", OrchestratorMcpThreadWaitInput),
   operation("threads.launch", FleetThreadLaunchInput),
   operation("threads.send", OrchestratorMcpThreadSendInput),
   operation("threads.interrupt", OrchestratorMcpThreadInterruptInput),
@@ -312,6 +315,7 @@ export const FleetResults = {
   "projects.list": FleetProjectListResult,
   "threads.list": OrchestratorMcpThreadListResult,
   "threads.read": OrchestratorMcpThreadReadResult,
+  "threads.wait": OrchestratorMcpThreadWaitResult,
   "threads.launch": FleetThreadLaunchResult,
   "threads.send": OrchestratorMcpThreadSendResult,
   "threads.interrupt": OrchestratorMcpThreadInterruptResult,
