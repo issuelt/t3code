@@ -291,6 +291,16 @@ const make = Effect.gen(function* () {
     },
     (effect, origin) =>
       effect.pipe(
+        Effect.timeoutOrElse({
+          duration: "60 seconds",
+          orElse: () =>
+            Effect.fail(
+              new PeerLinkError({
+                reason: "unreachable",
+                message: `${origin} timed out while linking.`,
+              }),
+            ),
+        }),
         // Endpoint errors are mapped above; what is left is the transport or an
         // answer this version cannot decode.
         Effect.catchTags({
@@ -315,7 +325,13 @@ const make = Effect.gen(function* () {
   );
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
-    const origins = yield* Effect.forEach([input.url, ...(input.alternateUrls ?? [])], peerOrigin);
+    if ((input.alternateUrls?.length ?? 0) > 0) {
+      return yield* new PeerLinkError({
+        reason: "incompatible",
+        message: "Alternate addresses are not supported. Link the peer using its HTTPS address.",
+      });
+    }
+    const origins = yield* Effect.forEach([input.url], peerOrigin);
     const primary = origins[0]!;
     const descriptor = yield* describe(primary);
     if (Option.isNone(descriptor)) {

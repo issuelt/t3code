@@ -12,7 +12,7 @@ import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const PeerLink = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
-  /** Addresses the peer was linked at, tried in order. */
+  /** The address the peer was linked at. */
   urls: Schema.Array(TrimmedNonEmptyString),
   access: AuthMcpClientAccess,
   linkedAt: Schema.DateTimeUtc,
@@ -35,7 +35,7 @@ export type PeerLinkSummary = typeof PeerLinkSummary.Type;
 export const PeerLinkCreateInput = Schema.Struct({
   /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
   url: TrimmedNonEmptyString,
-  /** More addresses for the same peer, tried after `url`. */
+  /** Reserved for compatibility. Alternate addresses are currently rejected. */
   alternateUrls: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   /** A pairing code from the peer (`t3 pair` there, or its Connections settings). */
   pairingCode: TrimmedNonEmptyString,

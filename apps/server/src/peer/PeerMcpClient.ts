@@ -234,6 +234,16 @@ const make = Effect.gen(function* () {
     },
     (effect, input) =>
       effect.pipe(
+        Effect.timeoutOrElse({
+          duration: "65 seconds",
+          orElse: () =>
+            Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: "The linked environment timed out.",
+              }),
+            ),
+        }),
         Effect.tapError((error) =>
           links.recordOutcome(input.environmentId, { error: error.message }),
         ),

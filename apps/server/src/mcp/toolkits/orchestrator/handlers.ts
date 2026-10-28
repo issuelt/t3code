@@ -219,7 +219,12 @@ const handlers = {
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      if (yield* callerIsHome()) {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      if (
+        input.environmentId !== undefined &&
+        input.environmentId !== scope.environmentId &&
+        (yield* callerIsHome())
+      ) {
         let remaining = Math.min(60 * 60_000, Math.max(1, input.timeoutMs ?? 10 * 60_000));
         let runId = input.runId;
         while (true) {
@@ -235,7 +240,6 @@ const handlers = {
           runId = routed.value.runId ?? undefined;
         }
       }
-      const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
     }),

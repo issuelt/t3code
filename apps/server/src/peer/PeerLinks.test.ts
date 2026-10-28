@@ -333,12 +333,16 @@ it.effect("does not disclose a bearer to an impostor copying the public descript
             ),
       );
       const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({
-        url: b.url,
-        alternateUrls: [impostor],
-        pairingCode: pairing.credential,
-        access: "auto",
-      });
+      const rejected = yield* a.links
+        .link({
+          url: b.url,
+          alternateUrls: [impostor],
+          pairingCode: pairing.credential,
+          access: "auto",
+        })
+        .pipe(Effect.flip);
+      expect(rejected.message).toContain("Alternate addresses are not supported");
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
       yield* Ref.set(b.descriptor, descriptorOf("environment-other", "Other"));
       const failed = yield* probe(a).pipe(Effect.flip);
       expect(failed.message).toContain("did not answer");
@@ -492,7 +496,7 @@ it.effect(
             access: "auto",
           })
           .pipe(Effect.flip);
-        expect(lanAlternate.message).toContain("plain http");
+        expect(lanAlternate.message).toContain("Alternate addresses are not supported");
 
         yield* Ref.set(b.descriptor, laptop);
         const self = yield* a.links
