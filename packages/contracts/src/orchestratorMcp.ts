@@ -1,3 +1,4 @@
+import { hasOnlyPairedSurrogates } from "./unicode.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -47,7 +48,9 @@ const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)
 export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
   .check(
     Schema.makeFilter((value) =>
-      value.isWellFormed() ? true : "clientRequestId must contain valid paired Unicode surrogates.",
+      hasOnlyPairedSurrogates(value)
+        ? true
+        : "clientRequestId must contain valid paired Unicode surrogates.",
     ),
   )
   .annotate({ description: "Reuse it to retry the same call. A new call gets a new key." });

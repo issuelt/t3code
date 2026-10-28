@@ -1,7 +1,11 @@
+import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   injectHtmlRenderBootstrap,
+  htmlArtifactDocument,
+  htmlRenderThemeMessage,
+  stripHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
@@ -129,6 +133,163 @@ describe("htmlRenderFromToolItem", () => {
       ["html_render", result],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
+    }
+  });
+});
+
+describe("stripHtmlRenderBootstrap", () => {
+  it("removes the host bridge while keeping the page's scripts", () => {
+    const page =
+      '<html><head></head><body><script>document.body.textContent = "ready"</script></body></html>';
+    const result = stripHtmlRenderBootstrap(injectHtmlRenderBootstrap(page));
+    expect(result).not.toContain("t3/notifications/shortcuts");
+    expect(result).toContain('<script>document.body.textContent = "ready"</script>');
+  });
+});
+
+it("removes versioned and legacy bootstraps independently of their source formatting", () => {
+  const legacy = `<script>(function () { var s = document.getElementById('t3-theme');
+      /* older release */ notify('ui/open-link'); notify('ui/notifications/host-context-changed'); })();</script>`;
+  expect(stripHtmlRenderBootstrap(legacy)).toBe("");
+  expect(
+    stripHtmlRenderBootstrap('<script data-t3-html-render-bootstrap="2">different()</script>'),
+  ).toBe("");
+  const page = '<!-- <script>example</script> --><script>const text = "ui/open-link";</script>';
+  expect(stripHtmlRenderBootstrap(page)).toBe(page);
+});
+
+describe("htmlArtifactDocument", () => {
+  const theme = { appearance: "dark", variables: { "--background": "#123456" } } as const;
+
+  it("permits HTTPS resources explicitly while denying unspecified resource types", () => {
+    const html = htmlArtifactDocument("<p>Artifact</p>", theme);
+    const policy = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1];
+    if (!policy) throw new Error("Artifact resource policy is missing");
+    const directives = new Map(
+      policy.split(";").map((directive) => {
+        const [name, ...sources] = directive.trim().split(/\s+/);
+        return [name, sources];
+      }),
+    );
+    for (const resource of ["script", "style", "img", "font", "connect"]) {
+      expect(directives.get(`${resource}-src`), resource).toContain("https:");
+    }
+    expect(directives.get("default-src")).toEqual(["'none'"]);
+    expect(directives.get("form-action")).toEqual(["'none'"]);
+    expect(directives.get("base-uri")).toEqual(["about:"]);
+  });
+
+  it("executes the preserved page script and consumes HTTPS data after removing the inline bridge", async () => {
+    const html = htmlArtifactDocument(
+      injectHtmlRenderBootstrap(`<html><head>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">
+        <script src="https://cdn.example/chart.js"></script>
+        </head><body><img src="https://cdn.example/chart.png"><script>
+        globalThis.ready = fetch("https://data.example/chart.json")
+          .then(response => response.json())
+          .then(data => { document.body.textContent = data.title; });
+        </script></body></html>`),
+      theme,
+    );
+    const requests: string[] = [];
+    const style = { textContent: "" };
+    const body = { textContent: "" };
+    const context = NodeVM.createContext({
+      URL,
+      window: { parent: {}, addEventListener: () => {} },
+      document: {
+        body,
+        getElementById: () => style,
+        addEventListener: () => {},
+      },
+      fetch: async (url: string) => {
+        requests.push(url);
+        return Response.json({ title: "Loaded chart" });
+      },
+    });
+    for (const script of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+      if (!/\bsrc=/.test(script[1] ?? "")) NodeVM.runInContext(script[2] ?? "", context);
+    }
+    await NodeVM.runInContext("ready", context);
+    expect(requests).toEqual(["https://data.example/chart.json"]);
+    expect(body.textContent).toBe("Loaded chart");
+    expect(style.textContent).toContain("--background:#123456");
+    expect(html).toContain('href="https://fonts.googleapis.com/css2?family=Inter"');
+    expect(html).toContain('src="https://cdn.example/chart.js"');
+    expect(html).toContain('src="https://cdn.example/chart.png"');
+  });
+
+  it("initializes the theme before page scripts without retaining host requests", () => {
+    const html = htmlArtifactDocument(
+      injectHtmlRenderBootstrap("<script>interactive()</script>"),
+      theme,
+    );
+    expect(html).not.toContain("t3/notifications/shortcuts");
+    expect(html).not.toContain("window.parent.postMessage");
+    expect(html).toContain('<base href="about:blank">');
+    expect(html.indexOf("apply(")).toBeLessThan(html.indexOf("interactive()"));
+    expect(html).toContain("base-uri about:; form-action 'none'");
+  });
+
+  it("applies live parent themes and opens only ordinary web links without an opener", () => {
+    const html = htmlArtifactDocument("<p>Artifact</p>", theme);
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error("Artifact bootstrap is missing");
+    const style = { textContent: "", scrollIntoView: () => {} };
+    const parent = {};
+    const messages: Array<(event: unknown) => void> = [];
+    const clicks: Array<(event: unknown) => void> = [];
+    NodeVM.runInNewContext(script, {
+      URL,
+      window: {
+        parent,
+        addEventListener: (_name: string, listener: (event: unknown) => void) =>
+          messages.push(listener),
+      },
+      document: {
+        getElementById: () => style,
+        addEventListener: (_name: string, listener: (event: unknown) => void) =>
+          clicks.push(listener),
+      },
+    });
+    expect(style.textContent).toContain("--background:#123456");
+    const update = htmlRenderThemeMessage({
+      appearance: "light",
+      variables: { "--background": "#ffffff" },
+    });
+    messages[0]?.({ source: {}, data: update });
+    expect(style.textContent).toContain("--background:#123456");
+    messages[0]?.({ source: parent, data: update });
+    expect(style.textContent).toContain("color-scheme:light");
+    expect(style.textContent).toContain("--background:#ffffff");
+    for (const href of [
+      "https://example.com",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "/api/assets",
+      "#section",
+    ]) {
+      const link = {
+        matches: () => true,
+        getAttribute: () => href,
+        target: "",
+        rel: "",
+        removeAttribute: () => {},
+      };
+      let prevented = false;
+      clicks[0]?.({
+        composedPath: () => [link],
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+      if (href === "https://example.com") {
+        expect(prevented).toBe(false);
+        expect(link.target).toBe("_blank");
+        expect(link.rel).toBe("noopener noreferrer");
+      } else {
+        expect(prevented).toBe(true);
+      }
     }
   });
 });

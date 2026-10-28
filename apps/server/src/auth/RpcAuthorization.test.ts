@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  ProjectId,
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -448,5 +449,61 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([true, false])("authorizes CI details with the existing read scope: %s", (allowed) =>
+  Effect.gen(function* () {
+    const method = WS_METHODS.projectCiReadRun;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
+      ),
+    );
+    const handled: string[] = [];
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(method, (input) =>
+            Effect.sync(() => {
+              handled.push(input.runId);
+              return {
+                fetchedAt: "2026-10-28T11:00:00Z",
+                run: {
+                  id: input.runId,
+                  name: "CI",
+                  status: "completed",
+                  conclusion: "success",
+                  branch: "main",
+                  sha: "abc",
+                  url: "https://github.com/a/b/actions/runs/42",
+                  createdAt: "now",
+                  updatedAt: "now",
+                  jobs: [],
+                  jobsTruncated: false,
+                },
+              };
+            }),
+          ),
+          RpcAuthorization.layer(
+            allowed ? [AuthOrchestrationReadScope] : [AuthFilesystemReadScope],
+          ),
+        ),
+      ),
+    );
+    const request = client[method]({
+      projectId: ProjectId.make("p"),
+      remoteName: "upstream",
+      runId: "42",
+    });
+    if (allowed) {
+      expect((yield* request).run.id).toBe("42");
+      expect(handled).toEqual(["42"]);
+    } else {
+      expect(yield* request.pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+      });
+      expect(handled).toEqual([]);
+    }
   }).pipe(Effect.scoped),
 );

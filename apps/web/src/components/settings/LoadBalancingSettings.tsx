@@ -12,7 +12,7 @@ import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
-export const loadPreferences = [
+const loadPreferences = [
   { value: 100, label: "Prefer" },
   { value: 50, label: "Normal" },
   { value: 25, label: "Less often" },
@@ -21,7 +21,7 @@ export const loadPreferences = [
 
 type LoadPreference = (typeof loadPreferences)[number]["value"];
 
-export function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
+function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
   if (weight === undefined || weight === 50) return 50;
   if (weight === 0) return 0;
   return weight < 50 ? 25 : 100;

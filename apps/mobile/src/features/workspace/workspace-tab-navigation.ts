@@ -220,7 +220,7 @@ export function workspaceTabNavigationState<
   }
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   const detail =
-    options.columns && tab !== "usage"
+    options.columns && (tab === "threads" || tab === "pullRequests")
       ? detailRoute(state, tab, selections, options.check)
       : undefined;
   const routes = [...[home, ...(detail ? [detail] : [])].map(keyed), ...overlays];

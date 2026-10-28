@@ -1,3 +1,4 @@
+import { HomeShortcuts } from "./HomeShortcuts";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -702,6 +703,11 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      <HomeShortcuts
+        selectedEnvironmentId={props.selectedEnvironmentId}
+        selectedThreadKey={selectedThreadKey}
+        onSelectThread={onSelectThread}
+      />
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           gutter={primaryColumn ? 8 : 0}

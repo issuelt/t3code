@@ -5,7 +5,8 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
-import { Maximize2Icon } from "lucide-react";
+import { Maximize2Icon, PanelRightOpenIcon } from "lucide-react";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useEffect, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
@@ -78,6 +79,33 @@ export function HtmlRenderFrame(props: {
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+            {props.threadRef ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Open beside chat"
+                      size="icon-xs"
+                      variant="glass"
+                      onClick={() => {
+                        if (props.threadRef)
+                          useRightPanelStore.getState().openAttachment(props.threadRef, {
+                            type: "file",
+                            id: attachmentId,
+                            name: fileName,
+                            mimeType: "text/html",
+                            sizeBytes: 0,
+                            htmlRender: true,
+                          });
+                      }}
+                    />
+                  }
+                >
+                  <PanelRightOpenIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="left">Open beside chat</TooltipPopup>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={

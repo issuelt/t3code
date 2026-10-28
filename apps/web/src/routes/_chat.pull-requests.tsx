@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
 import { SORT_OPTIONS } from "../components/pullRequest/pullRequestListOptions";
 import { type PullRequestsSearch } from "../components/pullRequest/usePullRequestListView";
+import { ProjectCiPage } from "../components/projectCi/ProjectCiPage";
 import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
@@ -29,6 +30,7 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
 
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
+    view: raw.view === "ci" ? "ci" : undefined,
     involvement:
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:
@@ -73,5 +75,5 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       : {}),
     ...pullRequestSearchLabels(raw.labels),
   }),
-  component: PullRequestsPage,
+  component: () => (Route.useSearch().view === "ci" ? <ProjectCiPage /> : <PullRequestsPage />),
 });
