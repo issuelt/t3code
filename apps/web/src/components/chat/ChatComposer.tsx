@@ -196,8 +196,6 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand } from "../../keybindings";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -248,7 +246,7 @@ const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidErro
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 import { toastManager } from "../ui/toast";
-import { PlayIcon, ShieldIcon, WorkflowIcon } from "lucide-react";
+import { PlayIcon, ShieldIcon } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
@@ -391,8 +389,6 @@ export interface ChatComposerProps {
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
-  /** Starts a task graph on this thread, creating the thread first on a new chat. */
-  onNewTaskGraph: (() => void) | null;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -559,7 +555,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptHistoryMessages,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
-    onNewTaskGraph,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -3879,25 +3874,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabled={composerTextUnavailable}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
                   />
-                  {onNewTaskGraph ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            onPointerDown={(event) => event.preventDefault()}
-                            onClick={onNewTaskGraph}
-                            aria-label="New task graph"
-                          />
-                        }
-                      >
-                        <WorkflowIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup>New task graph</TooltipPopup>
-                    </Tooltip>
-                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

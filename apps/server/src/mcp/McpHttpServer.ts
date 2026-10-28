@@ -16,7 +16,9 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   OrchestratorMcpFailure,
   PreviewAutomationError,
+  ProviderInteractionMode,
   type RunId,
+  RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -64,8 +66,6 @@ import {
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
-import * as TaskGraphHandlers from "./toolkits/taskGraph/handlers.ts";
-import { TaskGraphToolkit } from "./toolkits/taskGraph/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
@@ -154,6 +154,35 @@ const normalizeMcpHttpResponse = (
 // Session tokens are `<payload>.<signature>`; registry tokens are a bare base64url secret.
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
+const decodeModeLimit = Schema.decodeUnknownOption(
+  Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+);
+const parseModeLimit = (value: string) => {
+  const [runtimeMode, interactionMode, ...rest] = value.trim().split("/");
+  return rest.length === 0 ? decodeModeLimit({ runtimeMode, interactionMode }) : Option.none();
+};
+
+const invalidModeLimit = HttpServerResponse.jsonUnsafe(
+  {
+    error: "invalid_mode_limit",
+    message: "T3-Mode-Limit must be <runtimeMode>/<interactionMode>, e.g. auto/default.",
+  },
+  { status: 400, headers: { "cache-control": "no-store" } },
+);
+
+/** Applies a client's requested mode limit; undefined when the header is malformed. */
+const withModeLimit = (
+  invocation: McpInvocationContext.McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationScope | undefined => {
+  const header = request.headers[McpInvocationContext.MODE_LIMIT_HEADER];
+  if (header === undefined || invocation.client === undefined) return invocation;
+  const limit = parseModeLimit(header);
+  return Option.isNone(limit)
+    ? undefined
+    : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
+};
+
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
@@ -179,8 +208,10 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
+    const limited = withModeLimit(invocation, request);
+    if (limited === undefined) return invalidModeLimit;
     return yield* httpEffect.pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, limited),
       Effect.map(normalizeMcpHttpResponse),
     );
   }) satisfies McpAuthMiddleware;
@@ -1040,8 +1071,6 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
-const layerTaskGraphToolkit = toolkitRegistration(TaskGraphToolkit, TaskGraphHandlers.layer);
-
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -1057,7 +1086,7 @@ const layerEnvironmentToolkit = toolkitRegistration(
   EnvironmentHandlers.layer,
 ).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
-const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
@@ -1099,7 +1128,6 @@ export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
-  layerTaskGraphToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerHomeRegistration,

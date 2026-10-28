@@ -11,6 +11,7 @@ import {
   OrchestratorMcpThreadReadResult,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -49,12 +50,17 @@ import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import { notHomeLayer } from "../../home/HomeTestkit.ts";
+import * as HomeService from "../../home/HomeService.ts";
+import * as FleetBroker from "../../home/FleetBroker.ts";
+import * as FleetService from "../../home/FleetService.ts";
+import * as HomeWorkspace from "../../home/HomeWorkspace.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
+import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -73,6 +79,7 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
 );
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -105,6 +112,7 @@ it.effect("checks capability through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     expect(server.tools.some(({ tool }) => tool.name === "t3_thread_organize")).toBe(true);
+    expect(server.tools.some(({ tool }) => /task.?graph/i.test(tool.name))).toBe(false);
     const result = yield* server
       .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
       .pipe(
@@ -606,6 +614,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       ),
@@ -664,6 +673,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
       ),
     ),
   ),
@@ -749,6 +759,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         ),
       ),
     ),
@@ -840,6 +851,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       ),
@@ -901,3 +913,99 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+it.effect("thread search links identify the environment that returned them", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "t3_thread_search", arguments: { query: "work" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.structuredContent).toMatchObject({
+      matches: [{ link: "[Work](t3-thread://v1/worker?environmentId=mcp-core-environment)" }],
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(
+          Layer.mock(ThreadSearch.ThreadSearch)({
+            searchThreads: () =>
+              Effect.succeed({
+                matches: [
+                  {
+                    threadId: ThreadId.make("worker"),
+                    projectId: ProjectId.make("project"),
+                    title: "Work",
+                    source: "title",
+                  },
+                ],
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(notHomeLayer),
+      ),
+    ),
+  ),
+);
+
+it.effect("Home waits for a remote thread through the fleet", () => {
+  const remote = EnvironmentId.make("remote");
+  const requests: Array<unknown> = [];
+  const home = Layer.mergeAll(
+    Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(true) }),
+    Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home" }),
+    Layer.mock(FleetService.FleetService)({}),
+    Layer.mock(FleetBroker.FleetBroker)({
+      invoke: (environmentId, input) => {
+        requests.push({ environmentId, input });
+        return Effect.succeed({ threadId: "worker", runId: null, status: "idle", timedOut: false });
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_wait",
+        arguments: { environmentId: remote, threadId: "worker", timeoutMs: 1000 },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.structuredContent).toMatchObject({
+      threadId: "worker",
+      status: "idle",
+      timedOut: false,
+    });
+    expect(requests).toMatchObject([
+      {
+        environmentId: remote,
+        input: { request: { op: "threads.wait", input: { threadId: "worker", timeoutMs: 1000 } } },
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      layerOrchestratorToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(home),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      ),
+    ),
+  );
+});

@@ -39,6 +39,7 @@ import {
 } from "../mcp/OrchestratorMcpService.ts";
 import { resultFromThread } from "../mcp/ThreadMetadataMcpService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -250,6 +251,24 @@ const make = Effect.gen(function* () {
       return (yield* readThreadPage(threads, target, shell, input, environmentId)).result;
     }),
 
+    "threads.wait": Effect.fn("FleetService.threads.wait")(function* (input) {
+      const target = yield* loadShell(input.threadId);
+      const result = yield* threads
+        .waitForThread({
+          projectId: target.projectId,
+          threadId: input.threadId,
+          ...(input.runId === undefined ? {} : { runId: input.runId }),
+          timeoutMs: Math.min(50_000, Math.max(1, input.timeoutMs ?? 50_000)),
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      return {
+        threadId: input.threadId,
+        runId: result.run?.id ?? null,
+        status: result.run === null ? "idle" : runOutcome(result.run),
+        timedOut: result.timedOut,
+      };
+    }),
+
     "threads.launch": Effect.fn("FleetService.threads.launch")(function* (input, actor) {
       // Home picks the id so its watch exists first; no caller may pick another kind of id.
       if (input.threadId !== undefined && !isHomeLaunchedThreadId(input.threadId)) {
@@ -284,7 +303,10 @@ const make = Effect.gen(function* () {
           "Pass modelSelection; this environment has no default model.",
         );
       }
-      const id = yield* commandId(actor, "launch");
+      const id =
+        input.threadId === undefined
+          ? yield* commandId(actor, "launch")
+          : CommandId.make(`fleet:launch:${input.threadId}`);
       const messageId = MessageId.make(id);
       const result = yield* launches
         .launch({

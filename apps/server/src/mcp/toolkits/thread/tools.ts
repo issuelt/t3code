@@ -3,6 +3,7 @@ import {
   FleetRequestRespondInput,
   FleetRequestsListResult,
   FleetThreadOrganizeInput,
+  OrchestratorMcpEnvironmentTarget,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -79,6 +80,7 @@ const QueueTool = Tool.make("t3_queue", {
       "reorder",
       "promote_to_steer",
     ]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     queuedRunId: Schema.optional(RunId),
     text: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
@@ -101,7 +103,7 @@ const PendingRequestTool = Tool.make("t3_pending_request", {
     "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`. Only Home lists, reads, and decides approvals (`decision`), in any thread in any environment.",
   parameters: Schema.Struct({
     action: Schema.Literals(["list", "read", "respond"]),
-    environmentId: FleetRequestRespondInput.fields.environmentId,
+    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     requestId: Schema.optional(RuntimeRequestId),
     answers: FleetRequestRespondInput.fields.answers,
@@ -127,6 +129,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   description:
     "Read a thread's provider, model, and modes, or set its provider, model, and options with `modelSelection`. Omit `threadId` for this thread. Permission modes stay. Values from `orchestrator_capabilities`.",
   parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     modelSelection: Schema.optional(ModelSelection),
   }),
@@ -139,6 +142,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status"]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
@@ -164,6 +168,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   description:
     "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread or for Home. Not exhaustive.",
   parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),
   }),
@@ -193,7 +198,10 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
     "Run one scheduled task now. Needs a full-access or default caller. Returns its thread, or null if not started. Success means started, not finished.",
-  parameters: Schema.Struct({ taskId: ScheduledTaskId }),
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    taskId: ScheduledTaskId,
+  }),
   success: Schema.Struct({
     taskId: ScheduledTaskId,
     threadId: ScheduledTask.fields.threadId,

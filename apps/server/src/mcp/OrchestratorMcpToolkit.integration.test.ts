@@ -47,6 +47,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { notHomeLayer } from "../home/HomeTestkit.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(notHomeLayer),
@@ -222,6 +223,7 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(layerProviderRegistry),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(layerUnusedScheduledTaskStub),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provideMerge(
             SecretRequests.layer.pipe(

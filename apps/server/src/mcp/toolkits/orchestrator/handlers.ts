@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { callerIsHome, routeHome } from "../../homeRouting.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -105,6 +106,8 @@ const handlers = {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.scheduleTask(scope, { ...input, prompt, schedule });
         }),
+      // A scheduled run starts long after its caller, with nothing to carry the link.
+      { refused: "schedule tasks in this environment" },
     ),
     McpToolAccess.writes(
       ({ scheduledTaskId, prompt, title, schedule, enabled, bindToCurrentThread }) =>
@@ -216,9 +219,32 @@ const handlers = {
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
+      if (yield* callerIsHome()) {
+        let remaining = Math.min(60 * 60_000, Math.max(1, input.timeoutMs ?? 10 * 60_000));
+        let runId = input.runId;
+        while (true) {
+          const timeoutMs = Math.min(remaining, 50_000);
+          const routed = yield* routeHome(input.environmentId, "threads.wait", {
+            ...input,
+            runId,
+            timeoutMs,
+          });
+          if (Option.isNone(routed)) break;
+          remaining -= timeoutMs;
+          if (!routed.value.timedOut || remaining <= 0) return routed.value;
+          runId = routed.value.runId ?? undefined;
+        }
+      }
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
+    }),
+  ),
+  t3_environment_links: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const forwarding = yield* PeerForwarding.PeerForwarding;
+      return yield* forwarding.links(scope);
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(

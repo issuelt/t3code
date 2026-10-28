@@ -16,8 +16,6 @@ import { FleetService } from "../home/FleetService.ts";
 import { HomeService } from "../home/HomeService.ts";
 import { HomeWorkspace } from "../home/HomeWorkspace.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
-import { TaskGraphPeers } from "../taskGraph/TaskGraphPeers.ts";
-import { TaskGraphService } from "../taskGraph/TaskGraphService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
@@ -29,6 +27,7 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
+import { PeerForwarding } from "../peer/PeerForwarding.ts";
 import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
@@ -55,6 +54,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
+  Layer.mock(PeerForwarding)({}),
   Layer.mock(PreviewAutomationBroker)({}),
   Layer.mock(PreviewBrowser)({}),
   Layer.mock(PreviewManager)({}),
@@ -79,8 +79,6 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(HomeService)({ available: false }),
   Layer.mock(HomeWorkspace)({ root: "" }),
   Layer.mock(PullRequestService)({}),
-  Layer.mock(TaskGraphPeers)({}),
-  Layer.mock(TaskGraphService)({}),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");

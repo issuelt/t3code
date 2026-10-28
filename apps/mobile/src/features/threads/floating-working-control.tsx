@@ -29,8 +29,6 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
-import { SubagentStatusDot } from "./SubagentStatusDot";
-import type { TaskGraphSegment } from "./task-graph-presentation";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
@@ -76,8 +74,6 @@ export function FloatingWorkingControl(props: {
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
-  readonly taskGraph: TaskGraphSegment | null;
-  readonly onOpenTaskGraph: () => void;
   readonly queuedCount: number;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
@@ -91,14 +87,11 @@ export function FloatingWorkingControl(props: {
       ? props.status.action
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
-  const [taskGraphWidth, setTaskGraphWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
   const hasAgents = agents !== null;
-  const taskGraph = props.taskGraph;
-  const hasTaskGraph = taskGraph !== null;
   // Segments keep their measured width; only the status label absorbs the
   // remainder, so a long "Working 12m 04s" truncates before a count does.
   const labelWidth = Math.max(
@@ -109,7 +102,6 @@ export function FloatingWorkingControl(props: {
       (action !== null ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
-      (hasTaskGraph ? taskGraphWidth : 0) -
       (hasPreview ? previewWidth : 0),
   );
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
@@ -142,7 +134,7 @@ export function FloatingWorkingControl(props: {
     capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents || hasTaskGraph || hasPreview;
+  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
   useEffect(() => {
     if (!hasStatus) {
       measuredWidthRef.current = null;
@@ -163,7 +155,6 @@ export function FloatingWorkingControl(props: {
   const previewCompact =
     hasStatus ||
     hasAgents ||
-    hasTaskGraph ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
@@ -171,7 +162,7 @@ export function FloatingWorkingControl(props: {
     props.status?.kind === "child-input" ||
     props.status?.kind === "background";
   const capsuleInteractive =
-    statusInteractive || action !== null || hasQueue || hasAgents || hasTaskGraph || hasPreview;
+    statusInteractive || action !== null || hasQueue || hasAgents || hasPreview;
   const statusContent =
     props.status !== null ? (
       <View
@@ -250,26 +241,6 @@ export function FloatingWorkingControl(props: {
           </Text>
         </Pressable>
       ) : null}
-      {taskGraph !== null ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Open task graphs, ${taskGraph.accessibilityLabel}`}
-          accessibilityHint="Opens this thread's task graphs"
-          onPress={props.onOpenTaskGraph}
-          onLayout={(event) => setTaskGraphWidth(settleWidth(event.nativeEvent.layout.width))}
-          // Capped like the queue so agents, graph and queue still fit on a narrow screen.
-          style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.4 }}
-          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
-        >
-          {hasStatus || hasPreview || hasAgents ? (
-            <View className="absolute left-0 h-4 w-px bg-border" />
-          ) : null}
-          <SubagentStatusDot tone={taskGraph.tone} />
-          <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
-            {taskGraph.label}
-          </Text>
-        </Pressable>
-      ) : null}
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
@@ -280,7 +251,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview || hasAgents || hasTaskGraph ? (
+          {hasStatus || hasPreview || hasAgents ? (
             <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground-muted" />
