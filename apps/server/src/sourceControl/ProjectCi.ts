@@ -7,8 +7,7 @@ import {
   type ProjectCiRemote,
   type ProjectCiResult,
 } from "@t3tools/contracts";
-import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
-import * as Redacted from "effect/Redacted";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -120,7 +119,7 @@ export class ProjectCi extends Context.Service<
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const host = yield* SourceControlHost.SourceControlHost;
-  const credentials = yield* GitHubCredentials.GitHubCredentials;
+  const github = yield* GitHubRest.GitHubRest;
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const resolve = Effect.fn("ProjectCi.resolve")(function* (input: ProjectCiInput) {
     const project = yield* projects
@@ -197,56 +196,61 @@ const make = Effect.gen(function* () {
         return base;
       }
     };
-    const credential =
-      provider === "github"
-        ? yield* credentials
-            .get(selected.host)
-            .pipe(Effect.mapError(() => new ProjectCiError({ reason: "authentication" })))
-        : null;
     const api = (endpoint: string) =>
-      host.process
-        .run({
-          operation: "ProjectCi.read",
-          command: provider === "github" ? "gh" : "glab",
-          args: ["api", "--hostname", selected.host, endpoint],
-          cwd,
-          ...(credential
-            ? {
-                env: {
-                  GH_TOKEN:
-                    selected.host === "github.com" || selected.host.endsWith(".ghe.com")
-                      ? Redacted.value(credential.token)
-                      : "",
-                  GITHUB_TOKEN: "",
-                  GH_ENTERPRISE_TOKEN:
-                    selected.host === "github.com" || selected.host.endsWith(".ghe.com")
-                      ? ""
-                      : Redacted.value(credential.token),
-                  GITHUB_ENTERPRISE_TOKEN: "",
-                  GH_PROMPT_DISABLED: "1",
-                },
-              }
-            : { env: gitlabEnvironment }),
-          concurrency:
-            provider === "github"
-              ? GitHubCredentials.GH_PROCESS_CONCURRENCY
-              : { key: `glab:${selected.host}`, limit: 3 },
-          timeoutMs: 15_000,
-          maxOutputBytes: 1024 * 1024,
-          classifyFailure: (stderr) =>
-            /glab auth login|not authenticated|\b401\b/i.test(stderr) ? "authentication" : null,
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new ProjectCiError({
-                reason:
-                  error._tag === "VcsProcessExitError" && error.failureKind === "authentication"
-                    ? "authentication"
-                    : "request_failed",
-              }),
-          ),
-        );
+      provider === "github"
+        ? github
+            .rest({
+              host: selected.host,
+              operation: "ProjectCi.read",
+              path: endpoint,
+              timeout: "15 seconds",
+              maxResponseBytes: 1024 * 1024,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new ProjectCiError({
+                    reason:
+                      error._tag === "GitHubApiAuthenticationError" ||
+                      error._tag === "GitHubCliMissingError" ||
+                      error._tag === "GitHubNotSignedInError" ||
+                      error._tag === "GitHubHostDisabledError" ||
+                      error._tag === "GitHubCliFailedError"
+                        ? "authentication"
+                        : "request_failed",
+                  }),
+              ),
+              Effect.flatMap((response) =>
+                response.truncated || response.invalidUtf8
+                  ? Effect.fail(new ProjectCiError({ reason: "invalid_response" }))
+                  : Effect.succeed(response.body),
+              ),
+            )
+        : host.process
+            .run({
+              operation: "ProjectCi.read",
+              command: "glab",
+              args: ["api", "--hostname", selected.host, endpoint],
+              cwd,
+              env: gitlabEnvironment,
+              concurrency: { key: `glab:${selected.host}`, limit: 3 },
+              timeoutMs: 15_000,
+              maxOutputBytes: 1024 * 1024,
+              classifyFailure: (stderr) =>
+                /glab auth login|not authenticated|\b401\b/i.test(stderr) ? "authentication" : null,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new ProjectCiError({
+                    reason:
+                      error._tag === "VcsProcessExitError" && error.failureKind === "authentication"
+                        ? "authentication"
+                        : "request_failed",
+                  }),
+              ),
+              Effect.map((response) => response.stdout),
+            );
     return { api, apiBase, selectedRemote, provider, selected };
   });
   const decode = <A, I>(schema: Schema.Codec<A, I>, raw: string) =>
@@ -317,7 +321,7 @@ const make = Effect.gen(function* () {
     });
     if (provider === "github") {
       const response = yield* api(`repos/${selected.repository}/actions/runs?per_page=10`);
-      const data = yield* decode(githubRuns, response.stdout);
+      const data = yield* decode(githubRuns, response);
       const collected = yield* collectRuns(
         data.workflow_runs,
         ["queued", "in_progress", "waiting", "requested", "pending"],
@@ -325,7 +329,7 @@ const make = Effect.gen(function* () {
           api(
             `repos/${selected.repository}/actions/runs?status=${status}&per_page=100&page=${page}`,
           ).pipe(
-            Effect.flatMap((response) => decode(githubRuns, response.stdout)),
+            Effect.flatMap((response) => decode(githubRuns, response)),
             Effect.map((data) => data.workflow_runs),
           ),
       );
@@ -341,13 +345,13 @@ const make = Effect.gen(function* () {
     }
     const projectPath = encodeURIComponent(selected.repository);
     const response = yield* api(`projects/${projectPath}/pipelines?per_page=10`);
-    const data = yield* decode(gitlabRuns, response.stdout);
+    const data = yield* decode(gitlabRuns, response);
     const collected = yield* collectRuns(
       data,
       ["created", "waiting_for_resource", "preparing", "pending", "running"],
       (status, page) =>
         api(`projects/${projectPath}/pipelines?status=${status}&per_page=100&page=${page}`).pipe(
-          Effect.flatMap((response) => decode(gitlabRuns, response.stdout)),
+          Effect.flatMap((response) => decode(gitlabRuns, response)),
         ),
     );
     const runs = collected.data.map((run) => gitlabSummary(run, apiBase));
@@ -371,8 +375,8 @@ const make = Effect.gen(function* () {
     const response = yield* api(endpoint);
     const run =
       provider === "github"
-        ? githubSummary(yield* decode(githubRun, response.stdout), apiBase)
-        : gitlabSummary(yield* decode(gitlabRun, response.stdout), apiBase);
+        ? githubSummary(yield* decode(githubRun, response), apiBase)
+        : gitlabSummary(yield* decode(gitlabRun, response), apiBase);
     const jobs: Array<ProjectCiRunDetails["jobs"][number]> = [];
     let jobsError: ProjectCiRunDetails["jobsError"];
     let jobsTruncated = false;
@@ -380,7 +384,7 @@ const make = Effect.gen(function* () {
       const result = yield* api(`${endpoint}/jobs?per_page=100&page=${page}`).pipe(
         Effect.flatMap((response) =>
           provider === "github"
-            ? decode(githubJobs, response.stdout).pipe(
+            ? decode(githubJobs, response).pipe(
                 Effect.map((data) =>
                   data.jobs.map((job) => ({
                     name: job.name,
@@ -392,7 +396,7 @@ const make = Effect.gen(function* () {
                   })),
                 ),
               )
-            : decode(gitlabJobs, response.stdout).pipe(
+            : decode(gitlabJobs, response).pipe(
                 Effect.map((data) =>
                   data.map((job) => ({
                     name: job.name,

@@ -1,4 +1,3 @@
-import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as ProjectCi from "./sourceControl/ProjectCi.ts";
 import { workerLive as AccountFallbackWorkerLive } from "./orchestration-v2/AccountFallbackWorker.ts";
 import { AutoFallbackCooldownTrackerLive } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
@@ -658,9 +657,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(
     ProjectCi.layer.pipe(
       Layer.provide(RuntimeLayer.layerProjectService),
-      Layer.provide(
-        GitHubCredentials.layer.pipe(Layer.provide(layerSourceControlProviderRegistry)),
-      ),
       Layer.provide(layerSourceControlProviderRegistry),
     ),
   ),

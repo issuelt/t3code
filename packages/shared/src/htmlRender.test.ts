@@ -2,6 +2,7 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_ARTIFACT_SANDBOX,
   injectHtmlRenderBootstrap,
   htmlArtifactDocument,
   htmlRenderThemeMessage,
@@ -160,6 +161,13 @@ it("removes versioned and legacy bootstraps independently of their source format
 
 describe("htmlArtifactDocument", () => {
   const theme = { appearance: "dark", variables: { "--background": "#123456" } } as const;
+
+  it("allows linked tabs to use their own origin without granting the artifact host-origin access", () => {
+    const permissions = HTML_ARTIFACT_SANDBOX.split(" ");
+    expect(permissions).toContain("allow-popups-to-escape-sandbox");
+    expect(permissions).not.toContain("allow-same-origin");
+    expect(permissions).not.toContain("allow-top-navigation");
+  });
 
   it("permits HTTPS resources explicitly while denying unspecified resource types", () => {
     const html = htmlArtifactDocument("<p>Artifact</p>", theme);

@@ -448,7 +448,7 @@ export function stripHtmlRenderBootstrap(html: string): string {
   });
 }
 
-export const HTML_ARTIFACT_SANDBOX = "allow-scripts allow-popups";
+export const HTML_ARTIFACT_SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox";
 
 export function htmlArtifactDocument(html: string, theme: HtmlRenderTheme): string {
   const initialTheme = JSON.stringify(theme).replace(/</g, "\\u003c");
