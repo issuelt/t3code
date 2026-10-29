@@ -2067,6 +2067,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const threadId = ThreadId.make("thread:foundation-coordination-lane");
       const resultEffectId = "effect:foundation-coordination-lane:a-result";
       const providerEffectId = "effect:foundation-coordination-lane:b-provider";
+      const onlineResultEffectId = "effect:foundation-coordination-lane:c-online-result";
       yield* outbox.enqueue([
         {
           id: resultEffectId,
@@ -2108,13 +2109,39 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         delayMs: 30_000,
       });
 
-      const provider = yield* outbox.claimNext({
-        workerId: "critical-lane-worker",
-        leaseDurationMs: 30_000,
+      yield* outbox.enqueue([
+        {
+          id: onlineResultEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "coordination.result",
+            requester: {
+              environmentId: EnvironmentId.make("environment:online-requester"),
+              threadId: ThreadId.make("thread:online-requester"),
+            },
+            requestMessageId: MessageId.make("message:foundation-coordination-lane:online"),
+            sourceRunId: RunId.make("run:foundation-coordination-lane:source"),
+            text: "Another answer",
+          },
+        },
+      ]);
+      const claimed = new Map<string, string>();
+      for (const workerId of ["critical-lane-worker", "online-result-worker"]) {
+        const next = yield* outbox.claimNext({ workerId, leaseDurationMs: 30_000 });
+        if (Option.isSome(next)) claimed.set(next.value.id, workerId);
+      }
+      assert.deepEqual(
+        [...claimed.keys()].toSorted(),
+        [providerEffectId, onlineResultEffectId].toSorted(),
+      );
+      // The suite shares one database; later tests count unsettled effects.
+      for (const [effectId, workerId] of claimed) yield* outbox.succeed({ effectId, workerId });
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["coordination.result"],
+        reason: "test cleanup",
       });
-      assert.isTrue(Option.isSome(provider));
-      if (Option.isNone(provider)) return;
-      assert.equal(provider.value.id, providerEffectId);
     }),
   );
 

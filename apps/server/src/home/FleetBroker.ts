@@ -37,6 +37,8 @@ const decodeResult = Object.fromEntries(
 
 /** Long enough for a slow launch on a remote machine; reads finish far sooner. */
 const REQUEST_TIMEOUT = Duration.seconds(90);
+// Above SourceControlRepositoryService's 120 s clone limit, so the clone's own error comes back.
+const CLONE_REQUEST_TIMEOUT = Duration.seconds(130);
 
 export interface FleetReach {
   /** Whether a desktop renderer is relaying. */
@@ -189,7 +191,9 @@ const make = Effect.gen(function* () {
       });
       if (Option.isSome(offered)) return yield* offered.value;
       const settled = yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOption(REQUEST_TIMEOUT),
+        Effect.timeoutOption(
+          invoke.request.op === "projects.clone" ? CLONE_REQUEST_TIMEOUT : REQUEST_TIMEOUT,
+        ),
         Effect.ensuring(
           SynchronizedRef.update(state, (current) => {
             if (!current.pending.has(requestId)) return current;

@@ -323,11 +323,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // Titles and requester-bound results run beside turn work; a result waiting on an
-    // offline requester must not stall the responder thread.
+    // Titles run beside turn work in their own lane. Each requester-bound result is its own
+    // lane: one waiting on an offline requester must not stall the thread or other results.
     const effectLane = (table: "candidate" | "active") =>
       sql.unsafe(
-        `CASE WHEN ${table}.effect_type IN ('thread-title.generate', 'coordination.result') THEN ${table}.effect_type ELSE '' END`,
+        `CASE ${table}.effect_type WHEN 'thread-title.generate' THEN 'title' WHEN 'coordination.result' THEN 'result:' || ${table}.rowid ELSE '' END`,
       );
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     const claimableCandidatePredicate = (

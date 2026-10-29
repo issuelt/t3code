@@ -12,6 +12,9 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
+import * as Fiber from "effect/Fiber";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
@@ -27,7 +30,9 @@ const environmentId = EnvironmentId.make("hub");
 const homeProjectId = ProjectId.make("home-project");
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
 
-const makeHome = () => {
+const makeHome = (
+  options: { readonly invoke?: FleetBroker.FleetBroker["Service"]["invoke"] } = {},
+) => {
   // Sends to fail before one succeeds, to model a Home that cannot be woken yet.
   const sendFailures = { remaining: 0 };
   const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -50,10 +55,12 @@ const makeHome = () => {
       Layer.mergeAll(
         NodeCrypto.layer,
         Layer.mock(FleetBroker.FleetBroker)({
-          invoke: () =>
-            Effect.fail(
-              new OrchestratorMcpFailure({ code: "environment_unavailable", message: "Offline" }),
-            ),
+          invoke:
+            options.invoke ??
+            (() =>
+              Effect.fail(
+                new OrchestratorMcpFailure({ code: "environment_unavailable", message: "Offline" }),
+              )),
         }),
         Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
           getEnvironmentId: Effect.succeed(environmentId),
@@ -299,6 +306,30 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("a stalled environment does not hold Home's lock while a report classifies it", () => {
+  const asked = Deferred.makeUnsafe<void>();
+  const { layer, sent } = makeHome({
+    invoke: () => Deferred.succeed(asked, undefined).pipe(Effect.andThen(Effect.never)),
+  });
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    const report = yield* home
+      .report({
+        events: [
+          { ...event("stalled", "completed"), environmentId: EnvironmentId.make("stalled") },
+        ],
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(asked);
+    yield* home.disable;
+    yield* TestClock.adjust("10 seconds");
+    yield* Fiber.join(report);
+    expect(sent).toHaveLength(0);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("delivers healthy blockers and unresolved remote completions in the same report", () => {
   const { layer, sent } = makeHome();
