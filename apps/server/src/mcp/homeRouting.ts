@@ -47,6 +47,7 @@ const CHANGES_STATE = {
   capabilities: false,
   "projects.list": false,
   "projects.create": true,
+  "projects.update": true,
   "projects.clone": true,
   "threads.search": false,
   "threads.list": false,

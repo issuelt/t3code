@@ -27,7 +27,12 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
-import { cloneProject, createProject, projectFailure } from "../../projectOperations.ts";
+import {
+  cloneProject,
+  createProject,
+  projectFailure,
+  updateProject,
+} from "../../projectOperations.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 /** Require project worktrees so launches cannot target arbitrary host directories. */
@@ -348,12 +353,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     // registered workspace is still refused.
     { linkedCallers: "allowed" },
   ),
-  t3_project_update: McpToolAccess.writesEnvironment((input) =>
+  t3_project_update: McpToolAccess.writesEnvironment(({ environmentId, ...input }) =>
     Effect.gen(function* () {
-      const projects = yield* Project.ProjectService;
-      return yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
+      const routed = yield* routeHome(environmentId, "projects.update", input);
+      if (Option.isSome(routed)) return routed.value;
+      return yield* updateProject(input);
     }),
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>

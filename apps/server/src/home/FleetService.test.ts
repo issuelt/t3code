@@ -72,6 +72,7 @@ const setup = () => {
   const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const sent: Array<ThreadManagement.ThreadManagementSendInput> = [];
   const cloned: Array<FleetInput<"projects.clone">> = [];
+  const updated: Array<Parameters<Project.ProjectService["Service"]["update"]>[0]> = [];
   const searched: Array<FleetInput<"threads.search">> = [];
   const layer = FleetService.layer.pipe(
     Layer.provide(
@@ -105,6 +106,13 @@ const setup = () => {
           } as ExecutionEnvironmentDescriptor),
         }),
         Layer.mock(Project.ProjectService)({
+          update: (input) => {
+            updated.push(input);
+            return Effect.succeed({
+              id: input.projectId,
+              workspaceRoot: input.workspaceRoot,
+            } as ContractProject);
+          },
           getById: (projectId) =>
             Effect.succeedSome({
               id: projectId,
@@ -195,7 +203,7 @@ const setup = () => {
       ),
     ),
   );
-  return { layer, dispatched, launched, sent, cloned, searched };
+  return { layer, dispatched, launched, sent, cloned, searched, updated };
 };
 
 it.effect("lists threads from every project, newest first, with snooze state", () => {
@@ -222,6 +230,24 @@ it.effect("lists threads from every project, newest first, with snooze state", (
       request: { op: "threads.list", input: { snoozed: true } },
     });
     expect(snoozed).toMatchObject({ total: 1, threads: [{ threadId: "snoozed" }] });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("repoints a project in the environment that runs the operation", () => {
+  const { layer, updated } = setup();
+  return Effect.gen(function* () {
+    const fleet = yield* FleetService.FleetService;
+    const result = yield* fleet.execute({
+      actor,
+      request: {
+        op: "projects.update",
+        input: { projectId: ProjectId.make("e92c60f4"), workspaceRoot: "/home/nyx/dev/nebula" },
+      },
+    });
+    expect(result).toMatchObject({ id: "e92c60f4", workspaceRoot: "/home/nyx/dev/nebula" });
+    expect(updated).toMatchObject([
+      { projectId: "e92c60f4", workspaceRoot: "/home/nyx/dev/nebula" },
+    ]);
   }).pipe(Effect.provide(layer));
 });
 

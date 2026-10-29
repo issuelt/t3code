@@ -475,6 +475,7 @@ it.effect("keeps Home fleet operations on their existing route", () => {
     Tool.make("t3_project_delete", linkedProbe),
     Tool.make("t3_project_clone", linkedProbe),
     Tool.make("t3_project_create", linkedProbe),
+    Tool.make("t3_project_update", linkedProbe),
     Tool.make("t3_thread_search", linkedProbe),
   );
   const layer = McpHttpServer.toolkitRegistration(
@@ -485,6 +486,7 @@ it.effect("keeps Home fleet operations on their existing route", () => {
       t3_project_delete: McpToolAccess.writesEnvironment(ranHere),
       t3_project_clone: McpToolAccess.writesEnvironment(ranHere),
       t3_project_create: McpToolAccess.writesEnvironment(ranHere),
+      t3_project_update: McpToolAccess.writesEnvironment(ranHere),
       t3_thread_search: McpToolAccess.reads(ranHere),
     }),
   ).pipe(
@@ -508,7 +510,12 @@ it.effect("keeps Home fleet operations on their existing route", () => {
     expect(yield* call("t3_thread_wait", fullAccess, { environmentId: box })).toBe(
       "saw environmentId",
     );
-    for (const tool of ["t3_project_clone", "t3_project_create", "t3_thread_search"]) {
+    for (const tool of [
+      "t3_project_clone",
+      "t3_project_create",
+      "t3_project_update",
+      "t3_thread_search",
+    ]) {
       expect(yield* call(tool, fullAccess, { environmentId: box })).toBe("saw environmentId");
     }
     expect(yield* call("t3_project_delete", fullAccess, { environmentId: box })).toBe(

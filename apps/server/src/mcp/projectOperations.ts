@@ -5,6 +5,7 @@
 import {
   type EnvironmentId,
   type FleetProjectCreateInput,
+  type FleetProjectUpdateInput,
   type FleetThreadSearchInput,
   OrchestratorMcpFailure,
   ProjectId,
@@ -74,6 +75,15 @@ export const createProject = Effect.fn("mcp.createProject")(function* ({
   const commandId = yield* newCommandId();
   return yield* projects
     .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+    .pipe(Effect.mapError(projectFailure));
+});
+
+export const updateProject = Effect.fn("mcp.updateProject")(function* (
+  input: FleetProjectUpdateInput,
+) {
+  const projects = yield* Project.ProjectService;
+  return yield* projects
+    .update({ ...input, commandId: yield* newCommandId() })
     .pipe(Effect.mapError(projectFailure));
 });
 

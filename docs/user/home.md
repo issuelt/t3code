@@ -38,7 +38,7 @@ Keep the app running: on macOS, closing the window keeps Home connected until
 you quit. When the app is not running, Home can only act on this machine.
 
 On another machine, Home can search threads, clone a repository, and register
-a project. Cloning needs a connection that may write to source control there.
+or update a project. Cloning needs a connection that may write to source control there.
 
 ## Instructions and fresh starts
 

@@ -41,7 +41,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
-import { Project, ProjectCreatePayload } from "./project.ts";
+import { Project, ProjectCreatePayload, ProjectUpdatePayload } from "./project.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -300,6 +300,12 @@ export const FleetProjectCreateResult = Schema.Struct({
 });
 export type FleetProjectCreateResult = typeof FleetProjectCreateResult.Type;
 
+export const FleetProjectUpdateInput = Schema.Struct({
+  projectId: ProjectId,
+  ...ProjectUpdatePayload.fields,
+});
+export type FleetProjectUpdateInput = typeof FleetProjectUpdateInput.Type;
+
 export const FleetThreadSearchInput = Schema.Struct({
   ...OrchestrationSearchThreadsInput.fields,
   projectId: Schema.optional(ProjectId),
@@ -335,6 +341,7 @@ export const FleetRequest = Schema.Union([
   ),
   operation("projects.list", FleetProjectListInput),
   operation("projects.create", FleetProjectCreateInput),
+  operation("projects.update", FleetProjectUpdateInput),
   operation("projects.clone", SourceControlCloneRepositoryInput),
   operation("threads.search", FleetThreadSearchInput),
   operation("threads.list", OrchestratorMcpThreadListInput),
@@ -370,6 +377,7 @@ export const FleetResults = {
   capabilities: FleetCapabilitiesResult,
   "projects.list": FleetProjectListResult,
   "projects.create": FleetProjectCreateResult,
+  "projects.update": Project,
   "projects.clone": SourceControlCloneRepositoryResult,
   "threads.search": FleetThreadSearchResult,
   "threads.list": OrchestratorMcpThreadListResult,

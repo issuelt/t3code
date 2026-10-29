@@ -282,7 +282,10 @@ const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvir
   if (request.op === "projects.clone") {
     return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   }
-  if (request.op === "projects.create" && request.input.scripts !== undefined) {
+  if (
+    (request.op === "projects.create" || request.op === "projects.update") &&
+    request.input.scripts !== undefined
+  ) {
     return [
       AuthOrchestrationOperateScope,
       ...requiredScopesForServerSettingsPatch({ defaultProjectScripts: request.input.scripts }),

@@ -37,7 +37,12 @@ import {
   threadManagementFailure,
   threadSettlement,
 } from "../mcp/OrchestratorMcpService.ts";
-import { cloneProject, createProject, searchThreads } from "../mcp/projectOperations.ts";
+import {
+  cloneProject,
+  createProject,
+  searchThreads,
+  updateProject,
+} from "../mcp/projectOperations.ts";
 import { resultFromThread } from "../mcp/ThreadMetadataMcpService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as Repositories from "../sourceControl/SourceControlRepositoryService.ts";
@@ -196,6 +201,13 @@ const make = Effect.gen(function* () {
       createProject(input).pipe(
         Effect.provideService(ProjectService.ProjectService, projects),
         Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, folders),
+        Effect.provideService(Crypto.Crypto, crypto),
+      ),
+    ),
+
+    "projects.update": Effect.fn("FleetService.projects.update")((input) =>
+      updateProject(input).pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
         Effect.provideService(Crypto.Crypto, crypto),
       ),
     ),
