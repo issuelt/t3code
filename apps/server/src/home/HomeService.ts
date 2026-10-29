@@ -6,6 +6,7 @@
 import {
   CommandId,
   DEFAULT_HOME_SETTINGS,
+  FleetResults,
   type EnvironmentId,
   HOME_REPORT_MESSAGE_ID_PREFIX,
   HOME_THREAD_ID_PREFIX,
@@ -30,6 +31,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as FleetBroker from "./FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Schema from "effect/Schema";
 import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -64,10 +68,10 @@ export class HomeService extends Context.Service<
 const watchKey = (watch: Pick<HomeWatch, "environmentId" | "threadId">) =>
   `${watch.environmentId}\u0000${watch.threadId}`;
 
-/** Adds a watch, keeping the stronger "launched" reason when one exists. */
+/** An explicit watch also includes coordination completions. */
 export function addWatch(home: HomeSettings, watch: HomeWatch): HomeSettings {
   const existing = home.watches.find((candidate) => watchKey(candidate) === watchKey(watch));
-  if (existing !== undefined && (existing.reason === "launched" || watch.reason === "requested")) {
+  if (existing !== undefined && (existing.reason === "requested" || watch.reason === "launched")) {
     return home;
   }
   return {
@@ -116,6 +120,9 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
   const crypto = yield* Crypto.Crypto;
+  const broker = yield* FleetBroker.FleetBroker;
+  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity)
+    .getEnvironmentId;
   const lock = yield* Semaphore.make(1);
   const available = config.mode === "desktop";
 
@@ -313,7 +320,52 @@ const make = Effect.gen(function* () {
               event.threadId !== home.threadId &&
               (home.watchAll || watched.has(watchKey(event))),
           );
-          if (wake.length > 0) yield* deliver(home.threadId, wake);
+          const homeThreadId = home.threadId;
+          const filtered = yield* Effect.filter(wake, (event) =>
+            Effect.gen(function* () {
+              if (
+                event.kind !== "completed" ||
+                home.watches.some(
+                  (watch) => watchKey(watch) === watchKey(event) && watch.reason === "requested",
+                )
+              )
+                return true;
+              if (event.environmentId !== environmentId) {
+                const result = yield* broker
+                  .invoke(event.environmentId, {
+                    actor: { environmentId, threadId: homeThreadId },
+                    request: {
+                      op: "threads.coordination",
+                      input: {
+                        threadId: event.threadId,
+                        ...(event.runId === undefined ? {} : { runId: event.runId }),
+                      },
+                    },
+                  })
+                  .pipe(
+                    Effect.flatMap(
+                      Schema.decodeUnknownEffect(FleetResults["threads.coordination"]),
+                    ),
+                  );
+                return !result.coordination;
+              }
+              const shell =
+                event.runId === undefined ? yield* threads.getThreadShell(event.threadId) : null;
+              const runId = event.runId ?? shell?.latestRunId;
+              if (runId == null) return true;
+              return !(yield* threads.isCoordinationRun(event.threadId, runId));
+            }).pipe(
+              Effect.tapError((cause) =>
+                Effect.logWarning("Could not classify a watched run; reporting it to Home", {
+                  threadId: event.threadId,
+                  environmentId: event.environmentId,
+                  cause,
+                }),
+              ),
+              Effect.orElseSucceed(() => true),
+            ),
+          );
+          if (filtered.length > 0) yield* deliver(home.threadId, filtered);
           // Watches end only after delivery, so a retried batch is still eligible.
           const ended = new Set(
             events.filter((event) => event.kind === "ended").map((event) => watchKey(event)),

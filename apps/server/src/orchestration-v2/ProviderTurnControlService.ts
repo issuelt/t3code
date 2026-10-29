@@ -366,6 +366,9 @@ export const layer: Layer.Layer<
                 ...(message.senderThreadId === undefined
                   ? {}
                   : { senderThreadId: message.senderThreadId }),
+                ...(message.coordination === undefined
+                  ? {}
+                  : { coordination: message.coordination }),
               },
             })
             .pipe(

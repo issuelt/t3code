@@ -235,7 +235,8 @@ const make = Effect.gen(function* () {
     (effect, input) =>
       effect.pipe(
         Effect.timeoutOrElse({
-          duration: "65 seconds",
+          // Above the peer's own limits: thread waits clamp to 50 s, clones to 120 s.
+          duration: input.tool === "t3_project_clone" ? "130 seconds" : "65 seconds",
           orElse: () =>
             Effect.fail(
               new OrchestratorMcpFailure({

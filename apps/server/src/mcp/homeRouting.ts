@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  MessageId,
   type FleetInput,
   type FleetOperation,
   type FleetRequest,
@@ -7,6 +8,9 @@ import {
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { threadManagementFailure } from "./OrchestratorMcpService.ts";
 import * as Option from "effect/Option";
 
 import * as FleetBroker from "../home/FleetBroker.ts";
@@ -18,6 +22,8 @@ import { assertFullAccess, assertLiveCaller, readCaller } from "./threadAccess.t
 
 /** Services a tool needs to declare when it routes Home calls. */
 export const homeRoutingDependencies = [
+  Crypto.Crypto,
+  ThreadManagement.ThreadManagementService,
   HomeWorkspace.HomeWorkspace,
   HomeService.HomeService,
   FleetService.FleetService,
@@ -40,6 +46,9 @@ export const callerIsHome = Effect.fn("mcp.callerIsHome")(function* () {
 const CHANGES_STATE = {
   capabilities: false,
   "projects.list": false,
+  "projects.create": true,
+  "projects.clone": true,
+  "threads.search": false,
   "threads.list": false,
   "threads.read": false,
   "threads.wait": false,
@@ -47,6 +56,8 @@ const CHANGES_STATE = {
   "requests.read": false,
   "threads.launch": true,
   "threads.send": true,
+  "threads.deliver-result": true,
+  "threads.coordination": false,
   "threads.interrupt": true,
   "threads.organize": true,
   "threads.rename": true,
@@ -85,6 +96,29 @@ export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetO
     // The pairing of op and input is what FleetInput<Op> guarantees.
     request: { op, input } as FleetRequest,
   };
+  if (
+    environmentId !== undefined &&
+    environmentId !== scope.environmentId &&
+    invoke.request.op === "threads.send" &&
+    invoke.request.input.replyToMessageId === undefined
+  ) {
+    const key =
+      invoke.request.input.clientRequestId ??
+      (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
+    invoke.request = {
+      ...invoke.request,
+      input: { ...invoke.request.input, clientRequestId: key },
+    };
+    yield* (yield* ThreadManagement.ThreadManagementService)
+      .registerCoordinationRequest({
+        requesterThreadId: scope.thread.threadId,
+        responder: { environmentId, threadId: invoke.request.input.threadId },
+        requestMessageId: MessageId.make(
+          `fleet:send:${scope.environmentId}:${scope.thread.threadId}:${invoke.request.input.threadId}:${key}`,
+        ),
+      })
+      .pipe(Effect.mapError(threadManagementFailure));
+  }
   const result =
     environmentId === undefined || environmentId === scope.environmentId
       ? yield* (yield* FleetService.FleetService).execute(invoke)

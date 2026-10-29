@@ -1,7 +1,9 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  RunId,
   type HomeWatchEvent,
+  OrchestratorMcpFailure,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -18,6 +20,8 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as HomeWorkspace from "./HomeWorkspace.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as HomeService from "./HomeService.ts";
+import * as FleetBroker from "./FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 const environmentId = EnvironmentId.make("hub");
 const homeProjectId = ProjectId.make("home-project");
@@ -45,6 +49,15 @@ const makeHome = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         NodeCrypto.layer,
+        Layer.mock(FleetBroker.FleetBroker)({
+          invoke: () =>
+            Effect.fail(
+              new OrchestratorMcpFailure({ code: "environment_unavailable", message: "Offline" }),
+            ),
+        }),
+        Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
         Layer.succeed(ServerConfig.ServerConfig, {
           mode: "desktop",
         } as ServerConfig.ServerConfig["Service"]),
@@ -61,6 +74,7 @@ const makeHome = () => {
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+          isCoordinationRun: (_threadId, runId) => Effect.succeed(runId === "coordination"),
           sendToThread: (input) => {
             if (sendFailures.remaining > 0) {
               sendFailures.remaining -= 1;
@@ -239,13 +253,68 @@ it.effect("starting fresh moves the grant to a new thread and settles the old on
   }).pipe(Effect.provide(layer));
 });
 
-it("keeps the launched reason when a thread is watched again", () => {
+it("preserves an intentional watch when a launched thread is watched explicitly", () => {
   const threadId = ThreadId.make("t");
+  const target = { environmentId, threadId };
   const launched = HomeService.addWatch(
     { threadId: null, watchAll: false, watches: [] },
-    { environmentId, threadId, reason: "launched" },
+    { ...target, reason: "launched" },
   );
-  expect(HomeService.addWatch(launched, { environmentId, threadId, reason: "requested" })).toBe(
-    launched,
-  );
+  const requested = HomeService.addWatch(launched, { ...target, reason: "requested" });
+  expect(requested.watches).toEqual([{ ...target, reason: "requested" }]);
+  expect(HomeService.addWatch(requested, { ...target, reason: "launched" })).toBe(requested);
+});
+
+it.effect(
+  "suppresses coordination completions but preserves requested watches and escalations",
+  () => {
+    const { layer, sent } = makeHome();
+    return Effect.gen(function* () {
+      const home = yield* HomeService.HomeService;
+      const enabled = yield* home.enable({ modelSelection });
+      yield* home.updateWatches(enabled.threadId, (settings) => ({
+        ...settings,
+        watchAll: true,
+        watches: [
+          { environmentId, threadId: ThreadId.make("intentional"), reason: "requested" },
+          { environmentId, threadId: ThreadId.make("routine"), reason: "launched" },
+        ],
+      }));
+      yield* home.report({
+        events: [
+          { ...event("routine", "completed"), runId: RunId.make("coordination") },
+          { ...event("intentional", "completed"), runId: RunId.make("coordination") },
+          event("job", "completed"),
+          { ...event("resumed-job", "completed"), runId: RunId.make("resumed-job") },
+          { ...event("blocked", "failed"), runId: RunId.make("coordination") },
+          { ...event("question", "question"), runId: RunId.make("coordination") },
+          { ...event("approval", "approval"), runId: RunId.make("coordination") },
+        ],
+      });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.text).not.toContain("Thread routine");
+      for (const id of ["intentional", "job", "resumed-job", "blocked", "question", "approval"]) {
+        expect(sent[0]?.text).toContain(`Thread ${id}`);
+      }
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("delivers healthy blockers and unresolved remote completions in the same report", () => {
+  const { layer, sent } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    yield* home.report({
+      events: [
+        { ...event("offline", "completed"), environmentId: EnvironmentId.make("offline") },
+        event("blocker", "question"),
+        event("approval", "approval"),
+      ],
+    });
+    expect(sent).toHaveLength(1);
+    for (const id of ["offline", "blocker", "approval"])
+      expect(sent[0]?.text).toContain(`Thread ${id}`);
+  }).pipe(Effect.provide(layer));
 });

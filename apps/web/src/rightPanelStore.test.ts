@@ -39,27 +39,6 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
-  it("opens and reopens CI beside a thread", async () => {
-    const store = useRightPanelStore.getState();
-    store.open(refA, "ci");
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "ci",
-      kind: "ci",
-    });
-    store.closeSurface(refA, "ci");
-    expect(
-      await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
-        workspaceAvailable: true,
-        openPreview: () => {
-          throw new Error("Unexpected browser");
-        },
-      }),
-    ).toBe(true);
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      id: "ci",
-      kind: "ci",
-    });
-  });
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -1252,5 +1231,54 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+});
+
+it.each([true, false])("drops saved CI panels while preserving Git surfaces, open=%s", (isOpen) => {
+  const migrated = migratePersistedRightPanelState({
+    byThreadKey: {
+      "env-1:thread-A": {
+        isOpen,
+        activeSurfaceId: "ci",
+        surfaces: [
+          { id: "ci", kind: "ci" },
+          { id: "diff", kind: "diff" },
+        ],
+      },
+    },
+  });
+  expect(selectThreadRightPanelState(migrated.byThreadKey, refA)).toMatchObject({
+    isOpen,
+    activeSurfaceId: "diff",
+    surfaces: [{ id: "diff", kind: "diff" }],
+  });
+});
+
+it("rehydrates CI-only saved panels as closed without removing other threads", async () => {
+  const { storage, name } = useRightPanelStore.persist.getOptions();
+  await storage!.setItem(name!, {
+    version: 15,
+    state: {
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "ci",
+          surfaces: [{ id: "ci", kind: "ci" }],
+        },
+        "env-1:thread-B": {
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
+      },
+    },
+  });
+  await useRightPanelStore.persist.rehydrate();
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+  ).toMatchObject({ isOpen: false, activeSurfaceId: null, surfaces: [] });
+  expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+    id: "diff",
+    kind: "diff",
   });
 });

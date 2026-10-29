@@ -66,7 +66,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
 const layerDispatchChokepointTest =

@@ -35,10 +35,18 @@ process for the hub, and through `fleet.invoke` everywhere else.
 The hub cannot call other servers itself. The credentials it would need live in
 the desktop renderer: T3 Connect tokens are bound to a non-extractable renderer
 key, SSH sessions mint per connect, and desktop sessions lack `access:write` to
-mint narrower ones. So the renderer relays: it registers on the hub with
-`fleet.connect` and its current list of environments, runs each request with
-`fleet.invoke` over its existing connection, and answers with `fleet.respond`
-(`home/FleetBroker.ts`). The newest registration wins.
+mint narrower ones. So the renderer relays: it registers on each connected
+server with `fleet.connect` and its current list of environments, runs each
+request its source may make with `fleet.invoke` over its existing connection,
+and answers with `fleet.respond` (`home/FleetBroker.ts`). The newest
+registration wins.
+
+Remote request results use the same relay to return to their requesting
+environment, so `fleet.connect` is open on every server, not only the desktop's.
+A server without Home sends only `threads.deliver-result`, and the renderer
+relays nothing else from it (`components/home/homeRelay.ts`). The requester
+accepts a return only when it matches its durable outgoing request by responder
+environment, responder thread, and destination.
 
 Consequences:
 
@@ -47,7 +55,7 @@ Consequences:
 - `fleet.invoke` needs only `orchestration:operate`, which already grants
   everything it does. Older peers without it fail with `environment_unavailable`.
 - Results cross the relay untyped and are decoded on the hub per operation
-  (`FleetResults`), so the renderer stays a dumb pipe.
+  (`FleetResults`).
 
 A hub credential per peer would let Home run headless. It needs a relay-side
 "peer mint" for T3 Connect and a pairing step for the rest.
@@ -61,8 +69,9 @@ reason `launched`.
 The renderer evaluates watches, because it already streams thread shells from
 every environment. It uses the same transitions as desktop notifications
 (`components/home/homeWatch.ts`), batches events briefly, and reports them with
-`fleet.reportWatchEvents`. `HomeService.report` drops unwatched events, ends
-watches on settle or archive, and sends one message into Home's thread with
+`fleet.reportWatchEvents`. `HomeService.report` drops unwatched events and routine coordination
+completions, unless the thread has an explicit watch. It ends watches on settle
+or archive and sends one message into Home's thread with
 `mode: "auto"`, which steers an active turn or queues behind it.
 
 Two traps in the watch diff. Archived threads leave the shell list instead of

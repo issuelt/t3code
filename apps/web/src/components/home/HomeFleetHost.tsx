@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
+import { relayFleetRequest } from "./homeRelay";
 import { isElectron } from "../../env";
 import { useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -52,10 +53,23 @@ function HomeHub({ environmentId }: { readonly environmentId: EnvironmentId }) {
   if (!on) return null;
   return (
     <>
-      <HomeRelay environmentId={environmentId} />
+      <HomeRelays homeEnvironmentId={environmentId} />
       <HomeWatchReporter environmentId={environmentId} home={home} />
     </>
   );
+}
+
+function HomeRelays({ homeEnvironmentId }: { readonly homeEnvironmentId: EnvironmentId }) {
+  const { environments } = useEnvironments();
+  return environments
+    .filter((environment) => environment.connection.phase === "connected")
+    .map((environment) => (
+      <HomeRelay
+        key={environment.environmentId}
+        environmentId={environment.environmentId}
+        homeEnvironmentId={homeEnvironmentId}
+      />
+    ));
 }
 
 const isRelayFailure = Schema.is(OrchestratorMcpFailure);
@@ -96,7 +110,13 @@ function createRelayConsumer(
   }).pipe(Atom.setIdleTTL(0), Atom.withLabel(label));
 }
 
-function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function HomeRelay({
+  environmentId,
+  homeEnvironmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly homeEnvironmentId: EnvironmentId;
+}) {
   const { environments } = useEnvironments();
   const [clientId] = useState(createRelayClientId);
   // The hub keeps the newest registration, so a changed list re-registers.
@@ -115,17 +135,24 @@ function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId })
   const respond = useAtomCommand(homeEnvironment.relayRespond, { reportFailure: false });
 
   const handle = async (request: FleetHostRequest) => {
-    const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
-    await respond({
-      environmentId,
-      input:
-        result._tag === "Success"
+    const input = await relayFleetRequest({
+      sourceEnvironmentId: environmentId,
+      homeEnvironmentId,
+      request,
+      forward: async () => {
+        const result = await invoke({
+          environmentId: request.environmentId,
+          input: request.invoke,
+        });
+        return result._tag === "Success"
           ? { requestId: request.requestId, result: result.value }
           : {
               requestId: request.requestId,
               failure: relayFailure(squashAtomCommandFailure(result)),
-            },
+            };
+      },
     });
+    await respond({ environmentId, input });
   };
   // The consumer outlives renders, so it reads the latest handler from an atom.
   const [handlerAtom] = useState(() => Atom.make({ handle }));

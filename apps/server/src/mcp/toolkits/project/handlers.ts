@@ -5,7 +5,6 @@ import {
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
-  ProjectId,
 } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Crypto from "effect/Crypto";
@@ -22,25 +21,14 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
-import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import { cloneProject, createProject, projectFailure } from "../../projectOperations.ts";
 import { ProjectToolkit } from "./tools.ts";
-
-function projectFailure(error: Project.ProjectServiceError) {
-  if (error._tag === "ProjectOperationError") return unavailable();
-  const message =
-    error._tag === "ProjectNotFoundError"
-      ? "The project was not found."
-      : error._tag === "ProjectConflictError"
-        ? "The workspace is already registered to a project."
-        : "The project is not empty; force=true is required to delete it.";
-  return new OrchestratorMcpFailure({ code: "invalid_request", message });
-}
 
 /** Require project worktrees so launches cannot target arbitrary host directories. */
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
@@ -350,48 +338,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     }),
   ),
   t3_project_create: McpToolAccess.writesEnvironment(
-    ({ workspaceRoot, ...input }) =>
+    ({ environmentId, ...input }) =>
       Effect.gen(function* () {
-        const projects = yield* Project.ProjectService;
-        if (workspaceRoot === undefined) {
-          // Only updates record model defaults; reject defaults that creation would silently drop.
-          if (
-            input.scripts !== undefined ||
-            input.createWorkspaceRootIfMissing !== undefined ||
-            input.defaultModelSelection !== undefined
-          )
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
-            });
-          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-          const created = yield* folders.createNamedProject({ name: input.title }).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
-          const project = yield* projects
-            .getById(created.projectId)
-            .pipe(
-              Effect.mapError(unavailable),
-              Effect.flatMap(
-                Option.match({ onNone: () => Effect.fail(unavailable()), onSome: Effect.succeed }),
-              ),
-            );
-          return {
-            ...project,
-            ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
-          };
-        }
-        const commandId = yield* newCommandId();
-        return yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
-          .pipe(Effect.mapError(projectFailure));
+        const routed = yield* routeHome(environmentId, "projects.create", input);
+        if (Option.isSome(routed)) return routed.value;
+        return yield* createProject(input);
       }),
     // Linked work may bring the repository it works in; an existing
     // registered workspace is still refused.
@@ -420,18 +371,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     }),
   ),
   t3_project_clone: McpToolAccess.writesEnvironment(
-    (input) =>
+    ({ environmentId, ...input }) =>
       Effect.gen(function* () {
-        const repositories = yield* Repositories.SourceControlRepositoryService;
-        return yield* repositories.cloneRepository(input).pipe(
-          Effect.mapError(
-            (error) =>
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: error.detail,
-              }),
-          ),
-        );
+        const routed = yield* routeHome(environmentId, "projects.clone", input);
+        if (Option.isSome(routed)) return routed.value;
+        return yield* cloneProject(input);
       }),
     // An existing destination is never adopted.
     { linkedCallers: "allowed" },

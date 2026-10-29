@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +16,8 @@ import {
   orchestrationEffectClaimsTotal,
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -27,6 +29,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { CoordinationResultDeferred } from "./CoordinationDelivery.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -80,6 +83,8 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ServerSettings.ServerSettingsService
+  | FleetBroker.FleetBroker
+  | ServerEnvironment.ServerEnvironmentIdentity
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -94,10 +99,49 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const broker = yield* FleetBroker.FleetBroker;
+    const environmentId = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity)
+      .getEnvironmentId;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "coordination.result": {
+            const request = effect.request;
+            const actor = { environmentId, threadId: effect.threadId };
+            const input = {
+              threadId: request.requester.threadId,
+              requestMessageId: request.requestMessageId,
+              sourceRunId: request.sourceRunId,
+              text: request.text,
+            };
+            return Effect.gen(function* () {
+              const restart = yield* threads.restartContinuationState(
+                effect.threadId,
+                request.sourceRunId,
+              );
+              if (restart === "continued") return;
+              if (restart === "pending")
+                return yield* new CoordinationResultDeferred({ sourceRunId: request.sourceRunId });
+              if (request.requester.environmentId === environmentId) {
+                yield* threads.deliverCoordinationResult(input, actor);
+              } else {
+                yield* broker.invoke(request.requester.environmentId, {
+                  actor,
+                  request: { op: "threads.deliver-result", input },
+                });
+              }
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
@@ -296,6 +340,9 @@ export const layerExecutor: Layer.Layer<
                         ...(message.senderThreadId === undefined
                           ? {}
                           : { senderThreadId: message.senderThreadId }),
+                        ...(message.coordination === undefined
+                          ? {}
+                          : { coordination: message.coordination }),
                       })
                       .pipe(
                         // A disabled instance cannot retry this completed turn; its result stands.
@@ -595,6 +642,7 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 ) {}
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
+const isMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
@@ -801,11 +849,18 @@ export const layerWithOptions = (
             nonRetryable,
             error,
           });
+          const failure = Cause.findErrorOption(exit.cause);
+          const unavailableResult =
+            effect.request.type === "coordination.result" &&
+            Option.isSome(failure) &&
+            ((isMcpFailure(failure.value.cause) &&
+              failure.value.cause.code === "environment_unavailable") ||
+              failure.value.cause instanceof CoordinationResultDeferred);
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts && !unavailableResult
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

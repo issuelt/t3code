@@ -1,11 +1,4 @@
 import {
-  ProjectCiInput,
-  ProjectCiResult,
-  ProjectCiError,
-  ProjectCiRunInput,
-  ProjectCiRunResult,
-} from "./projectCi.ts";
-import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -640,8 +633,6 @@ export const WS_METHODS = {
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
 
-  projectCiRead: "projectCi.read",
-  projectCiReadRun: "projectCi.readRun",
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
@@ -1262,17 +1253,6 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
   payload: PullRequestLabelChangeInput,
   success: Schema.Void,
   error: PullRequestRpcError,
-});
-
-const WsProjectCiReadRunRpc = Rpc.make(WS_METHODS.projectCiReadRun, {
-  payload: ProjectCiRunInput,
-  success: ProjectCiRunResult,
-  error: Schema.Union([ProjectCiError, EnvironmentAuthorizationError]),
-});
-const WsProjectCiReadRpc = Rpc.make(WS_METHODS.projectCiRead, {
-  payload: ProjectCiInput,
-  success: ProjectCiResult,
-  error: Schema.Union([ProjectCiError, EnvironmentAuthorizationError]),
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2245,8 +2225,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,
   WsPullRequestsSetLabelsRpc,
-  WsProjectCiReadRpc,
-  WsProjectCiReadRunRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,

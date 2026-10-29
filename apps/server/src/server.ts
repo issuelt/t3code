@@ -1,4 +1,3 @@
-import * as ProjectCi from "./sourceControl/ProjectCi.ts";
 import { workerLive as AccountFallbackWorkerLive } from "./orchestration-v2/AccountFallbackWorker.ts";
 import { AutoFallbackCooldownTrackerLive } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -654,12 +653,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(
-    ProjectCi.layer.pipe(
-      Layer.provide(RuntimeLayer.layerProjectService),
-      Layer.provide(layerSourceControlProviderRegistry),
-    ),
-  ),
   Layer.provideMerge(
     Layer.mergeAll(
       layerTerminal,

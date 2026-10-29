@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -44,16 +45,26 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  menu?: { open: boolean; navigated: () => void; filePicker: () => void };
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
+    keybindings: props.menu
+      ? compileResolvedKeybindingsConfig([{ key: "ctrl+p", command: "filePicker.toggle" }])
+      : [],
     scriptKeybindings: [],
-    getShortcutContext: () => shortcutContext,
+    getShortcutContext: () => ({ ...shortcutContext, composerFocus: props.menu !== undefined }),
     threadFindActive: false,
-    // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
     composerRef: {
       current: {
+        handleMenuNavigationKey: (event: KeyboardEvent) => {
+          if (!props.menu?.open || event.key !== "p" || !event.ctrlKey) return false;
+          props.menu.navigated();
+          return true;
+        },
         insertTextAtEnd: (key: string) => {
           props.composerKeys.push(key);
           return true;
@@ -62,7 +73,7 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: {},
+    commands: props.menu ? { "filePicker.toggle": () => props.menu?.filePicker() } : {},
     fallback: () => undefined,
   });
   return props.launcher ? <Launcher {...props.launcher} /> : null;
@@ -93,4 +104,25 @@ it("still types other letters into the composer while the launcher is open", asy
 
   expect(composerKeys).toEqual(["a"]);
   expect(received).toEqual([]);
+});
+
+it("gives composer menu navigation priority over global Control+P only while handled", async () => {
+  const navigated = vi.fn();
+  const filePicker = vi.fn();
+  await using screen = await render(
+    <Chat composerKeys={[]} menu={{ open: true, navigated, filePicker }} />,
+    options,
+  );
+  const press = () => {
+    const event = new KeyboardEvent("keydown", { key: "p", ctrlKey: true, cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  };
+  press();
+  expect(navigated).toHaveBeenCalledTimes(1);
+  expect(filePicker).not.toHaveBeenCalled();
+  await screen.rerender(<Chat composerKeys={[]} menu={{ open: false, navigated, filePicker }} />);
+  press();
+  expect(navigated).toHaveBeenCalledTimes(1);
+  expect(filePicker).toHaveBeenCalledTimes(1);
 });

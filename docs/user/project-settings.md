@@ -222,22 +222,6 @@ When no image is found, web and desktop show a two-character monogram with a col
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
-## Check project CI
-
-Open **CI runs** from the sidebar or command palette on web and desktop, or
-select **CI** on mobile. Web combines registered projects across environments;
-mobile lets you choose a project. You can also open CI runs beside a chat.
-
-T3 Code discovers Git remotes and selects `upstream`, then `origin`, then the
-alphabetically first remote. Choose another remote or provider when needed.
-GitHub uses the environment's GitHub credentials. Self-hosted GitLab uses
-host-specific `glab` authentication on the machine that owns the project.
-
-Running and queued work appears first. Open a run to load its jobs, then follow
-a job link for logs or failure details. Web refreshes while visible and active;
-on mobile, pull to refresh. Check the fetched time and incomplete-result notices
-before treating the list as current or complete. This view does not trigger CI.
-
 ## Keep the default branch current
 
 In Source control, enable **Automatically pull** to keep the default-branch checkout up to date

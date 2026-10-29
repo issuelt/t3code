@@ -1,3 +1,6 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -81,6 +84,12 @@ it.effect.each([
     ),
   );
   const executor = EffectWorker.layerExecutor.pipe(
+    Layer.provide(Layer.mock(FleetBroker.FleetBroker)({})),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("test")),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         finalization,

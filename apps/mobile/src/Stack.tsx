@@ -1,4 +1,3 @@
-import { ProjectCiRunScreen } from "./features/project-ci/ProjectCiScreen";
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
@@ -629,10 +628,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
-    }),
-    ProjectCiRun: createNativeStackScreen({
-      screen: ProjectCiRunScreen,
-      options: DETAIL_HEADER_OPTIONS,
     }),
     PullRequest: createNativeStackScreen({
       screen: PullRequestRouteScreen,

@@ -11,6 +11,8 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  type FleetActor,
+  type FleetInput,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -46,6 +48,8 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import { isCoordinationRun, restartChain } from "./CoordinationDelivery.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -130,6 +134,7 @@ export interface ThreadManagementSendInput {
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly coordination?: OrchestrationV2ConversationMessage["coordination"];
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
@@ -320,7 +325,18 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
   }
 }
 
+export class ThreadManagementCoordinationError extends Schema.TaggedError<ThreadManagementCoordinationError>()(
+  "ThreadManagementCoordinationError",
+  {
+    threadId: ThreadId,
+    requestMessageId: MessageId,
+    reason: Schema.Literals(["unmatched", "storage"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const ThreadManagementError = Schema.Union([
+  ThreadManagementCoordinationError,
   ThreadManagementThreadNotFoundError,
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
@@ -400,6 +416,25 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
+  readonly registerCoordinationRequest: (input: {
+    readonly requesterThreadId: ThreadId;
+    readonly responder: FleetActor;
+    readonly requestMessageId: MessageId;
+  }) => Effect.Effect<void, ThreadManagementFailure>;
+  readonly deliverCoordinationResult: (
+    input: FleetInput<"threads.deliver-result">,
+    actor: FleetActor,
+  ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  /** Whether every input of the run, across restart continuations, is coordination. */
+  readonly isCoordinationRun: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<boolean, Orchestrator.OrchestratorV2Error>;
+  /** Whether a cut run's result belongs to its restart continuation instead. */
+  readonly restartContinuationState: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<"none" | "pending" | "continued", Orchestrator.OrchestratorV2Error>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
@@ -540,6 +575,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const sql = yield* SqlClient.SqlClient;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -811,6 +847,7 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.coordination === undefined ? {} : { coordination: input.coordination }),
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
@@ -854,6 +891,103 @@ const make = Effect.gen(function* () {
             : "steered";
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
+
+  const registerCoordinationRequest: ThreadManagementServiceShape["registerCoordinationRequest"] =
+    Effect.fn("ThreadManagementService.registerCoordinationRequest")(function* (input) {
+      const shell = yield* orchestrator.getThreadShell(input.requesterThreadId);
+      const runId = shell?.activeRunId ?? shell?.latestRunId ?? null;
+      const { messages } = yield* orchestrator.getThreadRecords(
+        input.requesterThreadId,
+        ["messages"],
+        {
+          ...(runId === null ? {} : { messageRunIds: [runId] }),
+          messageRoles: ["user"],
+        },
+      );
+      yield* sql`INSERT INTO coordination_requests
+      (request_message_id, requester_thread_id, responder_environment_id, responder_thread_id, origin_run_id, owner)
+      VALUES (${input.requestMessageId}, ${input.requesterThreadId}, ${input.responder.environmentId},
+        ${input.responder.threadId}, ${runId}, ${isCoordinationRun(messages) ? "coordination" : "job"})
+      ON CONFLICT(request_message_id) DO NOTHING`.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadManagementCoordinationError({
+              threadId: input.requesterThreadId,
+              requestMessageId: input.requestMessageId,
+              reason: "storage",
+              cause,
+            }),
+        ),
+      );
+    });
+
+  const isCoordinationRunInChain = Effect.fn("ThreadManagementService.isCoordinationRun")(
+    function* (threadId: ThreadId, runId: RunId) {
+      const { runs } = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+      const chain = restartChain(runs, runId);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"], {
+        messageRunIds: chain.runIds,
+        messageRoles: ["user"],
+      });
+      return isCoordinationRun(
+        messages.filter((message) => !chain.continuationMessageIds.has(message.id)),
+      );
+    },
+  );
+
+  const restartContinuationState = Effect.fn("ThreadManagementService.restartContinuationState")(
+    function* (threadId: ThreadId, runId: RunId) {
+      const { runs } = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+      if (runs.some((run) => run.restartContinuationOfRunId === runId)) return "continued" as const;
+      const run = runs.find((candidate) => candidate.id === runId);
+      return run?.status === "interrupted" && (yield* orchestrator.restartContinuationPending(run))
+        ? ("pending" as const)
+        : ("none" as const);
+    },
+  );
+
+  const deliverCoordinationResult = Effect.fn("ThreadManagementService.deliverCoordinationResult")(
+    function* (input: FleetInput<"threads.deliver-result">, actor: FleetActor) {
+      const records = yield* sql<{
+        origin_run_id: string | null;
+        owner: "job" | "coordination";
+      }>`SELECT origin_run_id, owner FROM coordination_requests
+        WHERE request_message_id = ${input.requestMessageId} AND requester_thread_id = ${input.threadId}
+          AND responder_environment_id = ${actor.environmentId} AND responder_thread_id = ${actor.threadId}`.pipe(
+        Effect.mapError(
+          (cause) => new ThreadManagementCoordinationError({ ...input, reason: "storage", cause }),
+        ),
+      );
+      const original = records[0];
+      if (original === undefined)
+        return yield* new ThreadManagementCoordinationError({ ...input, reason: "unmatched" });
+      const { thread } = yield* orchestrator.getThreadRecords(input.threadId, []);
+      const id = CommandId.make(
+        `coordination-result:${[actor.environmentId, actor.threadId, input.requestMessageId].map(encodeURIComponent).join(":")}`,
+      );
+      return yield* sendToThread({
+        projectId: thread.projectId,
+        commandId: id,
+        threadId: input.threadId,
+        messageId: MessageId.make(id),
+        senderThreadId: actor.threadId,
+        coordination: {
+          kind: "response",
+          requestMessageId: input.requestMessageId,
+          ...(input.sourceRunId === undefined ? {} : { sourceRunId: input.sourceRunId }),
+          ...(original.origin_run_id === null
+            ? {}
+            : { originRunId: RunId.make(original.origin_run_id) }),
+          owner: original.owner,
+        },
+        text: input.text,
+        attachments: [],
+        mode: "queue",
+        createdBy: "system",
+        creationSource: "server",
+      });
+    },
+  );
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
@@ -1262,6 +1396,10 @@ const make = Effect.gen(function* () {
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
+    deliverCoordinationResult,
+    isCoordinationRun: isCoordinationRunInChain,
+    restartContinuationState,
+    registerCoordinationRequest,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
@@ -1300,6 +1438,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
+  | SqlClient.SqlClient
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(ThreadCommandExecutor.layer),
@@ -1313,4 +1452,5 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
+  | SqlClient.SqlClient
 > = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));

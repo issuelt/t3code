@@ -76,7 +76,7 @@ describe("diffWatchedThreads", () => {
       ],
       home,
     );
-    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed" }]);
+    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-1" }]);
   });
 
   it("ignores unwatched threads and every Home thread, even when watching all", () => {

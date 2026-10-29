@@ -6,6 +6,7 @@ import {
   CheckpointId,
   CommandId,
   EventId,
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -36,6 +37,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -104,7 +107,11 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+const layerTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  EffectOutbox.layer,
+).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -293,6 +300,413 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect("registers a requester return through the normal stop command", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const source = ThreadId.make("stop-source");
+      const projectId = ProjectId.make("stop-project");
+      yield* (yield* ProjectService.ProjectService).create({
+        commandId: CommandId.make("stop-project-create"),
+        projectId,
+        title: "Stop",
+        workspaceRoot: "/workspace/stop",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("stop-source-create"),
+        threadId: source,
+        projectId,
+        title: "Stop source",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const request = yield* threads.sendToThread({
+        projectId,
+        threadId: source,
+        commandId: CommandId.make("stop-request"),
+        messageId: MessageId.make("stop-request"),
+        text: "Check the pin",
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "mcp",
+        coordination: {
+          kind: "request",
+          requester: {
+            environmentId: EnvironmentId.make("requester-env"),
+            threadId: ThreadId.make("requester"),
+          },
+        },
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const commandId = CommandId.make("stop-coordination");
+      yield* threads.interruptThread({ projectId, threadId: source, commandId });
+      const stopped = yield* orchestrator.getThreadProjection(source);
+      assert.equal(stopped.runs.find((run) => run.id === request.run.id)?.status, "interrupted");
+      const effects = yield* outbox.listByCommandId(commandId);
+      assert.equal(
+        effects.filter((effect) => effect.request.type === "coordination.result").length,
+        1,
+      );
+    }),
+  );
+
+  it.effect("returns a restarted request's answer from its continuation", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const source = ThreadId.make("restart-source");
+      const projectId = ProjectId.make("restart-project");
+      yield* (yield* ProjectService.ProjectService).create({
+        commandId: CommandId.make("restart-project-create"),
+        projectId,
+        title: "Restart",
+        workspaceRoot: "/workspace/restart",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("restart-source-create"),
+        threadId: source,
+        projectId,
+        title: "Restart source",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const request = yield* threads.sendToThread({
+        projectId,
+        threadId: source,
+        commandId: CommandId.make("restart-request"),
+        messageId: MessageId.make("restart-request"),
+        text: "Check the pin",
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "mcp",
+        coordination: {
+          kind: "request",
+          requester: {
+            environmentId: EnvironmentId.make("requester-env"),
+            threadId: ThreadId.make("requester"),
+          },
+        },
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      yield* threads.interruptThread({
+        projectId,
+        threadId: source,
+        commandId: CommandId.make("restart-cut"),
+      });
+      const now = yield* DateTime.now;
+      const continuationId = RunId.make("run:restart-source:continuation");
+      const commandId = CommandId.make("restart-continuation-completed");
+      const continuation = runEvent({
+        threadId: source,
+        runId: continuationId,
+        ordinal: 2,
+        status: "completed",
+        now,
+      });
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [
+          {
+            ...continuation,
+            payload: { ...continuation.payload, restartContinuationOfRunId: request.run.id },
+          },
+        ],
+        effects: [],
+      });
+
+      assert.equal(yield* threads.restartContinuationState(source, request.run.id), "continued");
+      assert.isTrue(yield* threads.isCoordinationRun(source, continuationId));
+      const results = (yield* outbox.listByCommandId(commandId)).flatMap((effect) =>
+        effect.request.type === "coordination.result" ? [effect.request] : [],
+      );
+      assert.deepEqual(
+        results.map((result) => [result.requestMessageId, result.sourceRunId]),
+        [[MessageId.make("restart-request"), continuationId]],
+      );
+    }),
+  );
+
+  it.effect(
+    "persists requester results with terminal events and delivers a retried response once",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const now = yield* DateTime.now;
+        const source = ThreadId.make("coordination-source");
+        const requester = ThreadId.make("coordination-requester");
+        const projectId = ProjectId.make("coordination-project");
+        const sourceRunId = RunId.make("coordination-run");
+        const requestMessageId = MessageId.make("coordination-request");
+        const environmentId = EnvironmentId.make("coordination-environment");
+        yield* seedParentWithTerminalTask({
+          threadId: source,
+          projectId,
+          runId: sourceRunId,
+          rootNodeId: NodeId.make("coordination-root"),
+          taskId: NodeId.make("coordination-task"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-coordination-requester"),
+          threadId: requester,
+          projectId,
+          title: "Requester",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const job = yield* (yield* ThreadManagement.ThreadManagementService).sendToThread({
+          projectId,
+          threadId: requester,
+          commandId: CommandId.make("requester-job"),
+          messageId: MessageId.make("requester-job"),
+          text: "Update the dependency",
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* (yield* ThreadManagement.ThreadManagementService).registerCoordinationRequest({
+          requesterThreadId: requester,
+          responder: { environmentId, threadId: source },
+          requestMessageId,
+        });
+        const projection = yield* orchestrator.getThreadProjection(source);
+        const run = projection.runs.find((run) => run.id === sourceRunId)!;
+        const terminal = (id: string) => ({
+          id: EventId.make(id),
+          type: "run.updated" as const,
+          threadId: source,
+          runId: sourceRunId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed" as const, completedAt: now },
+        });
+        const unrelatedRunId = RunId.make("coordination-unrelated-run");
+        const unrelatedRequestId = MessageId.make("coordination-unrelated-request");
+        const remoteRequester = {
+          environmentId: EnvironmentId.make("remote-requester"),
+          threadId: ThreadId.make("another-requester"),
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("coordination-unrelated-run-event"),
+              type: "run.updated",
+              threadId: source,
+              runId: unrelatedRunId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                id: unrelatedRunId,
+                ordinal: 2,
+                userMessageId: unrelatedRequestId,
+                status: "queued",
+                queueHeld: true,
+                startedAt: null,
+                rootNodeId: null,
+              },
+            },
+            {
+              id: EventId.make("coordination-unrelated-input"),
+              type: "message.updated",
+              threadId: source,
+              occurredAt: now,
+              payload: {
+                createdBy: "agent",
+                creationSource: "mcp",
+                id: unrelatedRequestId,
+                threadId: source,
+                runId: unrelatedRunId,
+                nodeId: null,
+                role: "user",
+                text: "A concurrent question",
+                attachments: [],
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+                coordination: { kind: "request", requester: remoteRequester },
+              },
+            },
+          ],
+        });
+        const commandId = CommandId.make("coordination-complete");
+        yield* sink.write({
+          commandId,
+          events: [
+            {
+              id: EventId.make("coordination-input-event"),
+              type: "message.updated",
+              threadId: source,
+              occurredAt: now,
+              payload: {
+                createdBy: "agent",
+                creationSource: "mcp",
+                id: requestMessageId,
+                threadId: source,
+                runId: sourceRunId,
+                nodeId: null,
+                role: "user",
+                text: "Which dependency is pinned?",
+                attachments: [],
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+                senderThreadId: requester,
+                coordination: {
+                  kind: "request",
+                  requester: { environmentId, threadId: requester },
+                },
+              },
+            },
+            {
+              id: EventId.make("coordination-output-event"),
+              type: "message.updated",
+              threadId: source,
+              occurredAt: now,
+              payload: {
+                createdBy: "agent",
+                creationSource: "mcp",
+                id: MessageId.make("coordination-output"),
+                threadId: source,
+                runId: sourceRunId,
+                nodeId: null,
+                role: "assistant",
+                text: "The dependency is pinned to version 3.",
+                attachments: [],
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            terminal("coordination-terminal"),
+          ],
+        });
+        const results = yield* outbox.listByCommandId(commandId);
+        assert.equal(results.length, 1);
+        const result = results[0]!.request;
+        assert.equal(result.type, "coordination.result");
+        if (result.type !== "coordination.result") return;
+        assert.deepEqual(result.requester, { environmentId, threadId: requester });
+        assert.equal(result.text, "The dependency is pinned to version 3.");
+        const input = { threadId: requester, requestMessageId, sourceRunId, text: result.text };
+        const actor = { environmentId, threadId: source };
+        for (const candidate of [
+          { input, actor: { ...actor, threadId: ThreadId.make("unrelated-actor") } },
+          { input, actor: { ...actor, environmentId: EnvironmentId.make("foreign-environment") } },
+          { input: { ...input, threadId: source }, actor },
+          { input: { ...input, requestMessageId: MessageId.make("unregistered-request") }, actor },
+        ]) {
+          const rejected = yield* (yield* ThreadManagement.ThreadManagementService)
+            .deliverCoordinationResult(candidate.input, candidate.actor)
+            .pipe(Effect.exit);
+          assert.equal(rejected._tag, "Failure");
+        }
+        assert.equal((yield* orchestrator.getThreadProjection(requester)).messages.length, 1);
+        yield* (yield* ThreadManagement.ThreadManagementService).deliverCoordinationResult(
+          { threadId: requester, requestMessageId, text: "Manual answer" },
+          actor,
+        );
+        yield* (yield* ThreadManagement.ThreadManagementService).deliverCoordinationResult(
+          input,
+          actor,
+        );
+        const delivered = yield* orchestrator.getThreadProjection(requester);
+        const responses = delivered.messages.filter(
+          (message) => message.coordination?.kind === "response",
+        );
+        assert.equal(responses.length, 1);
+        assert.equal(responses[0]?.text, "Manual answer");
+        assert.equal(responses[0]?.coordination?.kind, "response");
+        if (responses[0]?.coordination?.kind === "response") {
+          assert.equal(responses[0].coordination.owner, "job");
+          assert.equal(responses[0].coordination.originRunId, job.run.id);
+        }
+        const responseRun = delivered.runs.find((run) => run.id === responses[0]?.runId)!;
+        const replyCommand = CommandId.make("coordination-response-complete");
+        yield* sink.write({
+          commandId: replyCommand,
+          events: [
+            {
+              id: EventId.make("coordination-response-terminal"),
+              type: "run.updated",
+              threadId: requester,
+              runId: responseRun.id,
+              occurredAt: now,
+              payload: { ...responseRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        assert.equal((yield* outbox.listByCommandId(replyCommand)).length, 0);
+        yield* sink.write({
+          commandId: CommandId.make("coordination-replay"),
+          events: [terminal("coordination-terminal-replay")],
+        });
+        assert.equal((yield* outbox.listByCommandId(commandId)).length, 1);
+        assert.equal(
+          (yield* outbox.listByCommandId(CommandId.make("coordination-replay"))).length,
+          0,
+        );
+        const concurrentCommand = CommandId.make("coordination-concurrent-complete");
+        yield* sink.write({
+          commandId: concurrentCommand,
+          events: [
+            {
+              id: EventId.make("coordination-unrelated-terminal"),
+              type: "run.updated",
+              threadId: source,
+              runId: unrelatedRunId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                id: unrelatedRunId,
+                ordinal: 2,
+                userMessageId: unrelatedRequestId,
+                status: "failed",
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        const concurrent = yield* outbox.listByCommandId(concurrentCommand);
+        assert.equal(concurrent.length, 1);
+        assert.deepEqual(concurrent[0]?.request, {
+          type: "coordination.result",
+          requester: remoteRequester,
+          requestMessageId: unrelatedRequestId,
+          sourceRunId: unrelatedRunId,
+          text: "failed",
+        });
+        yield* outbox.reconcileAfterProcessLoss;
+        assert.equal((yield* outbox.listByCommandId(commandId))[0]?.status, "pending");
+      }),
+  );
+
   it.effect(
     "interrupting a completion wake disposes both cohorts without reviving them on late results",
     () =>

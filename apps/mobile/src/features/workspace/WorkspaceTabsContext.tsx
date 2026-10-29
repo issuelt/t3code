@@ -58,7 +58,6 @@ function createWorkspaceTabsModel() {
     threads: 0,
     pullRequests: 0,
     usage: 0,
-    ci: 0,
     settings: 0,
   };
   return {

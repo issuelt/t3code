@@ -24,7 +24,7 @@ describe("navigation tab order", () => {
   it("fills missing sections and drops removed placeholders, duplicates, and Settings", () => {
     expect(
       resolveNavigationTabOrder(["usage", "home", "issues", "settings", "usage", null]),
-    ).toEqual(["usage", "threads", "pullRequests", "ci"]);
+    ).toEqual(["usage", "threads", "pullRequests"]);
     expect(resolveNavigationTabOrder()).toEqual(NAVIGATION_TAB_ORDER);
   });
 
@@ -51,7 +51,7 @@ describe("navigation tab order", () => {
   it("removes hidden sections from navigation and restores their saved positions", () => {
     const order = moveNavigationTab(undefined, "usage", 0);
     const hidden = toggleNavigationTabVisibility([], "usage");
-    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "pullRequests", "ci"]);
+    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "pullRequests"]);
     expect(toggleNavigationTabVisibility(hidden, "usage")).toEqual([]);
     expect(visibleNavigationTabs(order, [], 5)).toEqual(order);
     expect(enabledNavigationTabs(undefined, ["home", "issues", "settings"])).toEqual(
@@ -66,4 +66,13 @@ describe("navigation tab order", () => {
       resolveSelectedNavigationTab(undefined, NAVIGATION_TAB_ORDER, "threads"),
     ).toBeUndefined();
   });
+});
+
+it("drops the removed CI tab from saved order and visibility preferences", () => {
+  expect(resolveNavigationTabOrder(["ci", "usage", "threads", "pullRequests"])).toEqual([
+    "usage",
+    "threads",
+    "pullRequests",
+  ]);
+  expect(enabledNavigationTabs(undefined, ["ci"])).toEqual(["threads", "pullRequests", "usage"]);
 });

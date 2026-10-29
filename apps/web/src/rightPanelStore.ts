@@ -21,7 +21,6 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
-  "ci",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -75,12 +74,11 @@ export type RightPanelSurface =
       url?: string;
       detailTab?: PullRequestDetailTab;
     }
-  | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "ci"; kind: "ci" };
+  | { id: "pull-requests"; kind: "pull-requests" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-// v15 removes the kicad surface.
-const RIGHT_PANEL_STORAGE_VERSION = 15;
+// v16 removes the project CI surface.
+const RIGHT_PANEL_STORAGE_VERSION = 16;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -214,8 +212,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
-    case "ci":
-      return { id: "ci", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -455,7 +451,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents" || kind === "kicad") return [];
+                    if (kind === "plan" || kind === "agents" || kind === "kicad" || kind === "ci")
+                      return [];
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&
@@ -549,7 +546,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               // agents and kicad selections also keep a survivor ready while the panel is closed.
               const activeSurfaceId =
                 persistedActiveSurfaceId ??
-                (isOpen || rawActiveSurfaceId === "agents" || rawActiveSurfaceId === "kicad"
+                (isOpen ||
+                rawActiveSurfaceId === "agents" ||
+                rawActiveSurfaceId === "kicad" ||
+                rawActiveSurfaceId === "ci"
                   ? (surfaces[0]?.id ?? null)
                   : null);
               return [

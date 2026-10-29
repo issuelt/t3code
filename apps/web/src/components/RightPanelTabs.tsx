@@ -128,7 +128,6 @@ export interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddCi?: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -303,7 +302,6 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddCi?: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -363,14 +361,6 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
-    },
-    {
-      label: "CI runs",
-      icon: TerminalSquare,
-      shortcut: "C",
-      available: props.onAddCi !== undefined,
-      disabledReason: "CI runs are unavailable here.",
-      onClick: props.onAddCi ?? (() => undefined),
     },
     {
       label: "Device",
@@ -563,8 +553,6 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
-    case "ci":
-      return "CI runs";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -655,8 +643,6 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
-    case "ci":
-      return <TerminalSquare className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1073,14 +1059,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequests,
     },
     {
-      label: "CI runs",
-      icon: TerminalSquare,
-      shortcut: "C",
-      available: props.onAddCi !== undefined,
-      disabledReason: "CI runs are unavailable here.",
-      onClick: props.onAddCi ?? (() => undefined),
-    },
-    {
       label: "Device",
       icon: Smartphone,
       shortcut: "M",
@@ -1453,7 +1431,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
-            {...(props.onAddCi ? { onAddCi: props.onAddCi } : {})}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}

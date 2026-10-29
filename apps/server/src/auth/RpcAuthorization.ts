@@ -10,6 +10,8 @@ import {
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
+  FleetInvokeInput,
+  AuthSourceControlWriteScope,
   ProjectMutation,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
@@ -146,8 +148,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectCiRead]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectCiReadRun]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
@@ -209,7 +209,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.homeEnable]: AuthOrchestrationOperateScope,
   [WS_METHODS.homeDisable]: AuthOrchestrationOperateScope,
   [WS_METHODS.homeStartFresh]: AuthOrchestrationOperateScope,
-  // Home acts with the user's reach, which orchestration:operate already grants.
+  // Home acts with the user's reach. Operations beyond orchestration:operate add their
+  // own scopes in requiredScopesForFleetInvoke.
   [WS_METHODS.fleetInvoke]: AuthOrchestrationOperateScope,
   [WS_METHODS.fleetConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.fleetRespond]: AuthOrchestrationOperateScope,
@@ -273,6 +274,22 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 };
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const decodeFleetInvoke = Schema.decodeUnknownSync(FleetInvokeInput);
+
+/** A relayed operation needs the scopes its own RPC would. */
+const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvironmentScope> => {
+  const { request } = decodeFleetInvoke(payload);
+  if (request.op === "projects.clone") {
+    return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
+  }
+  if (request.op === "projects.create" && request.input.scripts !== undefined) {
+    return [
+      AuthOrchestrationOperateScope,
+      ...requiredScopesForServerSettingsPatch({ defaultProjectScripts: request.input.scripts }),
+    ];
+  }
+  return [AuthOrchestrationOperateScope];
+};
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForRpcCall = (
@@ -293,6 +310,7 @@ const requiredScopesForRpcCall = (
     ];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.fleetInvoke) return requiredScopesForFleetInvoke(payload);
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }

@@ -5,6 +5,7 @@ import {
   type HomeWatchEvent,
   isHomeThreadId,
   type ThreadId,
+  RunId,
 } from "@t3tools/contracts";
 
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
@@ -110,7 +111,11 @@ export function diffWatchedThreads(input: {
       completion !== null &&
       (prior.completion === null || completion > prior.completion)
     ) {
-      events.push({ ...eventBase(state), kind: "completed" });
+      events.push({
+        ...eventBase(state),
+        kind: "completed",
+        ...(thread.latestRun === null ? {} : { runId: RunId.make(thread.latestRun.runId) }),
+      });
     }
   }
   // Threads that are watched or tracked but missing from the shell list.

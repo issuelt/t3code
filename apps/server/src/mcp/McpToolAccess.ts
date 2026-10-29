@@ -410,6 +410,9 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
             [
               "orchestrator_capabilities",
               "t3_project_list",
+              "t3_project_create",
+              "t3_project_clone",
+              "t3_thread_search",
               "t3_thread_list",
               "t3_thread_read",
               "t3_thread_wait",

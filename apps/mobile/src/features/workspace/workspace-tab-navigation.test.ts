@@ -51,17 +51,6 @@ describe("workspace tab selections", () => {
 describe("opening a workspace tab", () => {
   const columns = { columns: true, check: available };
 
-  it("opens CI without restoring a chat or PR and returns to the remembered PR", () => {
-    const state = { routes: [home, pullRequest] };
-    const selections = { threads: thread.params, pullRequests: pullRequest.params };
-    const ci = workspaceTabNavigationState(state, "ci", selections, columns);
-    expect(names(ci)).toEqual(["Home"]);
-    expect(names(workspaceTabNavigationState(ci, "pullRequests", selections, columns))).toEqual([
-      "Home",
-      "PullRequest",
-    ]);
-  });
-
   it("opens Android Settings beside its default page only in a wide window", () => {
     const open = (wide: boolean) =>
       workspaceTabNavigationState(

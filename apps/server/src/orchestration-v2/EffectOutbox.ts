@@ -2,6 +2,7 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -30,6 +31,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("coordination.result"),
+    requester: Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+    requestMessageId: MessageId,
+    sourceRunId: RunId,
+    text: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
@@ -123,6 +131,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
+  "coordination.result",
   "provider-runtime.continue",
   "provider-session.detach",
   "provider-thread.rollback",
@@ -314,6 +323,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    // Titles and requester-bound results run beside turn work; a result waiting on an
+    // offline requester must not stall the responder thread.
+    const effectLane = (table: "candidate" | "active") =>
+      sql.unsafe(
+        `CASE WHEN ${table}.effect_type IN ('thread-title.generate', 'coordination.result') THEN ${table}.effect_type ELSE '' END`,
+      );
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     const claimableCandidatePredicate = (
       availableBefore?: string,
@@ -342,17 +357,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 }
               )
             )
-            AND (
-              (
-                candidate.effect_type = 'thread-title.generate'
-                AND active.effect_type = 'thread-title.generate'
-              )
-              OR
-              (
-                candidate.effect_type != 'thread-title.generate'
-                AND active.effect_type != 'thread-title.generate'
-              )
-            )
+            AND ${effectLane("candidate")} = ${effectLane("active")}
         )
       `;
 

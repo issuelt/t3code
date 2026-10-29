@@ -4,6 +4,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest } from "./Migrations.ts";
 import ForkMigration0001 from "./ForkMigrations/001_TaskGraphs.ts";
+import ForkMigration0002 from "./ForkMigrations/002_PeerLinkOrigin.ts";
+import ForkMigration0003 from "./ForkMigrations/003_CoordinationRequests.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -12,7 +14,11 @@ import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDi
  * to the highest recorded, so fork rows in `effect_sql_migrations` would hide
  * later upstream migrations. Append fork migrations here, never `Migrations.ts`.
  */
-const forkMigrationEntries = [[1, "TaskGraphs", ForkMigration0001]] as const;
+const forkMigrationEntries = [
+  [1, "TaskGraphs", ForkMigration0001],
+  [2, "PeerLinkOrigin", ForkMigration0002],
+  [3, "CoordinationRequests", ForkMigration0003],
+] as const;
 
 const FORK_MIGRATIONS_TABLE = "fork_sql_migrations";
 
@@ -36,7 +42,12 @@ export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
 });
 
 // Fork-only migrations that older fork builds recorded in effect_sql_migrations.
-const LEGACY_FORK_MIGRATIONS = new Set(["ProjectionThreadShellActivitySummary", "TaskGraphs"]);
+const LEGACY_FORK_MIGRATIONS = new Set([
+  "ProjectionThreadShellActivitySummary",
+  "TaskGraphs",
+  "PeerLinkOrigin",
+  "CoordinationRequests",
+]);
 
 const PREVIEW_GAP_MIGRATIONS = [
   ["PullRequestFilesViewed", PullRequestFilesViewed],

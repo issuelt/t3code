@@ -256,6 +256,10 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
 export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
+    case "ThreadManagementCoordinationError":
+      return error.reason === "unmatched"
+        ? failure("capability_denied", "No matching outgoing coordination request.")
+        : failure("orchestration_error", "Coordination request storage is unavailable.");
     case "ThreadManagementThreadNotFoundError":
       return failure("thread_not_found", error.message);
     case "ThreadManagementRunNotFoundError":
@@ -1094,6 +1098,7 @@ function timelineItem(input: {
     createdBy: message?.createdBy ?? null,
     creationSource: message?.creationSource ?? null,
     ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+    ...(message?.coordination === undefined ? {} : { coordination: message.coordination }),
     type: input.row.item.type,
     status: input.row.item.status,
     title: input.row.item.title,
@@ -2860,13 +2865,50 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
-      const mode = input.mode ?? "auto";
+      const requester =
+        parent !== undefined &&
+        parent.thread.id !== input.threadId &&
+        target.thread.lineage.relationshipToParent !== "subagent"
+          ? { environmentId: scope.environmentId, threadId: parent.thread.id }
+          : undefined;
+      const mode = input.mode ?? (requester === undefined ? "auto" : "queue");
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
         requestKey: key,
         operation: "thread-send",
       });
+      if (input.replyToMessageId !== undefined) {
+        if (parent === undefined)
+          return yield* failure("capability_denied", "Replies require a calling thread.");
+        const result = yield* threadManagement
+          .deliverCoordinationResult(
+            {
+              threadId: input.threadId,
+              requestMessageId: input.replyToMessageId,
+              text: input.message,
+            },
+            { environmentId: scope.environmentId, threadId: parent.thread.id },
+          )
+          .pipe(Effect.mapError(threadManagementFailure));
+        return {
+          threadId: input.threadId,
+          link: formatThreadLink(input.threadId, target.thread.title),
+          messageId: result.message.id,
+          runId: result.run.id,
+          status: result.run.status,
+          delivery: result.delivery,
+        };
+      }
+      if (requester !== undefined) {
+        yield* threadManagement
+          .registerCoordinationRequest({
+            requesterThreadId: requester.threadId,
+            responder: { environmentId: scope.environmentId, threadId: input.threadId },
+            requestMessageId: messageId,
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+      }
       const result = yield* threadManagement
         .sendToThread({
           projectId: target.thread.projectId,
@@ -2877,6 +2919,9 @@ const make = Effect.gen(function* () {
           }),
           threadId: input.threadId,
           ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+          ...(requester === undefined
+            ? {}
+            : { coordination: { kind: "request" as const, requester } }),
           messageId,
           text: input.message,
           attachments: [],

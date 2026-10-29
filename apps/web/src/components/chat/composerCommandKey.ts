@@ -23,6 +23,27 @@ import { composerTargetKey } from "../../composerDraftStore";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 
+export function composerMenuControlKey(event: KeyboardEvent): "ArrowDown" | "ArrowUp" | null {
+  if (
+    !event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey ||
+    event.isComposing ||
+    event.keyCode === 229
+  ) {
+    return null;
+  }
+  switch (event.key.toLowerCase()) {
+    case "n":
+      return "ArrowDown";
+    case "p":
+      return "ArrowUp";
+    default:
+      return null;
+  }
+}
+
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
  * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
@@ -192,6 +213,10 @@ export function composerCommandKeyHandler(input: {
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+    const menuControlKey = composerMenuControlKey(event);
+    if (menuControlKey !== null && (!menuIsActive || composerMenuItemsRef.current.length === 0)) {
+      return false;
+    }
     const suggestion = input.promptSuggestion;
     if (
       suggestion !== null &&
@@ -220,15 +245,18 @@ export function composerCommandKeyHandler(input: {
       composerMenuOpenRef.current = false;
       return true;
     }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
+    if (
+      menuIsActive &&
+      (menuControlKey !== null || submissionIntent === null || submissionIntent === "foreground")
+    ) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
-      if (key === "ArrowDown" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowDown");
-        return true;
-      }
-      if (key === "ArrowUp" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowUp");
+      const navigationKey = menuControlKey ?? key;
+      if (
+        (navigationKey === "ArrowDown" || navigationKey === "ArrowUp") &&
+        currentItems.length > 0
+      ) {
+        nudgeComposerMenuHighlight(navigationKey);
         return true;
       }
       if ((key === "Enter" || key === "Tab") && selectedItem) {

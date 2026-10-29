@@ -6,8 +6,8 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
-  ProjectId,
   ThreadId,
+  EnvironmentId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -17,7 +17,9 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -411,6 +413,46 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }).pipe(Effect.scoped),
 );
 
+it.effect("requires source-control permission before relaying a Home clone", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.fleetInvoke> =>
+          tag !== WS_METHODS.fleetInvoke,
+      ),
+    );
+    let handled = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.fleetInvoke, () =>
+            Effect.sync(() => {
+              handled++;
+              return {};
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    const actor = { environmentId: EnvironmentId.make("hub"), threadId: ThreadId.make("home") };
+    yield* client[WS_METHODS.fleetInvoke]({
+      actor,
+      request: { op: "threads.search", input: { query: "fleet" } },
+    });
+    const clone = yield* Effect.exit(
+      client[WS_METHODS.fleetInvoke]({
+        actor,
+        request: { op: "projects.clone", input: { destinationPath: "/srv/repo" } },
+      }),
+    );
+    expect(Exit.isFailure(clone) && Cause.squash(clone.cause)).toMatchObject({
+      requiredPermission: AuthSourceControlWriteScope,
+    });
+    expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("denies manual cleanup before the handler without settings permission", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
@@ -449,61 +491,5 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
-  }).pipe(Effect.scoped),
-);
-
-it.effect.each([true, false])("authorizes CI details with the existing read scope: %s", (allowed) =>
-  Effect.gen(function* () {
-    const method = WS_METHODS.projectCiReadRun;
-    const group = WsRpcGroup.omit(
-      ...[...WsRpcGroup.requests.keys()].filter(
-        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
-      ),
-    );
-    const handled: string[] = [];
-    const client = yield* RpcTest.makeClient(group).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          group.toLayerHandler(method, (input) =>
-            Effect.sync(() => {
-              handled.push(input.runId);
-              return {
-                fetchedAt: "2026-10-28T11:00:00Z",
-                run: {
-                  id: input.runId,
-                  name: "CI",
-                  status: "completed",
-                  conclusion: "success",
-                  branch: "main",
-                  sha: "abc",
-                  url: "https://github.com/a/b/actions/runs/42",
-                  createdAt: "now",
-                  updatedAt: "now",
-                  jobs: [],
-                  jobsTruncated: false,
-                },
-              };
-            }),
-          ),
-          RpcAuthorization.layer(
-            allowed ? [AuthOrchestrationReadScope] : [AuthFilesystemReadScope],
-          ),
-        ),
-      ),
-    );
-    const request = client[method]({
-      projectId: ProjectId.make("p"),
-      remoteName: "upstream",
-      runId: "42",
-    });
-    if (allowed) {
-      expect((yield* request).run.id).toBe("42");
-      expect(handled).toEqual(["42"]);
-    } else {
-      expect(yield* request.pipe(Effect.flip)).toMatchObject({
-        _tag: "EnvironmentAuthorizationError",
-      });
-      expect(handled).toEqual([]);
-    }
   }).pipe(Effect.scoped),
 );

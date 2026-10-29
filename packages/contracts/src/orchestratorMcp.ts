@@ -36,6 +36,7 @@ import {
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
@@ -469,6 +470,7 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
   senderThreadId: Schema.optional(ThreadId),
+  coordination: OrchestrationV2ConversationMessage.fields.coordination,
   type: Schema.String,
   status: OrchestrationV2TurnItemStatus,
   title: Schema.NullOr(Schema.String),
@@ -492,6 +494,12 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
+  replyToMessageId: Schema.optional(
+    MessageId.annotate({
+      description:
+        "Answer an incoming coordination request by its messageId from t3_thread_read. Resolves that request once without asking for another automatic return.",
+    }),
+  ),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });

@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 
 import {
   EnvironmentId,
+  MessageId,
   NonNegativeInt,
   ProjectId,
   RuntimeRequestId,
@@ -40,7 +41,12 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
-import { Project } from "./project.ts";
+import { Project, ProjectCreatePayload } from "./project.ts";
+import {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+} from "./sourceControl.ts";
+import { OrchestrationSearchThreadsInput, OrchestrationThreadSearchMatch } from "./threadSearch.ts";
 import { ThreadMetadataMcpUpdateResult } from "./threadMetadataMcp.ts";
 import {
   ProviderApprovalDecision,
@@ -281,6 +287,40 @@ export const FleetCapabilitiesResult = Schema.Struct({
 });
 export type FleetCapabilitiesResult = typeof FleetCapabilitiesResult.Type;
 
+/** A project registration Home asks for; without `workspaceRoot`, a new repo from `title`. */
+export const FleetProjectCreateInput = Schema.Struct({
+  ...ProjectCreatePayload.fields,
+  workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
+});
+export type FleetProjectCreateInput = typeof FleetProjectCreateInput.Type;
+
+export const FleetProjectCreateResult = Schema.Struct({
+  ...Project.fields,
+  commitError: Schema.optional(Schema.String),
+});
+export type FleetProjectCreateResult = typeof FleetProjectCreateResult.Type;
+
+export const FleetThreadSearchInput = Schema.Struct({
+  ...OrchestrationSearchThreadsInput.fields,
+  projectId: Schema.optional(ProjectId),
+});
+export type FleetThreadSearchInput = typeof FleetThreadSearchInput.Type;
+
+export const FleetThreadSearchResult = Schema.Struct({
+  matches: Schema.Array(
+    Schema.Struct({
+      threadId: OrchestrationThreadSearchMatch.fields.threadId,
+      projectId: OrchestrationThreadSearchMatch.fields.projectId,
+      title: Schema.String,
+      link: Schema.optional(Schema.String),
+      source: Schema.Literals(["title", "user", "assistant"]),
+      snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
+      messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
+    }),
+  ),
+});
+export type FleetThreadSearchResult = typeof FleetThreadSearchResult.Type;
+
 const operation = <const Op extends string, S extends Schema.Top>(op: Op, input: S) =>
   Schema.Struct({ op: Schema.Literal(op), input });
 
@@ -294,11 +334,27 @@ export const FleetRequest = Schema.Union([
     }),
   ),
   operation("projects.list", FleetProjectListInput),
+  operation("projects.create", FleetProjectCreateInput),
+  operation("projects.clone", SourceControlCloneRepositoryInput),
+  operation("threads.search", FleetThreadSearchInput),
   operation("threads.list", OrchestratorMcpThreadListInput),
   operation("threads.read", OrchestratorMcpThreadReadInput),
   operation("threads.wait", OrchestratorMcpThreadWaitInput),
   operation("threads.launch", FleetThreadLaunchInput),
   operation("threads.send", OrchestratorMcpThreadSendInput),
+  operation(
+    "threads.deliver-result",
+    Schema.Struct({
+      threadId: ThreadId,
+      requestMessageId: MessageId,
+      sourceRunId: Schema.optional(RunId),
+      text: Schema.String,
+    }),
+  ),
+  operation(
+    "threads.coordination",
+    Schema.Struct({ threadId: ThreadId, runId: Schema.optional(RunId) }),
+  ),
   operation("threads.interrupt", OrchestratorMcpThreadInterruptInput),
   operation("threads.organize", FleetThreadOrganizeInput),
   operation("threads.rename", FleetThreadRenameInput),
@@ -313,11 +369,16 @@ export type FleetOperation = FleetRequest["op"];
 export const FleetResults = {
   capabilities: FleetCapabilitiesResult,
   "projects.list": FleetProjectListResult,
+  "projects.create": FleetProjectCreateResult,
+  "projects.clone": SourceControlCloneRepositoryResult,
+  "threads.search": FleetThreadSearchResult,
   "threads.list": OrchestratorMcpThreadListResult,
   "threads.read": OrchestratorMcpThreadReadResult,
   "threads.wait": OrchestratorMcpThreadWaitResult,
   "threads.launch": FleetThreadLaunchResult,
   "threads.send": OrchestratorMcpThreadSendResult,
+  "threads.deliver-result": Schema.Struct({ delivered: Schema.Boolean }),
+  "threads.coordination": Schema.Struct({ coordination: Schema.Boolean }),
   "threads.interrupt": OrchestratorMcpThreadInterruptResult,
   "threads.organize": OrchestrationV2DispatchCommandResult,
   "threads.rename": ThreadMetadataMcpUpdateResult,
@@ -377,6 +438,7 @@ export const HomeWatchEvent = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String.check(Schema.isMaxLength(300)),
   kind: HomeWatchEventKind,
+  runId: Schema.optional(RunId),
   detail: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
 });
 export type HomeWatchEvent = typeof HomeWatchEvent.Type;
