@@ -215,7 +215,10 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "provider_session_runtime",
   "auth_sessions",
   "auth_pairing_links",
-  // Fork tables: a dev server must not resume graph work or reach real peer machines.
+  // A dev server must not reach real peer machines or return results to real threads.
+  "peer_environment_links",
+  "coordination_requests",
+  // Fork tables kept from the removed task-graph feature.
   "task_graphs",
   "task_graph_peers",
 ];

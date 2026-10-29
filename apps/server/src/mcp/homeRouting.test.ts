@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MessageId,
   type FleetInvokeInput,
   ProviderInstanceId,
   ThreadId,
@@ -14,6 +15,7 @@ import * as FleetBroker from "../home/FleetBroker.ts";
 import * as FleetService from "../home/FleetService.ts";
 import * as HomeService from "../home/HomeService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { routeHome } from "./homeRouting.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
@@ -36,7 +38,14 @@ const liveCaller = {
 const setup = (isHome: boolean, caller: Partial<typeof liveCaller> = {}) => {
   const local: Array<FleetInvokeInput> = [];
   const remote: Array<[EnvironmentId, FleetInvokeInput]> = [];
+  const registered: Array<
+    Parameters<
+      ThreadManagement.ThreadManagementService["Service"]["registerCoordinationRequest"]
+    >[0]
+  > = [];
+  const order: string[] = [];
   const layer = Layer.mergeAll(
+    NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: hub,
       requestNamespace: "session",
@@ -50,6 +59,11 @@ const setup = (isHome: boolean, caller: Partial<typeof liveCaller> = {}) => {
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
+      registerCoordinationRequest: (input) =>
+        Effect.sync(() => {
+          registered.push(input);
+          order.push("registered");
+        }),
       getThreadShell: () =>
         Effect.succeed({ ...liveCaller, ...caller } as unknown as OrchestrationV2ThreadShell),
     }),
@@ -62,12 +76,13 @@ const setup = (isHome: boolean, caller: Partial<typeof liveCaller> = {}) => {
     }),
     Layer.mock(FleetBroker.FleetBroker)({
       invoke: (environmentId, input) => {
+        order.push("forwarded");
         remote.push([environmentId, input]);
         return Effect.succeed(result);
       },
     }),
   );
-  return { layer, local, remote };
+  return { layer, local, remote, registered, order };
 };
 
 it.effect("keeps other threads in their own environment", () => {
@@ -107,5 +122,25 @@ it.effect("lets Home read but not change anything outside full-access/default mo
     expect(error.code).toBe("capability_denied");
     expect(local).toHaveLength(1);
     expect(remote).toHaveLength(0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("durably registers the remote responder before forwarding a request", () => {
+  const { layer, registered, order, remote } = setup(true);
+  return Effect.gen(function* () {
+    yield* routeHome(studio, "threads.send", {
+      threadId: target,
+      message: "Check the pin",
+      clientRequestId: "pin",
+    });
+    expect(order).toEqual(["registered", "forwarded"]);
+    expect(registered).toEqual([
+      {
+        requesterThreadId: callerId,
+        responder: { environmentId: studio, threadId: target },
+        requestMessageId: MessageId.make("fleet:send:hub:caller:target:pin"),
+      },
+    ]);
+    expect(remote[0]?.[1].request).toMatchObject({ input: { clientRequestId: "pin" } });
   }).pipe(Effect.provide(layer));
 });

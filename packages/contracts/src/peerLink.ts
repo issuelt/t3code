@@ -33,7 +33,7 @@ export const PeerLinkSummary = Schema.Struct({
 export type PeerLinkSummary = typeof PeerLinkSummary.Type;
 
 export const PeerLinkCreateInput = Schema.Struct({
-  /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
+  /** Where the peer answers: an https base URL whose certificate this machine trusts. */
   url: TrimmedNonEmptyString,
   /** Reserved for compatibility. Alternate addresses are currently rejected. */
   alternateUrls: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),

@@ -123,7 +123,8 @@ it.effect(
         const untrusted = yield* a.links
           .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
           .pipe(Effect.flip);
-        expect(untrusted.reason).toBe("not_a_t3_environment");
+        expect(untrusted.reason).toBe("unreachable");
+        expect(untrusted.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
         expect(yield* Ref.get(b.probes)).toBe(0);
         NodeTls.setDefaultCACertificates(trusted);
         const mismatchUrl = b.url.replace("127.0.0.1", "[::ffff:127.0.0.1]");
@@ -136,7 +137,8 @@ it.effect(
         const mismatch = yield* a.links
           .link({ url: mismatchUrl, pairingCode: pairing.credential, access: "auto" })
           .pipe(Effect.flip);
-        expect(mismatch.reason).toBe("not_a_t3_environment");
+        expect(mismatch.reason).toBe("unreachable");
+        expect(mismatch.message).toContain("ERR_TLS_CERT_ALTNAME_INVALID");
         expect(yield* Ref.get(b.probes)).toBe(0);
         expect(yield* linkedSessions(b)).toEqual([]);
         expect(yield* Ref.get(b.bearers)).toEqual([]);

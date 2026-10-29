@@ -27,11 +27,6 @@ function matchedSearch(url: string) {
 }
 
 describe("pull requests route search", () => {
-  it("opens CI only for the CI view", () => {
-    expect(matchedSearch("/pull-requests?view=ci")?.view).toBe("ci");
-    expect(matchedSearch("/pull-requests?view=other")?.view).toBeUndefined();
-  });
-
   it("drops a q the URL parser turned into a number", () => {
     expect(matchedSearch("/pull-requests?q=4089")?.q).toBeUndefined();
     expect(matchedSearch("/pull-requests?q=true")?.q).toBeUndefined();

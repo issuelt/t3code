@@ -1761,6 +1761,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
           });
           const layerThreads = ThreadManagementService.layer.pipe(
+            Layer.provide(layerDatabase),
             Layer.provideMerge(layerOrchestrator),
             Layer.provide(
               LegacyV1ThreadImporter.layer.pipe(
@@ -2779,6 +2780,7 @@ describe("OrchestratorMcpService thread stop", () => {
           { databaseLayer: layerDatabase, runEffectWorker: false },
         );
         const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provide(layerDatabase),
           Layer.provideMerge(layerOrchestrator),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),

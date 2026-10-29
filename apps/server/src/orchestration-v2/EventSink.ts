@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { requestResults, restartChain } from "./CoordinationDelivery.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
@@ -252,6 +253,17 @@ const layerBase: Layer.Layer<
         .pipe(
           Effect.andThen(eventStore.publishCommitted(events)),
           Effect.andThen(publishLiveEvents(events)),
+          Effect.andThen(
+            events.some(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                ["completed", "failed", "cancelled", "interrupted"].includes(
+                  stored.event.payload.status,
+                ),
+            )
+              ? effectOutbox.notifyAvailable(1)
+              : Effect.void,
+          ),
         );
 
     // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
@@ -380,6 +392,49 @@ const layerBase: Layer.Layer<
               last_sequence = excluded.last_sequence,
               updated_at = excluded.updated_at
           `;
+        }
+        for (const stored of storedEvents) {
+          const event = stored.event;
+          if (
+            event.type !== "run.updated" ||
+            !["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status)
+          )
+            continue;
+          const chain =
+            event.payload.restartContinuationOfRunId === undefined
+              ? { runIds: [event.payload.id] }
+              : restartChain(
+                  (yield* projectionStore.getThreadRecords(event.threadId, ["runs"])).runs,
+                  event.payload.id,
+                );
+          const { messages } = yield* projectionStore.getThreadRecords(
+            event.threadId,
+            ["messages"],
+            { messageRunIds: chain.runIds, messageRoles: ["user"] },
+          );
+          const results = requestResults({
+            messages,
+            sourceRunId: event.payload.id,
+            text: event.payload.status,
+          });
+          if (results.length === 0) continue;
+          const { messages: output } = yield* projectionStore.getThreadRecords(
+            event.threadId,
+            ["messages"],
+            { messageRunIds: [event.payload.id], messageRoles: ["assistant"] },
+          );
+          const text =
+            output.filter((message) => !message.streaming).at(-1)?.text ?? event.payload.status;
+          const effects = results.map(
+            (result) =>
+              ({
+                id: `coordination-result:${[event.threadId, result.requestMessageId, event.payload.id].map(encodeURIComponent).join(":")}`,
+                commandId: stored.commandId ?? CommandId.make(`coordination-result:${event.id}`),
+                threadId: event.threadId,
+                request: { type: "coordination.result", ...result, text },
+              }) satisfies EffectOutbox.PendingOrchestrationEffectV2,
+          );
+          yield* effectOutbox.enqueue(effects);
         }
         // Read lineage here, on the connection this transaction holds; see makeRunOutcomeRecorder.
         return yield* runOutcomes.prepare(storedEvents);

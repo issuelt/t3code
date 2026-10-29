@@ -1,3 +1,6 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import * as FleetBroker from "../../home/FleetBroker.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -493,6 +496,12 @@ export function layerWithRegistry<Error>(
         )
       : Layer.empty;
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
+    Layer.provide(FleetBroker.layer),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("replay")),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         layerRunFinalizationServiceProvided,

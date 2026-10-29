@@ -136,6 +136,21 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+/** Node's TLS verification code somewhere in a failed request's cause chain. */
+const certificateErrorCode = (error: unknown) => {
+  let current = error;
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
+    if (
+      "code" in current &&
+      typeof current.code === "string" &&
+      /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/.test(current.code)
+    )
+      return current.code;
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return undefined;
+};
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -169,7 +184,18 @@ const make = Effect.gen(function* () {
     clientFor(origin).pipe(
       Effect.flatMap((client) => client.metadata.descriptor()),
       Effect.timeout(probeTimeout(origin)),
-      Effect.option,
+      Effect.asSome,
+      Effect.catch((error) => {
+        const code = certificateErrorCode(error);
+        return code === undefined
+          ? Effect.succeedNone
+          : Effect.fail(
+              new PeerLinkError({
+                reason: "unreachable",
+                message: `${origin} presented a certificate this machine does not trust (${code}).`,
+              }),
+            );
+      }),
     );
 
   const toLink = Effect.fn("PeerLinks.toLink")(function* (row: PeerLinkRow) {
@@ -420,7 +446,9 @@ const make = Effect.gen(function* () {
             URL.parse(row.trusted_origin)?.origin === row.trusted_origin &&
             row.trusted_origin.startsWith("https://")
           ) {
-            const found = yield* describe(row.trusted_origin);
+            const found = yield* describe(row.trusted_origin).pipe(
+              Effect.orElseSucceed(() => Option.none()),
+            );
             if (
               Option.isSome(found) &&
               found.value.environmentId === link.environmentId &&

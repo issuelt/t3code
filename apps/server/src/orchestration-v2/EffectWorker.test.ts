@@ -1,9 +1,14 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  MessageId,
   NodeId,
+  OrchestratorMcpFailure,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -18,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { CoordinationResultDeferred } from "./CoordinationDelivery.ts";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -79,6 +85,7 @@ function restartEffect(
 
 function layerExecutorFor(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
+  readonly broker?: Partial<FleetBroker.FleetBroker["Service"]>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
@@ -156,10 +163,19 @@ function layerExecutorFor(input: {
     ),
   );
   return EffectWorker.layerExecutor.pipe(
+    Layer.provide(Layer.mock(FleetBroker.FleetBroker)(input.broker ?? {})),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("test")),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
-        Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          restartContinuationState: () => Effect.succeed("none"),
+          ...input.threads,
+        }),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -624,5 +640,151 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
         yield* Ref.get(events),
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
       );
+    }),
+);
+
+it.effect(
+  "routes remote request results by environment and preserves correlation across retries",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const invokes: Array<Parameters<FleetBroker.FleetBroker["Service"]["invoke"]>> = [];
+      const remote = EnvironmentId.make("remote");
+      const requester = ThreadId.make("requester");
+      const requestMessageId = MessageId.make("question");
+      const layer = layerExecutorFor({
+        events,
+        broker: {
+          invoke: (environmentId, invoke) =>
+            Effect.sync(() => {
+              invokes.push([environmentId, invoke]);
+              return { delivered: true };
+            }),
+        },
+      });
+      const now = yield* DateTime.now;
+      const effect = {
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "coordination.result",
+          requester: { environmentId: remote, threadId: requester },
+          requestMessageId,
+          sourceRunId: runId,
+          text: "Pinned to version 3.",
+        },
+      } satisfies EffectOutbox.OrchestrationEffectV2;
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute(effect);
+        yield* executor.execute(effect);
+      }).pipe(Effect.provide(layer));
+      assert.equal(invokes.length, 2);
+      assert.deepEqual(invokes[0], invokes[1]);
+      assert.deepEqual(invokes[0], [
+        remote,
+        {
+          actor: { environmentId: EnvironmentId.make("test"), threadId },
+          request: {
+            op: "threads.deliver-result",
+            input: {
+              threadId: requester,
+              requestMessageId,
+              sourceRunId: runId,
+              text: "Pinned to version 3.",
+            },
+          },
+        },
+      ]);
+    }),
+);
+
+it.effect("leaves a cut run's result to its restart continuation", () =>
+  Effect.gen(function* () {
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const invokes: Array<unknown> = [];
+    const state = { current: "pending" as "pending" | "continued" };
+    const layer = layerExecutorFor({
+      events,
+      broker: {
+        invoke: (_environmentId, invoke) =>
+          Effect.sync(() => {
+            invokes.push(invoke);
+            return { delivered: true };
+          }),
+      },
+      threads: { restartContinuationState: () => Effect.succeed(state.current) },
+    });
+    const now = yield* DateTime.now;
+    const effect = {
+      ...restartEffect(now, { type: "detach" }),
+      request: {
+        type: "coordination.result",
+        requester: { environmentId: EnvironmentId.make("remote"), threadId },
+        requestMessageId: MessageId.make("question"),
+        sourceRunId: runId,
+        text: "interrupted",
+      },
+    } satisfies EffectOutbox.OrchestrationEffectV2;
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const pending = yield* Effect.exit(executor.execute(effect));
+      assert.isTrue(Exit.isFailure(pending));
+      state.current = "continued";
+      yield* executor.execute(effect);
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(invokes, []);
+  }),
+);
+
+it.effect.each(["environment_unavailable", "thread_not_found", "restart_pending"] as const)(
+  "keeps an offline result pending past the retry budget, but bounds permanent failures: %s",
+  (code) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const effect = {
+        ...restartEffect(now, { type: "detach" }),
+        request: {
+          type: "coordination.result",
+          requester: { environmentId: EnvironmentId.make("remote"), threadId },
+          requestMessageId: MessageId.make("offline-question"),
+          sourceRunId: runId,
+          text: "The result",
+        },
+      } satisfies EffectOutbox.OrchestrationEffectV2;
+      const settlements = yield* Ref.make<ReadonlyArray<string>>([]);
+      const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+        claimNext: () => Effect.succeedSome(effect),
+        get: () => Effect.succeedSome(effect),
+        awaitCancellation: () => Effect.never,
+        clearCancellation: () => Effect.void,
+        retry: () =>
+          Ref.update(settlements, (values) => [...values, "retry"]).pipe(Effect.as(true)),
+        fail: () =>
+          Ref.update(settlements, (values) => [...values, "failed"]).pipe(Effect.as(true)),
+      });
+      const executor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+        execute: () =>
+          Effect.fail(
+            new EffectWorker.OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              cause:
+                code === "restart_pending"
+                  ? new CoordinationResultDeferred({ sourceRunId: runId })
+                  : new OrchestratorMcpFailure({ code, message: "Delivery unavailable" }),
+            }),
+          ),
+      });
+      const worker = EffectWorker.layerWithOptions({
+        workerId: "test-worker",
+        maxAttempts: 1,
+      }).pipe(Layer.provide(Layer.merge(outbox, executor)));
+      yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+        Effect.flatMap((worker) => worker.runOnce),
+        Effect.provide(worker),
+      );
+      assert.deepEqual(yield* Ref.get(settlements), [
+        code === "thread_not_found" ? "failed" : "retry",
+      ]);
     }),
 );

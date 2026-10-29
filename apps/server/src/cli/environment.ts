@@ -73,7 +73,7 @@ const environmentLinkCommand = Command.make("link", {
   ...authLocationFlags,
   url: Argument.String("url").pipe(
     Argument.withDescription(
-      "Where the other environment answers: its T3 Connect, Tailscale, LAN or loopback address.",
+      "Where the other environment answers: an https address whose certificate this machine trusts.",
     ),
   ),
   pairingCode: Flag.String("pairing-code").pipe(

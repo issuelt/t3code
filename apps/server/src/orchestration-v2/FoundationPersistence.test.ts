@@ -7,6 +7,7 @@ import {
   CheckpointScopeId,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   type ModelSelection,
@@ -2056,6 +2057,91 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* outbox.succeed({ effectId, workerId: "settle-worker" });
       yield* Fiber.join(waiter);
       yield* outbox.awaitSettled(effectId);
+    }),
+  );
+
+  it.effect("does not hold a thread's turn work behind a pending coordination result", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-coordination-lane");
+      const threadId = ThreadId.make("thread:foundation-coordination-lane");
+      const resultEffectId = "effect:foundation-coordination-lane:a-result";
+      const providerEffectId = "effect:foundation-coordination-lane:b-provider";
+      const onlineResultEffectId = "effect:foundation-coordination-lane:c-online-result";
+      yield* outbox.enqueue([
+        {
+          id: resultEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "coordination.result",
+            requester: {
+              environmentId: EnvironmentId.make("environment:offline-requester"),
+              threadId: ThreadId.make("thread:offline-requester"),
+            },
+            requestMessageId: MessageId.make("message:foundation-coordination-lane"),
+            sourceRunId: RunId.make("run:foundation-coordination-lane:source"),
+            text: "The answer",
+          },
+        },
+        {
+          id: providerEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-coordination-lane"),
+          },
+        },
+      ]);
+
+      const result = yield* outbox.claimNext({
+        workerId: "result-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(result));
+      if (Option.isNone(result)) return;
+      assert.equal(result.value.id, resultEffectId);
+      yield* outbox.retry({
+        effectId: resultEffectId,
+        workerId: "result-worker",
+        error: "environment_unavailable",
+        delayMs: 30_000,
+      });
+
+      yield* outbox.enqueue([
+        {
+          id: onlineResultEffectId,
+          commandId,
+          threadId,
+          request: {
+            type: "coordination.result",
+            requester: {
+              environmentId: EnvironmentId.make("environment:online-requester"),
+              threadId: ThreadId.make("thread:online-requester"),
+            },
+            requestMessageId: MessageId.make("message:foundation-coordination-lane:online"),
+            sourceRunId: RunId.make("run:foundation-coordination-lane:source"),
+            text: "Another answer",
+          },
+        },
+      ]);
+      const claimed = new Map<string, string>();
+      for (const workerId of ["critical-lane-worker", "online-result-worker"]) {
+        const next = yield* outbox.claimNext({ workerId, leaseDurationMs: 30_000 });
+        if (Option.isSome(next)) claimed.set(next.value.id, workerId);
+      }
+      assert.deepEqual(
+        [...claimed.keys()].toSorted(),
+        [providerEffectId, onlineResultEffectId].toSorted(),
+      );
+      // The suite shares one database; later tests count unsettled effects.
+      for (const [effectId, workerId] of claimed) yield* outbox.succeed({ effectId, workerId });
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["coordination.result"],
+        reason: "test cleanup",
+      });
     }),
   );
 

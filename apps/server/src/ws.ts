@@ -1,4 +1,3 @@
-import * as ProjectCi from "./sourceControl/ProjectCi.ts";
 import { AutoFallbackCooldownTracker } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -102,7 +101,6 @@ import {
   type ProviderLoginStreamEvent,
   type PullRequestRef,
   WS_METHODS,
-  HomeUnavailableError,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -1386,7 +1384,6 @@ export const layerWsRpc = (
         ),
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const projectCi = yield* ProjectCi.ProjectCi;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const sourceControlRepositories =
@@ -2734,8 +2731,6 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
-        [WS_METHODS.projectCiRead]: (input) => projectCi.read(input),
-        [WS_METHODS.projectCiReadRun]: (input) => projectCi.readRun(input),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           sourceControlRepositories.lookupRepository(input),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
@@ -3118,14 +3113,7 @@ export const layerWsRpc = (
         [WS_METHODS.homeDisable]: (_input) => home.disable,
         [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
         [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
-        [WS_METHODS.fleetConnect]: (input) =>
-          home.available
-            ? Stream.unwrap(fleetBroker.connect(input))
-            : Stream.fail(
-                new HomeUnavailableError({
-                  message: "Home runs only on a server the T3 Code desktop app hosts.",
-                }),
-              ),
+        [WS_METHODS.fleetConnect]: (input) => Stream.unwrap(fleetBroker.connect(input)),
         [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
         [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),

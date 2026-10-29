@@ -61,6 +61,15 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const shortcutContext = input.getShortcutContext(event.target);
 
     if (
+      shortcutContext.composerFocus &&
+      input.composerRef.current?.handleMenuNavigationKey(event)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
       shouldTypeToFocusComposer(event) &&

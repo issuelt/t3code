@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
-  AuthEnvironmentMaintainScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
@@ -62,8 +61,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.dictationAppend]: AuthOrchestrationOperateScope,
   [WS_METHODS.dictationFinish]: AuthOrchestrationOperateScope,
   [WS_METHODS.dictationCancel]: AuthOrchestrationOperateScope,
-  // Pairing a peer stores a credential and lets this machine start work there.
-  // The grant also needs every scope it hands out; the server checks that.
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
 } as const;

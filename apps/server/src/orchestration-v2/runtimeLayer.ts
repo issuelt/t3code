@@ -1,3 +1,5 @@
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -311,6 +313,8 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
+  Layer.provide(FleetBroker.layer),
+  Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,

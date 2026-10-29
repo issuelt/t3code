@@ -30,6 +30,7 @@ const snapshot: PreviewSessionSnapshot = {
 
 describe("closedViewStore", () => {
   it.each([
+    { id: "removed-ci", kind: "panel-tab", threadRef: refA, surface: { kind: "ci", id: "ci" } },
     { id: "bad", kind: "browser", threadRef: refA, snapshot: {} },
     {
       id: "bad",
@@ -59,7 +60,7 @@ describe("closedViewStore", () => {
     const { storage, name } = useClosedViewStore.persist.getOptions();
     await storage!.setItem(name!, {
       state: { entries: [entry as ClosedViewEntry, ...useClosedViewStore.getState().entries] },
-      version: 1,
+      version: 2,
     });
     await useClosedViewStore.persist.rehydrate();
     expect(useClosedViewStore.persist.hasHydrated()).toBe(true);

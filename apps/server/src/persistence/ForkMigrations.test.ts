@@ -36,7 +36,7 @@ const expectUpstreamHistoryAndTaskGraphs = Effect.gen(function* () {
   const fork = yield* sql<{ readonly name: string }>`SELECT name FROM fork_sql_migrations`;
   assert.deepStrictEqual(
     fork.map((row) => row.name),
-    ["TaskGraphs"],
+    ["TaskGraphs", "PeerLinkOrigin", "CoordinationRequests"],
   );
   const tables = yield* sql`SELECT name FROM sqlite_master WHERE name = 'task_graphs'`;
   assert.strictEqual(tables.length, 1);
@@ -113,6 +113,23 @@ describe("fork migrations", () => {
         peers.map((row) => row.label),
         ["Peer"],
       );
+    }).pipe(Effect.provide(memory)),
+  );
+
+  it.effect("moves fork migrations that a fork build recorded at upstream ids 72 and 73", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* migrateAll;
+      yield* sql`DELETE FROM fork_sql_migrations WHERE name <> 'TaskGraphs'`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (72, 'PeerLinkOrigin')`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (73, 'CoordinationRequests')`;
+
+      yield* migrateAll;
+      yield* expectUpstreamHistoryAndTaskGraphs;
+      const columns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(peer_environment_links)`;
+      assert.isTrue(columns.some((column) => column.name === "trusted_origin"));
     }).pipe(Effect.provide(memory)),
   );
 

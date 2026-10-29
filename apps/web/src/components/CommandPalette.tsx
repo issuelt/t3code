@@ -53,7 +53,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
-  WorkflowIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -1466,20 +1465,6 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push(changeAppearanceItem);
 
   actionItems.push(themeEditorItem);
-
-  actionItems.push({
-    kind: "action",
-    value: "action:ci-runs",
-    searchTerms: ["ci", "pipelines", "workflows", "jobs", "github", "gitlab"],
-    title: "Open CI runs",
-    icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      await navigate({
-        to: "/pull-requests",
-        search: { ...readPullRequestListPreferences(), view: "ci" },
-      });
-    },
-  });
 
   if (
     environments.some(

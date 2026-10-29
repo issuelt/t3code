@@ -221,16 +221,26 @@ export function AttachmentFilePreview(props: {
     // oxlint-disable-next-line react/set-state-in-effect -- Clear the previous document when its resource changes.
     setArtifact(null);
     setArtifactError(null);
-    void loadHtmlArtifact(url, controller.signal, revision > 0)
-      .then((html) => {
-        if (!controller.signal.aborted) setArtifact(html);
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setArtifactError(cause instanceof Error ? cause.message : "Could not load this page.");
-      });
+    const file = props.file;
+    void (async () => {
+      if (!file && Date.now() - authorizedAt.current > STALE_URL_MS) {
+        const target = await refresh();
+        if (controller.signal.aborted) return;
+        if (!target) throw new Error("Reconnect to the environment and try again.");
+        authorizedAt.current = Date.now();
+        if (target !== url) {
+          setRemoteUrl(target);
+          return;
+        }
+      }
+      const html = await loadHtmlArtifact(url, controller.signal, revision > 0);
+      if (!controller.signal.aborted) setArtifact(html);
+    })().catch((cause: unknown) => {
+      if (!controller.signal.aborted)
+        setArtifactError(cause instanceof Error ? cause.message : "Could not load this page.");
+    });
     return () => controller.abort();
-  }, [props.htmlRender, url, revision]);
+  }, [props.htmlRender, url, revision, props.file, refresh]);
   const failure =
     error ?? (props.htmlRender && rendered ? artifactError : needsText ? contentError : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);

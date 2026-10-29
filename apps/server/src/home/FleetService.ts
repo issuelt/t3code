@@ -37,7 +37,15 @@ import {
   threadManagementFailure,
   threadSettlement,
 } from "../mcp/OrchestratorMcpService.ts";
+import {
+  cloneProject,
+  createProject,
+  searchThreads,
+  updateProject,
+} from "../mcp/projectOperations.ts";
 import { resultFromThread } from "../mcp/ThreadMetadataMcpService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as Repositories from "../sourceControl/SourceControlRepositoryService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -119,6 +127,8 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const crypto = yield* Crypto.Crypto;
+  const repositories = yield* Repositories.SourceControlRepositoryService;
+  const threadSearch = yield* ThreadSearch.ThreadSearch;
   // Links in results point at this environment, wherever the call came from.
   const environmentId = (yield* environment.getDescriptor).environmentId;
 
@@ -186,6 +196,33 @@ const make = Effect.gen(function* () {
       const end = start + (input.limit ?? 20);
       return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
     }),
+
+    "projects.create": Effect.fn("FleetService.projects.create")((input) =>
+      createProject(input).pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
+        Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, folders),
+        Effect.provideService(Crypto.Crypto, crypto),
+      ),
+    ),
+
+    "projects.update": Effect.fn("FleetService.projects.update")((input) =>
+      updateProject(input).pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
+        Effect.provideService(Crypto.Crypto, crypto),
+      ),
+    ),
+
+    "projects.clone": Effect.fn("FleetService.projects.clone")((input) =>
+      cloneProject(input).pipe(
+        Effect.provideService(Repositories.SourceControlRepositoryService, repositories),
+      ),
+    ),
+
+    "threads.search": Effect.fn("FleetService.threads.search")((input) =>
+      searchThreads(input, environmentId).pipe(
+        Effect.provideService(ThreadSearch.ThreadSearch, threadSearch),
+      ),
+    ),
 
     "threads.list": Effect.fn("FleetService.threads.list")(function* (input, actor) {
       // The same default as the regular thread list: subagents unless turned off.
@@ -346,18 +383,53 @@ const make = Effect.gen(function* () {
 
     "threads.send": Effect.fn("FleetService.threads.send")(function* (input, actor) {
       const shell = yield* loadShell(input.threadId);
+      if (input.replyToMessageId !== undefined) {
+        const result = yield* threads
+          .deliverCoordinationResult(
+            {
+              threadId: input.threadId,
+              requestMessageId: input.replyToMessageId,
+              text: input.message,
+            },
+            actor,
+          )
+          .pipe(Effect.mapError(threadManagementFailure));
+        return {
+          threadId: input.threadId,
+          messageId: result.message.id,
+          runId: result.run.id,
+          status: result.run.status,
+          delivery: result.delivery,
+        };
+      }
+      const requester =
+        shell.lineage.relationshipToParent === "subagent" || actor.threadId === input.threadId
+          ? undefined
+          : actor;
       const id = yield* commandId(actor, "send", input);
       const messageId = MessageId.make(id);
+      if (requester !== undefined && requester.environmentId === environmentId) {
+        yield* threads
+          .registerCoordinationRequest({
+            requesterThreadId: requester.threadId,
+            responder: { environmentId, threadId: input.threadId },
+            requestMessageId: messageId,
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+      }
       const result = yield* threads
         .sendToThread({
           projectId: shell.projectId,
           commandId: id,
           threadId: input.threadId,
           senderThreadId: actor.threadId,
+          ...(requester === undefined
+            ? {}
+            : { coordination: { kind: "request" as const, requester } }),
           messageId,
           text: input.message,
           attachments: [],
-          mode: input.mode ?? "auto",
+          mode: input.mode ?? (requester === undefined ? "auto" : "queue"),
           createdBy: "agent",
           creationSource: "mcp",
         })
@@ -370,6 +442,22 @@ const make = Effect.gen(function* () {
         delivery: result.delivery,
       };
     }),
+
+    "threads.coordination": Effect.fn("FleetService.threads.coordination")(function* (input) {
+      const shell = yield* loadShell(input.threadId);
+      const runId = input.runId ?? shell.latestRunId;
+      if (runId === null) return { coordination: false };
+      const coordination = yield* threads
+        .isCoordinationRun(input.threadId, runId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      return { coordination };
+    }),
+
+    "threads.deliver-result": Effect.fn("FleetService.threads.deliver-result")((input, actor) =>
+      threads
+        .deliverCoordinationResult(input, actor)
+        .pipe(Effect.as({ delivered: true }), Effect.mapError(threadManagementFailure)),
+    ),
 
     "threads.interrupt": Effect.fn("FleetService.threads.interrupt")(function* (input, actor) {
       const shell = yield* loadShell(input.threadId);

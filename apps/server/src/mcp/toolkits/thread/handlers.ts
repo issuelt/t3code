@@ -11,7 +11,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -21,9 +20,9 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
-import { callerIsHome, routeHome } from "../../homeRouting.ts";
+import { routeHome } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import { searchThreads } from "../../projectOperations.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -128,23 +127,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       };
     }),
   ),
-  t3_thread_search: McpToolAccess.reads((input) =>
+  t3_thread_search: McpToolAccess.reads(({ environmentId, ...input }) =>
     Effect.gen(function* () {
+      const routed = yield* routeHome(environmentId, "threads.search", input);
+      if (Option.isSome(routed)) return routed.value;
       const { caller, scope } = yield* readCaller();
       // Like the other project tools, an omitted project means the caller's own; a client
-      // outside a thread, or Home, searches every project.
-      const projectId =
-        input.projectId ?? ((yield* callerIsHome()) ? undefined : caller?.projectId);
-      const threadSearch = yield* ThreadSearch.ThreadSearch;
-      const { matches } = yield* threadSearch
-        .searchThreads({ ...input, projectId })
-        .pipe(Effect.mapError(unavailable));
-      return {
-        matches: matches.map((match) => ({
-          ...match,
-          link: formatThreadLink(match.threadId, match.title, scope.environmentId),
-        })),
-      };
+      // outside a thread searches every project.
+      const projectId = input.projectId ?? caller?.projectId;
+      return yield* searchThreads({ ...input, projectId }, scope.environmentId);
     }),
   ),
   t3_thread_transfer: McpToolAccess.either(

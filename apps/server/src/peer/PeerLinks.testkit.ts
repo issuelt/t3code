@@ -1,8 +1,8 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs a local TLS certificate.
-import * as Https from "node:https";
+import * as NodeHttps from "node:https";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Node requires certificate bytes when constructing the test server.
-import { readFileSync } from "node:fs";
-import { getCACertificates, setDefaultCACertificates } from "node:tls";
+import * as NodeFS from "node:fs";
+import * as NodeTls from "node:tls";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -37,16 +37,16 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
-setDefaultCACertificates([
-  ...getCACertificates("default"),
-  readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url), "utf8"),
+NodeTls.setDefaultCACertificates([
+  ...NodeTls.getCACertificates("default"),
+  NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url), "utf8"),
 ]);
 
 export const layerHttpsTest = NodeHttpServer.layer(
   () =>
-    Https.createServer({
-      key: readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
-      cert: readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+    NodeHttps.createServer({
+      key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+      cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
     }),
   { port: 0, host: "127.0.0.1" },
 );

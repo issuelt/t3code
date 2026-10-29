@@ -51,15 +51,19 @@ it("does not expose task graph RPC methods", () => {
   expect([...WsRpcGroup.requests.keys()].some((method) => /task.?graph/i.test(method))).toBe(false);
 });
 
-it("requires a selected remote and numeric stable ID for CI run details", () => {
-  const rpc = WsRpcGroup.requests.get(WS_METHODS.projectCiReadRun);
-  if (rpc === undefined) throw new Error("projectCi.readRun is not registered");
-  const decode = Schema.decodeUnknownExit(rpc.payloadSchema);
-  expect(Exit.isSuccess(decode({ projectId: "p", remoteName: "upstream", runId: "42" }))).toBe(
-    true,
+it("does not expose duplicate project CI RPC methods", () => {
+  expect(Object.values(WS_METHODS).some((method) => method.startsWith("projectCi."))).toBe(false);
+  expect([...WsRpcGroup.requests.keys()].some((method) => method.startsWith("projectCi."))).toBe(
+    false,
   );
-  expect(Exit.isFailure(decode({ projectId: "p", runId: "42" }))).toBe(true);
-  for (const runId of ["", "../jobs", "42?token=secret", "42/jobs"]) {
-    expect(Exit.isFailure(decode({ projectId: "p", remoteName: "upstream", runId }))).toBe(true);
+});
+
+it("retains Git status and pull request checks and actions", () => {
+  for (const method of [
+    WS_METHODS.vcsRefreshStatus,
+    WS_METHODS.pullRequestsChecks,
+    WS_METHODS.pullRequestsRunAction,
+  ]) {
+    expect(WsRpcGroup.requests.has(method)).toBe(true);
   }
 });
