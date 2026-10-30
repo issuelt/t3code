@@ -49,8 +49,8 @@ accepts a return only when it matches its durable outgoing request by responder
 environment, responder thread, and destination.
 
 A message an agent sends to Home is a report, never a request. Home registers no
-return for it, and it arrives with `mode: "auto"` so a busy Home takes it into the
-current turn instead of queueing a turn. Results for Home's own requests arrive the
+return for it, and it arrives with `mode: "auto"` so it steers Home's running
+turn, the same dispatch as `mode: "steer"`, and starts a turn when Home is idle. Results for Home's own requests arrive the
 same way. A run that answers several requests from one thread returns one result
 (`orchestration-v2/CoordinationDelivery.ts`).
 
