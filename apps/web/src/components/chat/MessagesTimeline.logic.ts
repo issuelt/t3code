@@ -37,6 +37,7 @@ import {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
+  workEntryIsAgentMessage,
   workLogEntryIsToolLike,
   type TimelineEntry,
   type WorkLogEntry,
@@ -729,7 +730,9 @@ function completeSupersededReplyEntryIds(
       entry.attempt?.status !== "superseded" ||
       (entry.kind === "message" && entry.message.role === "user") ||
       (entry.kind === "work" &&
-        (entry.entry.itemType === "system_notice" || entry.entry.itemType === "notification")) ||
+        (entry.entry.itemType === "system_notice" ||
+          entry.entry.itemType === "notification" ||
+          workEntryIsAgentMessage(entry.entry))) ||
       (entry.kind !== "message" && entry.kind !== "work")
     ) {
       continue;
@@ -896,7 +899,8 @@ function timelineEntryIsSteer(entry: TimelineEntry): boolean {
 function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
   return (
     (entry.kind === "message" && entry.message.role === "user" && !timelineEntryIsSteer(entry)) ||
-    (entry.kind === "work" && entry.entry.itemType === "notification")
+    (entry.kind === "work" &&
+      (entry.entry.itemType === "notification" || workEntryIsAgentMessage(entry.entry)))
   );
 }
 
@@ -1133,7 +1137,11 @@ function deriveTurnFolds(input: {
       ) {
         continue;
       }
-      if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      if (
+        entry.kind === "work" &&
+        (entry.entry.itemType === "notification" || workEntryIsAgentMessage(entry.entry))
+      )
+        continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
       hiddenEntryIds.add(entry.id);
     }
@@ -1506,6 +1514,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
+        workEntryIsAgentMessage(entry.entry) ||
         entry.entry.questionAnswer !== undefined ||
         isPendingApproval(entry.entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
@@ -1798,6 +1807,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
         timelineEntry.entry.itemType === "notification" ||
+        workEntryIsAgentMessage(timelineEntry.entry) ||
         timelineEntry.entry.questionAnswer !== undefined
       ) {
         nextRows.push({

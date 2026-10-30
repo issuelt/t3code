@@ -485,6 +485,15 @@ it("routes each request to its own environment and thread without replying to re
   ]);
   expect(requestResults(input)).toEqual(requestResults(input));
   expect(requestResults({ ...input, messages: messages.slice(2) })).toEqual([]);
+  // One run that answers several requests from one requester returns one result, for the latest.
+  const nudges = [
+    ...messages,
+    { id: MessageId.make("a-again"), coordination: first },
+    { id: MessageId.make("a-third"), coordination: first },
+  ];
+  expect(
+    requestResults({ ...input, messages: nudges }).map((result) => result.requestMessageId),
+  ).toEqual([MessageId.make("a-third"), MessageId.make("b")]);
 });
 
 it.effect(
@@ -508,6 +517,16 @@ it.effect(
       expect(sent[1]?.commandId).toBe(sent[0]?.commandId);
       expect(sent[2]?.commandId).not.toBe(sent[0]?.commandId);
       expect(sent[2]?.coordination).toEqual({ kind: "request", requester: other });
+      // A report to Home is delivered at once and expects no returned answer.
+      yield* fleet.execute({
+        actor: other,
+        request: {
+          op: "threads.send",
+          input: { threadId: ThreadId.make("home:abc"), message: "Merged #17." },
+        },
+      });
+      expect(sent[3]).toMatchObject({ mode: "auto" });
+      expect(sent[3]?.coordination).toBeUndefined();
     }).pipe(Effect.provide(layer));
   },
 );

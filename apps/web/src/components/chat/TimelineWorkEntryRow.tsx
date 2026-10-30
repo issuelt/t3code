@@ -32,10 +32,16 @@ import {
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  CircleAlertIcon,
+  MessagesSquareIcon,
+  XIcon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useQuietThreadShellById, useThreadShell } from "../../state/entities";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -148,9 +154,95 @@ type WorkEntryRowProps = {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 };
 
+/** An agent's message to Home: its sender's title when folded, its text when expanded. */
+function AgentMessageWorkRow({
+  workEntry,
+  onToggleEntry,
+}: {
+  workEntry: TimelineWorkEntry;
+  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const groupView = use(WorkGroupViewCtx);
+  const [expanded, setExpanded] = useState(
+    () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
+  );
+  const item = workEntry.projectedItem?.item;
+  const senderThreadId = item?.type === "user_message" ? item.senderThreadId : undefined;
+  const localSender = useQuietThreadShell(
+    senderThreadId === undefined
+      ? null
+      : scopeThreadRef(ctx.activeThreadEnvironmentId, senderThreadId),
+  );
+  // A report from another machine names a thread this environment doesn't have.
+  const remoteSender = useQuietThreadShellById(
+    senderThreadId !== undefined && localSender === null ? senderThreadId : null,
+  );
+  const title = (localSender ?? remoteSender)?.title.trim() || "Agent";
+  const toggle = () => {
+    const next = !expanded;
+    if (groupView) {
+      groupView.onToggleEntry(!next);
+      if (next) groupView.state.expandedEntries.add(workEntry.id);
+      else groupView.state.expandedEntries.delete(workEntry.id);
+    } else {
+      onToggleEntry?.(!next);
+    }
+    setExpanded(next);
+  };
+  return (
+    <WorkLogRow
+      data-v2-item-type="user_message"
+      data-agent-message
+      role="button"
+      tabIndex={0}
+      aria-label={`Message from ${title}`}
+      aria-expanded={expanded}
+      onClick={toggle}
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          toggle();
+        }
+      }}
+      icon={<MessagesSquareIcon className="size-4 shrink-0 text-icon-muted" aria-hidden />}
+      label={<span className="min-w-0 truncate text-sm text-secondary-label">{title}</span>}
+      trailing={
+        <>
+          <TimelineRowTimestamp
+            createdAt={workEntry.createdAt}
+            timestampFormat={ctx.timestampFormat}
+          />
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+              expanded && "rotate-90",
+            )}
+          />
+        </>
+      }
+    >
+      {expanded ? (
+        <WorkLogDetails>
+          <div className="border-s ps-3">
+            <ChatMarkdown
+              text={workEntry.detail ?? ""}
+              cwd={ctx.markdownCwd}
+              parseRawHtml={false}
+            />
+          </div>
+        </WorkLogDetails>
+      ) : null}
+    </WorkLogRow>
+  );
+}
+
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
+  if (item?.type === "user_message")
+    return <AgentMessageWorkRow workEntry={props.workEntry} onToggleEntry={props.onToggleEntry} />;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {
