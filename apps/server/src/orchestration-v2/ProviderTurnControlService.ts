@@ -1,4 +1,5 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { labelAgentMessage } from "./agentMessageLabel.ts";
 import {
   MessageId,
   type NodeId,
@@ -374,9 +375,27 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
+                text: labelAgentMessage({
+                  text: projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                  senderThreadId: message.senderThreadId,
+                  senderTitle:
+                    message.senderThreadId === undefined
+                      ? undefined
+                      : // A sender in another environment has no local thread; the label then names its id.
+                        yield* projections.getThread(message.senderThreadId).pipe(
+                          Effect.map((thread) => thread.title),
+                          Effect.orElseSucceed(() => undefined),
+                        ),
+                  recipientThreadId: input.threadId,
+                  recipientParentThreadId:
+                    message.senderThreadId === undefined
+                      ? null
+                      : yield* projections
+                          .getThread(input.threadId)
+                          .pipe(Effect.map((thread) => thread.lineage.parentThreadId)),
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

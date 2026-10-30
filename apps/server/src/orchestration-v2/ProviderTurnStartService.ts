@@ -1,5 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { labelAgentMessage } from "./agentMessageLabel.ts";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -155,6 +156,12 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    // A sender in another environment has no local thread; the label then names its id.
+    const senderTitle = (threadId: ThreadId) =>
+      projectionStore.getThread(threadId).pipe(
+        Effect.map((thread): string | undefined => thread.title),
+        Effect.orElseSucceed(() => undefined),
+      );
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
@@ -765,9 +772,19 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
+      const userText = labelAgentMessage({
+        text: projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        senderThreadId: message.senderThreadId,
+        senderTitle:
+          message.senderThreadId === undefined
+            ? undefined
+            : yield* senderTitle(message.senderThreadId),
+        recipientThreadId: projection.thread.id,
+        recipientParentThreadId:
+          message.senderThreadId === undefined ? null : projection.thread.lineage.parentThreadId,
       });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";

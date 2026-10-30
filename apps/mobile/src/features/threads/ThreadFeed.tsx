@@ -242,6 +242,7 @@ import {
   resolveThreadLink,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
+  useQuietThreadShellById,
   useThreadChipIcons,
 } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -1023,10 +1024,14 @@ function AgentMessageFoldHeader(props: {
   readonly onToggle: () => void;
   readonly iconSubtleColor: ColorValue;
 }) {
-  const senderShell = useQuietThreadShell(
+  const localSenderShell = useQuietThreadShell(
     props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
-  const label = senderShell?.title.trim() || "Agent";
+  // A result returned from another machine names a thread this environment doesn't have.
+  const remoteSenderShell = useQuietThreadShellById(
+    props.senderThreadId && localSenderShell === null ? props.senderThreadId : null,
+  );
+  const label = (localSenderShell ?? remoteSenderShell)?.title.trim() || "Agent";
   return (
     <Pressable
       accessibilityRole="button"

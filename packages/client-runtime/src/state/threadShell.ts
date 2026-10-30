@@ -546,6 +546,13 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-delegated-under-parent"));
 
+  // A message names its sender by thread id alone; the sender may be in another environment.
+  const quietThreadShellByIdAtomFamily = Atom.family((threadId: string) =>
+    Atom.make(
+      (get) => get(quietThreadShellsAtom).find((shell) => shell.id === threadId) ?? null,
+    ).pipe(Atom.withLabel("environment-quiet-thread-shell-by-id")),
+  );
+
   let previousNavigationShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const navigationThreadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
@@ -582,6 +589,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),
     quietThreadShellAtom: (ref: ScopedThreadRef) => quietThreadShellAtomFamily(threadKey(ref)),
+    quietThreadShellByIdAtom: (threadId: string) => quietThreadShellByIdAtomFamily(threadId),
     childThreadInputsAtom: (ref: ScopedThreadRef) => childThreadInputsAtomFamily(threadKey(ref)),
   };
 }
