@@ -1,5 +1,6 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
+import { findRevealRef } from "./markdownFindContext";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -190,6 +191,9 @@ function AgentMessageWorkRow({
     }
     setExpanded(next);
   };
+  const revealRef = findRevealRef(() => {
+    if (!expanded) toggle();
+  });
   return (
     <WorkLogRow
       data-v2-item-type="user_message"
@@ -223,16 +227,20 @@ function AgentMessageWorkRow({
         </>
       }
     >
-      {expanded ? (
-        <WorkLogDetails>
-          <div className="border-s ps-3">
-            <ChatMarkdown
-              text={workEntry.detail ?? ""}
-              cwd={ctx.markdownCwd}
-              parseRawHtml={false}
-            />
-          </div>
-        </WorkLogDetails>
+      {/* Find reads the DOM, so a folded report stays mounted but hidden while find is open. */}
+      {expanded || ctx.findActive ? (
+        <div ref={revealRef} hidden={!expanded}>
+          <WorkLogDetails>
+            <div className="border-s ps-3">
+              <ChatMarkdown
+                text={workEntry.detail ?? ""}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                parseRawHtml={false}
+              />
+            </div>
+          </WorkLogDetails>
+        </div>
       ) : null}
     </WorkLogRow>
   );

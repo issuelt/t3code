@@ -1,6 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { labelAgentMessage } from "./agentMessageLabel.ts";
+import { labelAgentMessage } from "@t3tools/provider-core/server/agentMessageLabel";
 import {
   CommandId,
   latestProviderTurnForAttempt,
