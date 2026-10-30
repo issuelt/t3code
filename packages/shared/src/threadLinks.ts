@@ -130,7 +130,7 @@ export function unknownThreadLinkLabel(
   messageEnvironmentId: EnvironmentId,
 ): string {
   return link.environmentId === null || link.environmentId === messageEnvironmentId
-    ? "Thread no longer available"
+    ? "Thread"
     : "Thread on another machine";
 }
 
@@ -161,7 +161,11 @@ export function relabelThreadLinks(
     const current = title({ environmentId, threadId });
     if (current === undefined) {
       if (groups.href !== undefined && written.environmentId === null) return source;
-      return groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
+      // Not loaded is not gone: keep a link that still opens the thread.
+      return formatThreadLink(
+        written,
+        groups.label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId),
+      );
     }
     return formatThreadLink(
       { environmentId: written.environmentId, threadId },
