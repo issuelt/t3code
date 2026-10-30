@@ -216,7 +216,7 @@ it.effect("lists threads from every project, newest first, with snooze state", (
       threads: [
         {
           threadId: "newer",
-          link: "[newer](t3-thread://v1/newer?environmentId=studio)",
+          link: "<t3-thread://v2/studio/newer>",
           projectId: "b",
           snoozed: false,
           snoozedUntil: null,
@@ -273,7 +273,7 @@ it.effect("clones and searches in the environment that runs the operation", () =
           projectId: "a",
           title: "Found",
           source: "title",
-          link: "[Found](t3-thread://v1/found?environmentId=studio)",
+          link: "<t3-thread://v2/studio/found>",
         },
       ],
     });

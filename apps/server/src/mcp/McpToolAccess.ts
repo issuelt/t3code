@@ -24,7 +24,7 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as HomeService from "../home/HomeService.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
@@ -434,6 +434,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
             });
         }
         if (target === undefined) return yield* here(params);
+        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
         return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });

@@ -400,6 +400,14 @@ const layerBase: Layer.Layer<
             !["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status)
           )
             continue;
+          // Most threads never answer a coordination request; skip the projection reads for them.
+          const requests = yield* sql<{ readonly found: number }>`
+            SELECT 1 AS found FROM orchestration_v2_projection_messages
+            WHERE thread_id = ${event.threadId} AND role = 'user'
+              AND json_extract(payload_json, '$.coordination.kind') = 'request'
+            LIMIT 1
+          `;
+          if (requests.length === 0) continue;
           const chain =
             event.payload.restartContinuationOfRunId === undefined
               ? { runIds: [event.payload.id] }

@@ -1,13 +1,11 @@
-import {
-  createContext,
-  startTransition,
-  use,
-  useCallback,
-  useEffect,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { createContext, startTransition, use, useEffect, useMemo, type ReactNode } from "react";
 import { AppState, Appearance, Platform, useColorScheme } from "react-native";
+
+import { manufacturer } from "expo-device";
+import {
+  resolveAndroidNavigationStyle,
+  type AndroidNavigationStyle,
+} from "../../../lib/androidNavigationStyle";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Atom, AsyncResult } from "effect/reactivity";
@@ -53,6 +51,8 @@ interface AppearancePreferencesContextValue {
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
+  readonly androidNavigationStyle: AndroidNavigationStyle;
+  readonly setAndroidNavigationStyle: (value: AndroidNavigationStyle) => void;
   readonly themeAppearance: MobileThemeAppearance;
   readonly systemColorsAvailable: boolean;
   readonly systemColorsActive: boolean;
@@ -222,6 +222,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
   );
+  const androidNavigationStyle = resolveAndroidNavigationStyle(
+    storedPreferences?.androidNavigationStyle,
+    manufacturer,
+    process.env.EXPO_PUBLIC_T3_FLOATING_TABS === "1",
+  );
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
   const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
@@ -245,107 +250,82 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize],
   );
   const isReady = AsyncResult.isSuccess(preferencesResult);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the Material accent palette to the native Android theme variables
   useEffect(() => {
     if (Platform.OS === "android") {
       applyMaterialAccentVariables(materialTheme);
     }
   }, [materialTheme]);
 
-  const updatePreferences = useCallback(
-    (patch: Partial<Preferences>) => {
-      startTransition(() => savePreferences(patch));
-    },
-    [savePreferences],
-  );
+  const updatePreferences = (patch: Partial<Preferences>) => {
+    startTransition(() => savePreferences(patch));
+  };
 
-  const updateThemePreferences = useCallback(
-    (patch: Partial<Preferences>) => {
-      savePreferences(patch);
-    },
-    [savePreferences],
-  );
+  const updateThemePreferences = (patch: Partial<Preferences>) => {
+    savePreferences(patch);
+  };
 
-  const setThemeIdForAppearance = useCallback(
-    (appearance: MobileThemeAppearance, value: MobileThemeId) => {
-      // Read at call time: a second pick before the next render must build on
-      // the first one's optimistic write.
-      const selected = resolveMobileThemeIds(
-        storedPreferencesOf(appAtomRegistry.get(mobilePreferencesAtom)) ?? {},
-      );
-      updateThemePreferences(
-        createMobileThemeSelectionPatch(selected, themeAppearance, appearance, value),
-      );
-    },
-    [themeAppearance, updateThemePreferences],
-  );
+  const setThemeIdForAppearance = (appearance: MobileThemeAppearance, value: MobileThemeId) => {
+    // Read at call time: a second pick before the next render must build on
+    // the first one's optimistic write.
+    const selected = resolveMobileThemeIds(
+      storedPreferencesOf(appAtomRegistry.get(mobilePreferencesAtom)) ?? {},
+    );
+    updateThemePreferences(
+      createMobileThemeSelectionPatch(selected, themeAppearance, appearance, value),
+    );
+  };
 
-  const setThemeIdForBothAppearances = useCallback(
-    (value: MobileThemeId) => {
-      updateThemePreferences(createMobileThemePairPatch(value));
-    },
-    [updateThemePreferences],
-  );
+  const setThemeIdForBothAppearances = (value: MobileThemeId) => {
+    updateThemePreferences(createMobileThemePairPatch(value));
+  };
 
-  const setThemeMode = useCallback(
-    (value: MobileThemeMode) => {
-      const current = currentRuntimeState();
+  const setThemeMode = (value: MobileThemeMode) => {
+    const current = currentRuntimeState();
 
-      // Clear forced appearance before publishing System so useColorScheme batches the system palette into the preference commit.
-      if (value === "system") {
-        Appearance.setColorScheme("unspecified");
-      }
-      const nextAppearance =
-        value === "system" ? (Appearance.getColorScheme() === "dark" ? "dark" : "light") : value;
-      const next = {
-        ...current,
-        themeAppearance: nextAppearance,
-        themeMode: value,
-      };
+    // Clear forced appearance before publishing System so useColorScheme batches the system palette into the preference commit.
+    if (value === "system") {
+      Appearance.setColorScheme("unspecified");
+    }
+    const nextAppearance =
+      value === "system" ? (Appearance.getColorScheme() === "dark" ? "dark" : "light") : value;
+    const next = {
+      ...current,
+      themeAppearance: nextAppearance,
+      themeMode: value,
+    };
 
-      if (value === "system") {
-        appliedRuntimeState = next;
-      } else {
-        applyThemeRuntime(next);
-      }
-      updateThemePreferences({ themeMode: value });
-    },
-    [updateThemePreferences],
-  );
+    if (value === "system") {
+      appliedRuntimeState = next;
+    } else {
+      applyThemeRuntime(next);
+    }
+    updateThemePreferences({ themeMode: value });
+  };
 
-  const setBaseFontSize = useCallback(
-    (value: number) => {
-      applyThemeRuntime({ ...currentRuntimeState(), baseFontSize: value });
-      updatePreferences({ baseFontSize: value });
-    },
-    [updatePreferences],
-  );
+  const setAndroidNavigationStyle = (value: AndroidNavigationStyle) =>
+    updatePreferences({ androidNavigationStyle: value });
 
-  const setTerminalFontSize = useCallback(
-    (value: number | null) => {
-      updatePreferences({ terminalFontSize: value });
-    },
-    [updatePreferences],
-  );
+  const setBaseFontSize = (value: number) => {
+    applyThemeRuntime({ ...currentRuntimeState(), baseFontSize: value });
+    updatePreferences({ baseFontSize: value });
+  };
 
-  const setCodeFontSize = useCallback(
-    (value: number | null) => {
-      updatePreferences({ codeFontSize: value });
-    },
-    [updatePreferences],
-  );
+  const setTerminalFontSize = (value: number | null) => {
+    updatePreferences({ terminalFontSize: value });
+  };
 
-  const setCodeWordBreak = useCallback(
-    (value: boolean) => {
-      updatePreferences({ codeWordBreak: value });
-    },
-    [updatePreferences],
-  );
+  const setCodeFontSize = (value: number | null) => {
+    updatePreferences({ codeFontSize: value });
+  };
+
+  const setCodeWordBreak = (value: boolean) => {
+    updatePreferences({ codeWordBreak: value });
+  };
 
   const mathRenderingEnabled = storedPreferences?.mathRenderingEnabled === true;
-  const setMathRenderingEnabled = useCallback(
-    (value: boolean) => updatePreferences({ mathRenderingEnabled: value }),
-    [updatePreferences],
-  );
+  const setMathRenderingEnabled = (value: boolean) =>
+    updatePreferences({ mathRenderingEnabled: value });
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
@@ -353,6 +333,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeId,
       themeIds,
       themeMode,
+      androidNavigationStyle,
+      setAndroidNavigationStyle,
       themeAppearance,
       systemColorsAvailable: isSystemColorsAvailable,
       systemColorsActive,
@@ -375,6 +357,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeId,
       themeIds,
       themeMode,
+      androidNavigationStyle,
+      setAndroidNavigationStyle,
       themeAppearance,
       systemColorsActive,
       themeVariables,
@@ -408,4 +392,9 @@ export function useAppearancePreferences(): AppearancePreferencesContextValue {
     throw new Error("useAppearancePreferences must be used within AppearancePreferencesProvider");
   }
   return context;
+}
+
+export function useAndroidFloatingTabs() {
+  const { androidNavigationStyle } = useAppearancePreferences();
+  return Platform.OS === "android" && androidNavigationStyle === "one-ui";
 }

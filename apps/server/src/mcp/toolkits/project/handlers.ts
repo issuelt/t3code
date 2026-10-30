@@ -6,7 +6,6 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -23,8 +22,12 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as DateTime from "effect/DateTime";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
+import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import {
@@ -249,7 +252,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           input.modelSelection ??
           launchedModel ??
           caller?.modelSelection ??
-          projectDefaults?.defaultModelSelection ??
+          (projectDefaults
+            ? resolveNewThreadModelSelection({
+                defaultSelection: projectDefaults.defaultModelSelection,
+                fallbackSelection: projectDefaults.fallbackModelSelection,
+                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
+                  Effect.flatMap((registry) => registry.getProviders),
+                ),
+                settings: projectDefaults,
+                projectId,
+                now: DateTime.toEpochMillis(yield* DateTime.now),
+              }).selection
+            : null) ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -287,6 +301,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
+          // Kept only alongside linkOrigin: thread.create drops it otherwise.
+          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {
@@ -308,7 +324,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
-          link: formatThreadLink(thread.id, thread.title, scope.environmentId),
+          link: McpInvocationContext.threadLinkFor(scope, thread.id),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,
@@ -323,11 +339,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const routed = yield* routeHome(input.environmentId, "projects.list", input);
       if (Option.isSome(routed)) return routed.value;
       const projects = yield* access;
-      const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
-      const rows = snapshot.projects.filter((project) => project.deletedAt === null);
-      const start = input.cursor ?? 0,
-        end = start + (input.limit ?? 20);
-      return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+      // Identities are resolved: linked environments find this side's project by repository.
+      return yield* projects
+        .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
+        .pipe(Effect.mapError(unavailable));
     }),
   ),
   t3_project_read: McpToolAccess.reads((input) =>

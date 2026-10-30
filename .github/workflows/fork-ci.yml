@@ -18,7 +18,7 @@ jobs:
     name: Fork changed-file checks
     if: github.repository == 'issuelt/t3code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
@@ -35,4 +35,5 @@ jobs:
       - name: Check changed files
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: vp run check:changed "$BASE_REF"
+        # Upstream syncs change hundreds of test files; the default 900s step limit cannot fit them.
+        run: vp run check:changed "$BASE_REF" --timeout 2400

@@ -16,11 +16,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { deriveProviderInstanceEntries, providerInstanceEntriesFor } from "../../providerInstances";
 import { useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment } from "../../state/home";
@@ -94,9 +90,7 @@ function HomeOffRows({ environmentId }: { environmentId: EnvironmentId }) {
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const [pending, setPending] = useState(false);
 
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, null);
   const usable = (instanceId: string) =>
     entries.some((entry) => entry.instanceId === instanceId && entry.enabled && entry.isAvailable);
   // Start from the default model for new threads, else the first usable provider.
