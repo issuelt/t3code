@@ -69,6 +69,18 @@ describe("resolveUserMessagePresentation", () => {
     }
   });
 
+  it("attributes a result another thread returned to that agent, whoever stored it", () => {
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "system",
+        creationSource: "server",
+        senderThreadId: "home-launched:mcp:pm",
+        text: "Merged #17.",
+      }),
+    ).toEqual({ text: "Merged #17.", attribution: "agent", scheduledTaskId: undefined });
+  });
+
   it("recovers the triggering automation from older scheduler message ids", () => {
     for (const trigger of ["scheduled", "manual"]) {
       expect(

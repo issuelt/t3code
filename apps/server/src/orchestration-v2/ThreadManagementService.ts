@@ -2,6 +2,7 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
+import { isHomeThreadId } from "@t3tools/contracts";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -1000,7 +1001,8 @@ const make = Effect.gen(function* () {
         },
         text: input.text,
         attachments: [],
-        mode: "queue",
+        // Home answers the user's turn as results arrive; elsewhere a result waits its turn.
+        mode: isHomeThreadId(input.threadId) ? "auto" : "queue",
         createdBy: "system",
         creationSource: "server",
       });

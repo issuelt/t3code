@@ -15,6 +15,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
+  isHomeThreadId,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -167,6 +168,11 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
     entry.command !== undefined ||
     entry.requestKind !== undefined
   );
+}
+
+/** An agent's message to Home, shown as its own folded row. */
+export function workEntryIsAgentMessage(entry: WorkLogEntry): boolean {
+  return entry.itemType === "user_message";
 }
 
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
@@ -623,6 +629,32 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           createdAt,
           runId: item.runId,
           label: item.summary,
+          tone: "info",
+          itemType: item.type,
+          structuredPayload: item,
+          projectedItem: row,
+        },
+        ...attemptMetadata,
+      });
+      continue;
+    }
+    // Home acts for the user, so another agent's message there is a report in the work log,
+    // not a turn of the conversation.
+    if (
+      item.type === "user_message" &&
+      item.senderThreadId !== undefined &&
+      isHomeThreadId(item.threadId)
+    ) {
+      entries.push({
+        id: item.id,
+        kind: "work",
+        createdAt,
+        entry: {
+          id: item.id,
+          createdAt,
+          runId: item.runId,
+          label: item.senderThreadId,
+          detail: item.text,
           tone: "info",
           itemType: item.type,
           structuredPayload: item,

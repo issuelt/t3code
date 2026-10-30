@@ -35,23 +35,38 @@ export function restartChain(
 
 type Message = Pick<OrchestrationV2ConversationMessage, "id" | "coordination">;
 
+/**
+ * One result per requester: a run that took in several requests from the same thread answers
+ * them together, so the requester receives that answer once, for its latest request.
+ */
 export function requestResults(input: {
   readonly messages: ReadonlyArray<Message>;
   readonly sourceRunId: RunId;
   readonly text: string;
 }) {
-  return input.messages.flatMap((message) =>
-    message.coordination?.kind === "request"
-      ? [
-          {
-            requester: message.coordination.requester,
-            requestMessageId: message.id,
-            sourceRunId: input.sourceRunId,
-            text: input.text,
-          },
-        ]
-      : [],
-  );
+  const latestByRequester = new Map<
+    string,
+    {
+      readonly requester: NonNullable<
+        Extract<Message["coordination"], { kind: "request" }>
+      >["requester"];
+      readonly requestMessageId: Message["id"];
+    }
+  >();
+  for (const message of input.messages) {
+    if (message.coordination?.kind !== "request") continue;
+    const { requester } = message.coordination;
+    latestByRequester.set(JSON.stringify([requester.environmentId, requester.threadId]), {
+      requester,
+      requestMessageId: message.id,
+    });
+  }
+  return [...latestByRequester.values()].map(({ requester, requestMessageId }) => ({
+    requester,
+    requestMessageId,
+    sourceRunId: input.sourceRunId,
+    text: input.text,
+  }));
 }
 
 export function isCoordinationRun(

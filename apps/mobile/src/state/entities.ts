@@ -194,6 +194,15 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+/** The quiet shell of a thread in any connected environment, found by its id alone. */
+export function useQuietThreadShellById(threadId: string | null): EnvironmentThreadShell | null {
+  return useAtomValue(
+    threadId === null
+      ? EMPTY_THREAD_SHELL_ATOM
+      : environmentThreadShells.quietThreadShellByIdAtom(threadId),
+  );
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }

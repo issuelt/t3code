@@ -8,8 +8,11 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { isHomeThreadId } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
+
+import { labelAgentMessage } from "./agentMessageLabel.ts";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -130,6 +133,17 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
+      // Recovery replays Home's history as user turns; agent reports keep their label there.
+      text =
+        item.senderThreadId !== undefined && isHomeThreadId(item.threadId)
+          ? labelAgentMessage({
+              text: item.text,
+              senderThreadId: item.senderThreadId,
+              recipientThreadId: item.threadId,
+              recipientParentThreadId: null,
+            })
+          : item.text;
+      break;
     case "assistant_message":
       text = item.text;
       break;

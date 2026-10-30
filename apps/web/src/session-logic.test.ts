@@ -411,6 +411,56 @@ describe("V2 session presentation", () => {
     });
   });
 
+  it("files an agent's message to Home in the work log, and keeps the user's own as a message", () => {
+    const now = DateTime.makeUnsafe("2026-10-30T00:00:00.000Z");
+    const message = (threadId: ThreadId, id: string, sender?: ThreadId) =>
+      ({
+        id: TurnItemId.make(id),
+        threadId,
+        runId: RunId.make(`run-${id}`),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_message",
+        messageId: MessageId.make(id),
+        inputIntent: "turn_start",
+        text: "Merged #17.",
+        attachments: [],
+        createdBy: sender === undefined ? "user" : "system",
+        creationSource: sender === undefined ? "web" : "server",
+        ...(sender === undefined ? {} : { senderThreadId: sender }),
+      }) satisfies OrchestrationV2TurnItem;
+    const home = ThreadId.make("home:abc");
+    const pm = ThreadId.make("home-launched:mcp:pm");
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        message(home, "from-pm", pm),
+        message(home, "from-user"),
+        message(ThreadId.make("worker"), "brief-from-pm", pm),
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: item.threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+      optimisticMessages: [],
+    });
+    expect(entries.map((entry) => entry.kind)).toEqual(["work", "message", "message"]);
+    expect(entries[0]).toMatchObject({
+      kind: "work",
+      entry: { itemType: "user_message", detail: "Merged #17." },
+    });
+  });
+
   it("uses visible turn item order and keeps provider errors in the work log", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-visible");

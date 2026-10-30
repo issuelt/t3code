@@ -29,6 +29,8 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
+  /** Set only when another thread sent the message, including a result the server returned for it. */
+  readonly senderThreadId?: string | undefined;
   readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
 }): {
   readonly text: string;
@@ -72,11 +74,13 @@ export function resolveUserMessagePresentation(message: {
     // The agent needs words to start a turn; people sent only the attachments.
     text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
     attribution:
-      message.createdBy !== "agent"
-        ? null
-        : message.creationSource === "server"
-          ? "t3code"
-          : "agent",
+      message.senderThreadId !== undefined
+        ? "agent"
+        : message.createdBy !== "agent"
+          ? null
+          : message.creationSource === "server"
+            ? "t3code"
+            : "agent",
     scheduledTaskId: undefined,
   };
 }

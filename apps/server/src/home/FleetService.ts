@@ -11,6 +11,7 @@ import {
   type FleetOperation,
   type FleetResult,
   isHomeLaunchedThreadId,
+  isHomeThreadId,
   ProviderRequestKind,
   MessageId,
   type ProjectId,
@@ -408,8 +409,11 @@ const make = Effect.gen(function* () {
           delivery: result.delivery,
         };
       }
+      // Home acts for the user: a report to it is delivered, not a request awaiting its answer.
       const requester =
-        shell.lineage.relationshipToParent === "subagent" || actor.threadId === input.threadId
+        shell.lineage.relationshipToParent === "subagent" ||
+        actor.threadId === input.threadId ||
+        isHomeThreadId(input.threadId)
           ? undefined
           : actor;
       const id = yield* commandId(actor, "send", input);

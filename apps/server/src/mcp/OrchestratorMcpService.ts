@@ -62,6 +62,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
+  isHomeThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
@@ -2952,10 +2953,12 @@ const make = Effect.gen(function* () {
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
+      // Home acts for the user: a report to it is delivered, not a request awaiting its answer.
       const requester =
         parent !== undefined &&
         parent.thread.id !== input.threadId &&
-        target.thread.lineage.relationshipToParent !== "subagent"
+        target.thread.lineage.relationshipToParent !== "subagent" &&
+        !isHomeThreadId(input.threadId)
           ? { environmentId: scope.environmentId, threadId: parent.thread.id }
           : undefined;
       const mode = input.mode ?? (requester === undefined ? "auto" : "queue");
