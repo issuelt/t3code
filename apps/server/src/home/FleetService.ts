@@ -266,7 +266,12 @@ const make = Effect.gen(function* () {
         currentThreadId: filtered.some((thread) => thread.id === actor.threadId)
           ? actor.threadId
           : null,
-        threads: page.map((shell) => listItemFromShell(shell, { environmentId, nowMs })),
+        threads: page.map((shell) =>
+          listItemFromShell(shell, {
+            link: formatThreadLink({ environmentId, threadId: shell.id }),
+            nowMs,
+          }),
+        ),
         nextCursor: next < filtered.length ? next : null,
         total: filtered.length,
       };
@@ -285,7 +290,8 @@ const make = Effect.gen(function* () {
       if (shell === null || shell.deletedAt !== null) {
         return yield* failure("thread_not_found", `Thread ${input.threadId} was not found.`);
       }
-      return (yield* readThreadPage(threads, target, shell, input, environmentId)).result;
+      const link = formatThreadLink({ environmentId, threadId: input.threadId });
+      return (yield* readThreadPage(threads, target, shell, input, link)).result;
     }),
 
     "threads.wait": Effect.fn("FleetService.threads.wait")(function* (input) {
@@ -373,7 +379,7 @@ const make = Effect.gen(function* () {
       const run = result.projection.runs.find((candidate) => candidate.userMessageId === messageId);
       return {
         threadId: thread.id,
-        link: formatThreadLink(thread.id, thread.title, environmentId),
+        link: formatThreadLink({ environmentId, threadId: thread.id }),
         projectId: thread.projectId,
         modelSelection: thread.modelSelection,
         runId: run?.id ?? null,

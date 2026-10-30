@@ -1,6 +1,5 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
-import { useCallback } from "react";
 import { Platform } from "react-native";
 import { useAdaptiveWorkspaceLayout } from "../features/layout/adaptive-workspace-context";
 import { useSelectWorkspaceDetail } from "../features/workspace/useSelectWorkspaceDetail";
@@ -19,26 +18,20 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
   const { usesSplitView } = useAdaptiveWorkspaceLayout().layout;
   const projects = useProjects();
   const replace = options?.replace;
-  return useCallback(
-    async (url: string, context: PullRequestContext | null) => {
-      // Read at press time so a capability push does not hand every link a new handler.
-      const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-      const params = nativePullRequestDestination(
-        url,
-        context,
-        projects,
-        (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
-      );
-      if (!params) return tryOpenExternalUrl(url, "pull-request");
-      // Android's split view shows it in the detail column. Elsewhere it opens over the current
-      // page, so Back returns to the chat it was opened from.
-      if (Platform.OS === "android" && usesSplitView) selectDetail({ name: "PullRequest", params });
-      else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
-      else navigation.dispatch(StackActions.push("PullRequest", params));
-      return true;
-    },
-    [navigation, projects, replace, selectDetail, usesSplitView],
-  );
+  return async (url: string, context: PullRequestContext | null) => {
+    // Read at press time so a config push does not hand every link a new handler.
+    const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+    const params = nativePullRequestDestination(url, context, projects, (environmentId) =>
+      serverConfigs.has(environmentId),
+    );
+    if (!params) return tryOpenExternalUrl(url, "pull-request");
+    // Android's split view shows it in the detail column. Elsewhere it opens over the current
+    // page, so Back returns to the chat it was opened from.
+    if (Platform.OS === "android" && usesSplitView) selectDetail({ name: "PullRequest", params });
+    else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+    else navigation.dispatch(StackActions.push("PullRequest", params));
+    return true;
+  };
 }
 
 export function useOpenPullRequest(options?: {
@@ -67,14 +60,11 @@ export function useOpenPullRequest(options?: {
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
   const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
-  return useCallback(
-    (url: string) =>
-      navigateToPullRequest(
-        url,
-        environmentId && projectId
-          ? { environmentId: String(environmentId), projectId: String(projectId) }
-          : null,
-      ),
-    [environmentId, projectId, navigateToPullRequest],
-  );
+  return (url: string) =>
+    navigateToPullRequest(
+      url,
+      environmentId && projectId
+        ? { environmentId: String(environmentId), projectId: String(projectId) }
+        : null,
+    );
 }

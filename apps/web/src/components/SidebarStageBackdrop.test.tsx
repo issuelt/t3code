@@ -12,11 +12,11 @@ describe("SidebarStageBackdrop", () => {
     expect(resolveSidebarStageBackdropVariant(label)).toBe("nightly");
   });
 
-  it("resolves stage artwork only when enabled", () => {
+  it("resolves no stage artwork when identification is off", () => {
     expect(resolveSidebarStageBackdropVariant("Dev")).toBe("dev");
     expect(resolveSidebarStageBackdropVariant("Nightly")).toBe("nightly");
-    expect(resolveSidebarStageBackdropVariant("Dev", false)).toBeNull();
-    expect(resolveSidebarStageBackdropVariant("Alpha", false)).toBeNull();
+    expect(resolveSidebarStageBackdropVariant("Dev", "none")).toBeNull();
+    expect(resolveSidebarStageBackdropVariant("Alpha", "none")).toBeNull();
   });
 
   it("resolves supported environment pill labels", () => {

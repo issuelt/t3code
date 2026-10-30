@@ -119,7 +119,9 @@ describe("fork migrations", () => {
   it.effect("moves fork migrations that a fork build recorded at upstream ids 72 and 73", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* migrateAll;
+      // Those fork builds ended upstream's history at 71, before upstream used 72 and 73.
+      yield* runMigrations({ toMigrationInclusive: 71 });
+      yield* runForkMigrations();
       yield* sql`DELETE FROM fork_sql_migrations WHERE name <> 'TaskGraphs'`;
       yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (72, 'PeerLinkOrigin')`;
       yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (73, 'CoordinationRequests')`;

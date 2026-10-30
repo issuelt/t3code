@@ -19,9 +19,17 @@ import {
   hasUnseenCompletion,
   resolveThreadLastVisitedAt,
   resolveSidebarThreadStatus,
-  resolveSidebarV2TopStatus,
+  type SidebarThreadStatus,
   type SidebarV2TopStatusKind,
 } from "../Sidebar.logic";
+
+function homeTopStatus(
+  status: SidebarThreadStatus,
+  isUnread: boolean,
+): SidebarV2TopStatusKind | null {
+  if (status !== "ready") return status;
+  return isUnread ? "done" : null;
+}
 const SIDEBAR_TOP_STATUS: Record<
   SidebarV2TopStatusKind,
   { label: string; icon: SidebarV2TopStatusKind | null; Icon: LucideIcon | null; className: string }
@@ -73,14 +81,13 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
   const topStatusKind =
     thread === null
       ? null
-      : resolveSidebarV2TopStatus({
-          status: resolveSidebarThreadStatus(thread),
-          isUnread: hasUnseenCompletion({
+      : homeTopStatus(
+          resolveSidebarThreadStatus(thread),
+          hasUnseenCompletion({
             ...thread,
             lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
           }),
-          isWoke: false,
-        });
+        );
   const topStatus = topStatusKind === null ? null : SIDEBAR_TOP_STATUS[topStatusKind];
   const activate = () => onActivate(threadRef);
   return (

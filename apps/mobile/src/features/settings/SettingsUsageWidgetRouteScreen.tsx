@@ -25,7 +25,7 @@ import {
   type SubscriptionWidgetConfiguration,
 } from "../../widgets/subscriptionWidgetPreferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -114,7 +114,7 @@ export function SettingsUsageWidgetRouteScreen() {
   }
   const { target } = selection;
   const setTarget = (target: string) => setSelection({ params: route.params, target });
-  // oxlint-disable-next-line t3code/react-effect-budget -- widgets added from the home screen show up only after the app returns to the foreground
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- widgets added from the home screen show up only after the app returns to the foreground
   useEffect(() => {
     if (!focused) return;
     const update = () => setWidgetIds(native?.getWidgetIds() ?? []);

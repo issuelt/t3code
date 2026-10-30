@@ -143,6 +143,8 @@ describe("ThreadHistoryController", () => {
             expect(url.searchParams.get("cursor")).toBe("search-cursor");
             const view = url.searchParams.get("view");
             const through = url.searchParams.get("throughEntryId");
+            // The plain retry reaches the start, so bounded paging stops after it.
+            const last = view === null && through === null;
             requests.push({ view, through });
             if (view === null && through !== null) {
               return Effect.succeed(
@@ -165,8 +167,8 @@ describe("ThreadHistoryController", () => {
                 Response.json({
                   snapshotSequence: 14,
                   items,
-                  nextCursor: "older-cursor",
-                  hasMoreHistory: true,
+                  nextCursor: last ? null : "older-cursor",
+                  hasMoreHistory: !last,
                 }),
               ),
             );
@@ -199,7 +201,8 @@ describe("ThreadHistoryController", () => {
         "message-item-40",
       ]);
       expect(retried.history).toMatchObject({
-        historyCursor: "older-cursor",
+        historyCursor: null,
+        hasMoreHistory: false,
         loading: false,
         error: null,
       });

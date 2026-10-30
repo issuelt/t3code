@@ -35,6 +35,7 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 NodeTls.setDefaultCACertificates([
@@ -93,6 +94,7 @@ export const servePeer = <E, R>(
       getDescriptor: Ref.get(descriptor),
     });
     const authContext = yield* EnvironmentAuth.layer.pipe(
+      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
       Layer.provide(Sqlite.layerMemory),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provideMerge(ServerEnvironment.layerIdentity),
@@ -158,6 +160,8 @@ export const servePeer = <E, R>(
     return {
       url,
       auth,
+      /** Its settings, as for turning its Linked environments beta off. */
+      settings: Context.get(authContext, ServerSettings.ServerSettingsService),
       descriptor,
       bearers,
       redirectMcp,
@@ -180,19 +184,21 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
  * The environment that links: its own database and secret store, reaching
  * peers over HTTPS. Provide it to anything built on its links.
  */
-export const layerLinkingEnvironment = (descriptor: ExecutionEnvironmentDescriptor) =>
+export const layerLinkingEnvironment = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  secrets: typeof ServerSecretStore.layer = ServerSecretStore.layer,
+) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
+    Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(Sqlite.layerMemory),
-    Layer.provide(
-      Layer.mergeAll(
-        ServerSecretStore.layer,
-        FetchHttpClient.layer,
-        Layer.succeed(ServerEnvironment.ServerEnvironment, {
-          getEnvironmentId: Effect.succeed(descriptor.environmentId),
-          getDescriptor: Effect.succeed(descriptor),
-        }),
-      ),
+    Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
+    // Services that act for this environment, such as delegation, name it too.
+    Layer.provideMerge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(descriptor.environmentId),
+        getDescriptor: Effect.succeed(descriptor),
+      }),
     ),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-here-" })),
     Layer.provideMerge(NodeServices.layer),
