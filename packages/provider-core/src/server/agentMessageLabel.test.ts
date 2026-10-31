@@ -27,16 +27,29 @@ describe("labelAgentMessage", () => {
     ).toBe("Inspect the API boundary.");
   });
 
-  it.each(["/compact", "/goal ship the fix"])("leaves an agent's %s command verbatim", (text) => {
-    expect(
-      labelAgentMessage({
+  it.each([
+    { text: "/compact", attachments: [], command: true },
+    { text: "/goal ship the fix", attachments: [], command: true },
+    // With an attachment neither parser reads a command, so the text is an ordinary prompt.
+    { text: "/compact", attachments: [{}], command: false },
+    { text: "/goal ship the fix", attachments: [{}], command: false },
+  ])(
+    "labels an agent's $text with $attachments.length attachments only when it is no command",
+    ({ text, attachments, command }) => {
+      const labeled = labelAgentMessage({
         text,
+        attachments,
         senderThreadId: pm,
         recipientThreadId: ThreadId.make("worker"),
         recipientParentThreadId: null,
-      }),
-    ).toBe(text);
-  });
+      });
+      expect(labeled).toBe(
+        command
+          ? text
+          : `Message from agent thread home-launched:mcp:pm, not from the user.\n\n${text}`,
+      );
+    },
+  );
 
   it("names the sending thread so an agent's message never reads as the user's", () => {
     expect(
