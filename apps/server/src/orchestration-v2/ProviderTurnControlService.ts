@@ -380,6 +380,7 @@ export const layer: Layer.Layer<
                     text: message.text,
                     records: message.context?.records ?? [],
                   }),
+                  attachments: message.attachments,
                   senderThreadId: message.senderThreadId,
                   senderTitle:
                     message.senderThreadId === undefined
