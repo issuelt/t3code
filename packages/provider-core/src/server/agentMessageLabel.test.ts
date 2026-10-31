@@ -27,6 +27,17 @@ describe("labelAgentMessage", () => {
     ).toBe("Inspect the API boundary.");
   });
 
+  it.each(["/compact", "/goal ship the fix"])("leaves an agent's %s command verbatim", (text) => {
+    expect(
+      labelAgentMessage({
+        text,
+        senderThreadId: pm,
+        recipientThreadId: ThreadId.make("worker"),
+        recipientParentThreadId: null,
+      }),
+    ).toBe(text);
+  });
+
   it("names the sending thread so an agent's message never reads as the user's", () => {
     expect(
       labelAgentMessage({
