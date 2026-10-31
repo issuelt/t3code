@@ -25,10 +25,10 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -88,7 +88,7 @@ const modelDetail = (model: DictationModel) =>
  * Settings need settings:write; retry and remove need orchestration:operate.
  */
 export function DictationSettingsSection() {
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig !== null
       ? environment.environmentId
@@ -97,6 +97,9 @@ export function DictationSettingsSection() {
   // A server from before dictation has no dictation methods, so its subscription fails outright.
   const outdated = environmentId !== null && state === null && error !== null;
   const settings = useScopedSettings((unified) => unified.dictation);
+  const engineMixed = targets.some(
+    (target) => target.settings.dictation.engine !== settings.engine,
+  );
   const updateSettings = useUpdateScopedSettings();
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -120,9 +123,9 @@ export function DictationSettingsSection() {
               : "Transcribe dictation on this environment with a local speech model. Audio is not sent to any other service."
         }
         control={
-          <ScopedSwitch
-            settingKeys={["dictation"]}
-            checked={settings.engine === "local"}
+          <Switch
+            mixed={engineMixed}
+            checked={!engineMixed && settings.engine === "local"}
             disabled={locked}
             aria-label="Dictation"
             onCheckedChange={(checked) =>
@@ -286,12 +289,10 @@ function InactiveDictationModels(props: {
   const [removing, setRemoving] = useState<DictationModel["id"] | null>(null);
   if (!state?.supported) return null;
   const inactive = state.models.filter(
-    // The environment keeps its own active model even when another environment's
-    // selection is shown; removing it would be a no-op on the server.
     (model) =>
       model.install._tag === "installed" &&
-      model.id !== props.selectedModel &&
-      model.id !== state.settings.localModel,
+      (state.settings.engine === "off" ||
+        (model.id !== props.selectedModel && model.id !== state.settings.localModel)),
   );
   if (inactive.length === 0) return null;
 
