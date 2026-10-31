@@ -138,6 +138,7 @@ export function historicalMessage(
         item.senderThreadId !== undefined && isHomeThreadId(item.threadId)
           ? labelAgentMessage({
               text: item.text,
+              attachments: item.attachments,
               senderThreadId: item.senderThreadId,
               recipientThreadId: item.threadId,
               recipientParentThreadId: null,
