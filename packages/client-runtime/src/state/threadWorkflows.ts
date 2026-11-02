@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   isCompactionCommandMessage,
+  isHomeDeliveredMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -113,13 +114,16 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
 }
 
 export function getUserQueuedThreadRuns(
-  projection: Pick<Projection, "runs" | "messages">,
+  projection: Pick<Projection, "thread" | "runs" | "messages">,
 ): ReadonlyArray<Run> {
+  // Automatic deliveries and Home's reports wait for a turn; nobody composed them.
   const automaticCompletionMessageIds = new Set(
     projection.messages
       .filter(
         (message) =>
-          message.delegatedCompletion !== undefined || message.notification !== undefined,
+          message.delegatedCompletion !== undefined ||
+          message.notification !== undefined ||
+          isHomeDeliveredMessage(projection.thread.id, message),
       )
       .map((message) => message.id),
   );

@@ -15,7 +15,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
-  isHomeThreadId,
+  isHomeDeliveredMessage,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -638,13 +638,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       });
       continue;
     }
-    // Home acts for the user, so another agent's message there is a report in the work log,
-    // not a turn of the conversation.
-    if (
-      item.type === "user_message" &&
-      item.senderThreadId !== undefined &&
-      isHomeThreadId(item.threadId)
-    ) {
+    // Home acts for the user, so a message an agent or T3 Code sent there is a report in the
+    // work log, not a turn of the conversation.
+    if (item.type === "user_message" && isHomeDeliveredMessage(item.threadId, item)) {
       entries.push({
         id: item.id,
         kind: "work",
@@ -653,7 +649,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           id: item.id,
           createdAt,
           runId: item.runId,
-          label: item.senderThreadId,
+          label: item.senderThreadId ?? item.messageId,
           detail: item.text,
           tone: "info",
           itemType: item.type,
