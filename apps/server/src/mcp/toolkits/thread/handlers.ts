@@ -7,6 +7,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  isHomeDeliveredMessage,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -34,7 +35,9 @@ function queueEntry(
 ) {
   const run = projection.runs.find((run) => run.id === runId && run.status === "queued");
   const message = projection.messages.find((message) => message.id === run?.userMessageId);
-  if (run === undefined || message === undefined) return undefined;
+  // A report held for Home's turn is not a queued message anyone composed.
+  if (run === undefined || message === undefined || isHomeDeliveredMessage(run.threadId, message))
+    return undefined;
   const characters = Array.from(message.text);
   return {
     queuedRunId: run.id,
@@ -300,15 +303,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       Effect.gen(function* () {
         const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
         if (input.action === "list") {
-          const runs = queuedRunsInDeliveryOrder(projection);
+          const entries = queuedRunsInDeliveryOrder(projection).flatMap((run) => {
+            const entry = queueEntry(projection, run.id, 1000);
+            return entry === undefined ? [] : [entry];
+          });
           const cursor = input.cursor ?? 0;
           const end = cursor + (input.limit ?? 20);
           return {
-            items: runs.slice(cursor, end).flatMap((run) => {
-              const entry = queueEntry(projection, run.id, 1000);
-              return entry === undefined ? [] : [entry];
-            }),
-            nextCursor: end < runs.length ? end : null,
+            items: entries.slice(cursor, end),
+            nextCursor: end < entries.length ? end : null,
           };
         }
         const queuedRunId = yield* required(input.queuedRunId, "queuedRunId");

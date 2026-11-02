@@ -322,7 +322,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-run-stop:${key}`));
   });
   const queuedCountAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
+    let previous: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages"> | null =
+      null;
     let count = 0;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
@@ -330,8 +331,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
         previous = null;
         count = 0;
       } else if (projection.runs !== previous?.runs || projection.messages !== previous?.messages) {
-        const { runs, messages } = projection;
-        previous = { runs, messages };
+        const { thread, runs, messages } = projection;
+        previous = { thread, runs, messages };
         count = getUserQueuedThreadRuns(previous).length;
       }
       return count;

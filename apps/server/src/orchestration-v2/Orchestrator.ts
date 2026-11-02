@@ -58,6 +58,7 @@ import {
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   parseGoalCommand,
+  isHomeDeliveredMessage,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -9530,6 +9531,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: "Automatic completion deliveries cannot be edited.",
+      });
+    }
+    if (isHomeDeliveredMessage(command.threadId, queuedMessage)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A report sent to Home cannot be edited.",
       });
     }
     // The agent text and the shown text of a guest message must stay the guest's words.

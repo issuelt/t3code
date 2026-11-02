@@ -54,6 +54,12 @@ turn, the same dispatch as `mode: "steer"`, and starts a turn when Home is idle.
 same way. A run that answers several requests from one thread returns one result
 (`orchestration-v2/CoordinationDelivery.ts`).
 
+A report that arrives while Home's turn is active but cannot take a steer yet (still
+starting, or compacting) is held as a queued run. `home/HomeDeliveryReactor.ts` steers it
+in once the turn's provider turn runs; if the turn ends first, it starts the next turn.
+Clients keep these runs out of the composer's queue (`isHomeDeliveredMessage`), so a
+report never offers Edit, Steer, or Send now, and never renders as the user's bubble.
+
 Consequences:
 
 - Home reaches other environments only while a desktop renderer is alive. On

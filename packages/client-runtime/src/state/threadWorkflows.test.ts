@@ -137,6 +137,43 @@ describe("thread workflows", () => {
     expect(state.canSendNow).toBe(false);
   });
 
+  it("keeps reports that wait for Home's turn out of the queued list", () => {
+    const queued = (id: string, ordinal: number) => ({
+      id,
+      status: "queued",
+      userMessageId: `message-${id}`,
+      ordinal,
+    });
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "home:abc", activeProviderThreadId: null },
+      runs: [
+        { id: "active", status: "starting", ordinal: 1 },
+        queued("user", 2),
+        queued("watch", 3),
+        queued("agent", 4),
+        queued("result", 5),
+        queued("compact", 6),
+      ],
+      messages: [
+        { id: "message-user", text: "Mine", createdBy: "user" },
+        { id: "message-watch", text: "Watch report.", createdBy: "system" },
+        { id: "message-agent", text: "Merged.", createdBy: "agent", senderThreadId: "pm" },
+        { id: "message-result", text: "Done.", createdBy: "system", senderThreadId: "pm" },
+        {
+          id: "message-compact",
+          text: "/compact",
+          createdBy: "agent",
+          idleCompaction: "onReturn",
+        },
+      ],
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(["user", "compact"]);
+  });
+
   it.each(["completed", "interrupted", "cancelled", "failed"])(
     "allows sending a held message after a %s turn without a live session",
     (status) => {

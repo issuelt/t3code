@@ -581,7 +581,7 @@ export function latestActiveRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-function latestSteerableRun(
+export function latestSteerableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
 ): OrchestrationV2Run | undefined {
   return projection.runs
