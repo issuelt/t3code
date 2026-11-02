@@ -2,12 +2,15 @@ import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3
 import * as NodeTls from "node:tls";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as HttpRouter from "effect/http/HttpRouter";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
@@ -471,6 +474,57 @@ it.effect("requires older links without an origin binding to be paired again", (
       yield* a.sql`UPDATE peer_environment_links SET trusted_origin = NULL`;
       const error = yield* probe(a).pipe(Effect.flip);
       expect(error.message).toContain("Link it again");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layerHttpsTest)),
+);
+
+it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const hold = yield* Ref.make(false);
+      const requests = yield* Ref.make(0);
+      const entered = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const holdDescriptor = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.url.startsWith("/.well-known/t3/environment")) {
+              yield* Ref.update(requests, (count) => count + 1);
+              if (yield* Ref.get(hold)) {
+                return yield* Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+                  ),
+                  Effect.interruptible,
+                );
+              }
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.merge(McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers), holdDescriptor),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      yield* Ref.set(b.bearers, []);
+      yield* Ref.set(requests, 0);
+      yield* Ref.set(hold, true);
+
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(resolving);
+      yield* Deferred.await(interrupted);
+
+      yield* Ref.set(hold, false);
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(requests)).toBe(2);
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(layerHttpsTest)),

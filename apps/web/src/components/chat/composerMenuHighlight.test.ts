@@ -69,7 +69,7 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
     planModeUiEnabled: true,
     isLiteralPendingAnswer: false,
     pendingUserInputs: [],
-    promptHistoryMessages: [],
+    promptHistoryEntries: [],
     promptHistoryPositionRef: { current: null },
     composerDraftTarget: DraftId.make("menu-keys"),
     promptRef: { current: "/" },

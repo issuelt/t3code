@@ -427,7 +427,7 @@ export function resolveDefaultProjectRef(
   home: Parameters<typeof defaultNewThreadProjectRef>[1],
 ): ScopedProjectRef | null {
   const orderedProjects = orderItemsByPreferredIds({
-    items: projects,
+    items: projects.filter((project) => project.archivedAt == null),
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
     getPreferenceIds: (project) => [

@@ -314,6 +314,13 @@ const make = Effect.gen(function* () {
           ]),
       };
     }
+    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
+    if (
+      useKeychain &&
+      !(yield* fileSystem.exists(path.dirname(authPath)).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return { cacheKey: "not-installed", scan: () => Effect.succeed([]) };
+    }
     yield* ensureLoaded;
     const sourceKey = useKeychain ? "keychain" : authPath;
     const resolved = yield* accountReader.resolve(useKeychain ? { kind: "keychain" } : authPath);
