@@ -147,7 +147,7 @@ function watchReportEvents(
 
 /**
  * The folded lines of a watch report, one per watched event, such as
- * "Completed · OS exam study guide app". Null for any other message.
+ * "Completed · Draft the release notes". Null for any other message.
  */
 export function watchReportSummaryLines(
   messageId: string,
