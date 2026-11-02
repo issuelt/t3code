@@ -11,19 +11,19 @@ launch T3 Code and configure providers afterwards.
 ## Command line
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/issuelt/t3code/main/scripts/install.sh | T3CODE_CHANNEL=nightly sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+$env:T3CODE_CHANNEL = "nightly"; irm https://raw.githubusercontent.com/issuelt/t3code/main/scripts/install.ps1 | iex
 ```
 
 This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
 afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
+line to add. This fork publishes only nightly builds, so the commands select the
+nightly train. Set `T3CODE_VERSION` to pin an exact version.
 
 | Task                                             | Command                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
@@ -43,17 +43,17 @@ If `t3` or `t3 start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
+`npx t3` runs upstream T3 Code from npm, not this fork. Where these docs say
+`npx t3`, run `t3` instead.
 
 ### Intel Macs
 
-There is no `t3` executable for Intel Macs (the desktop app is available). To
+There is no `t3` executable or desktop app for Intel Macs. To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+([Install vp](https://github.com/issuelt/t3code#install-vp)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
+git clone https://github.com/issuelt/t3code
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
@@ -63,8 +63,8 @@ update it with `git pull` and a rebuild.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
-or use a package manager:
+Download a release from [GitHub Releases](https://github.com/issuelt/t3code/releases).
+Apart from the `.deb`, the package managers below install upstream T3 Code, not this fork:
 
 | Platform           | Install                                                      |
 | ------------------ | ------------------------------------------------------------ |
@@ -142,8 +142,8 @@ Store links and QR codes are also available in **Settings → About → Mobile a
 on web and desktop. The store apps work with both stable and Nightly servers. Test builds are optional:
 
 - **iPhone and iPad:** TestFlight is invite-only.
-- **Android:** download an APK from the
-  [Android beta releases](https://github.com/pingdotgg/t3code/releases?q=android-beta-).
+- **Android:** download this fork's APK from
+  [GitHub Releases](https://github.com/issuelt/t3code/releases).
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
