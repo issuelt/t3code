@@ -153,6 +153,7 @@ describe("thread workflows", () => {
         queued("agent", 4),
         queued("result", 5),
         queued("compact", 6),
+        queued("scheduled", 7),
       ],
       messages: [
         { id: "message-user", text: "Mine", createdBy: "user" },
@@ -165,13 +166,19 @@ describe("thread workflows", () => {
           createdBy: "agent",
           idleCompaction: "onReturn",
         },
+        {
+          id: "message-scheduled",
+          text: "Check the nightly.",
+          createdBy: "agent",
+          scheduledTaskId: "task",
+        },
       ],
       providerThreads: [],
       providerTurns: [],
       providerSessions: [],
     } as never);
 
-    expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(["user", "compact"]);
+    expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(["user", "compact", "scheduled"]);
   });
 
   it.each(["completed", "interrupted", "cancelled", "failed"])(

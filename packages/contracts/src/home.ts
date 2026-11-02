@@ -110,13 +110,20 @@ export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 /**
  * A message an agent or T3 Code sent into Home: a report, never the user's words. It is
  * delivered into Home's turn and is never a queued composer message. Idle compaction is
- * T3 Code's own maintenance turn, not a report.
+ * T3 Code's own maintenance turn and a scheduled prompt is the task's, so neither is a report.
  */
 export const isHomeDeliveredMessage = (
   threadId: string,
-  message: { readonly createdBy: string; readonly idleCompaction?: unknown },
+  message: {
+    readonly createdBy: string;
+    readonly idleCompaction?: unknown;
+    readonly scheduledTaskId?: unknown;
+  },
 ): boolean =>
-  isHomeThreadId(threadId) && message.createdBy !== "user" && message.idleCompaction === undefined;
+  isHomeThreadId(threadId) &&
+  message.createdBy !== "user" &&
+  message.idleCompaction === undefined &&
+  message.scheduledTaskId === undefined;
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;

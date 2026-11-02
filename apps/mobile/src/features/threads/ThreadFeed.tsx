@@ -1024,6 +1024,8 @@ function AgentMessageFoldHeader(props: {
   readonly senderThreadId?: ThreadId;
   readonly fallbackLabel: string;
   readonly summary: string;
+  /** Shown one per line instead of `summary`, such as each event of a folded watch report. */
+  readonly summaryLines?: ReadonlyArray<string> | undefined;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly iconSubtleColor: ColorValue;
@@ -1062,9 +1064,19 @@ function AgentMessageFoldHeader(props: {
       >
         {label}
       </Text>
-      <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
-        {props.summary}
-      </Text>
+      {props.summaryLines !== undefined && props.summaryLines.length > 1 ? (
+        <View className="min-w-0 shrink">
+          {props.summaryLines.map((line) => (
+            <Text key={line} numberOfLines={1} className="text-sm text-user-bubble-foreground">
+              {line}
+            </Text>
+          ))}
+        </View>
+      ) : (
+        <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+          {props.summary}
+        </Text>
+      )}
       <ThreadDisclosureChevron
         expanded={props.expanded}
         collapsedDirection="down"
@@ -1592,6 +1604,7 @@ function renderFeedEntry(
       const homeReport = isHomeDeliveredMessage(props.threadId, {
         createdBy: message.createdBy ?? "user",
         idleCompaction: message.idleCompaction,
+        scheduledTaskId: message.scheduledTaskId,
       });
       const reportLines = homeReport
         ? watchReportSummaryLines(message.id, presentation.text)
@@ -1658,6 +1671,7 @@ function renderFeedEntry(
                 environmentId={props.environmentId}
                 senderThreadId={message.senderThreadId}
                 fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
+                summaryLines={foldExpanded ? undefined : (reportLines ?? undefined)}
                 summary={
                   // Expanded, the body lists the events, so the header only counts them.
                   (reportLines !== null && foldExpanded && reportMarkdown !== null
