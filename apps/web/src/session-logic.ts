@@ -15,7 +15,8 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
-  isHomeThreadId,
+  HOME_REPORT_MESSAGE_ID_PREFIX,
+  isHomeDeliveredMessage,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -173,6 +174,26 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
 /** An agent's message to Home, shown as its own folded row. */
 export function workEntryIsAgentMessage(entry: WorkLogEntry): boolean {
   return entry.itemType === "user_message";
+}
+
+const WATCH_REPORT_EVENT =
+  /^- (?<event>[^:\n]+): (?:\[(?<title>[^\]\n]*)\]\([^)\n]*\)|<[^>\n]*>).*\bthreadId (?<threadId>[^)\s]+)\)/;
+
+/**
+ * The folded lines of a watch report, one per watched event, such as
+ * "Completed · OS exam study guide app". Null for any other message.
+ */
+export function watchReportSummaryLines(
+  messageId: string,
+  text: string,
+): ReadonlyArray<string> | null {
+  if (!messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)) return null;
+  const lines = text.split("\n").flatMap((line) => {
+    const groups = WATCH_REPORT_EVENT.exec(line)?.groups;
+    if (groups === undefined) return [];
+    return [`${groups.event} · ${groups.title?.trim() || groups.threadId}`];
+  });
+  return [...new Set(lines)];
 }
 
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
@@ -638,13 +659,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       });
       continue;
     }
-    // Home acts for the user, so another agent's message there is a report in the work log,
-    // not a turn of the conversation.
-    if (
-      item.type === "user_message" &&
-      item.senderThreadId !== undefined &&
-      isHomeThreadId(item.threadId)
-    ) {
+    // Home acts for the user, so a message an agent or T3 Code sent there is a report in the
+    // work log, not a turn of the conversation.
+    if (item.type === "user_message" && isHomeDeliveredMessage(item.threadId, item)) {
       entries.push({
         id: item.id,
         kind: "work",
@@ -653,7 +670,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           id: item.id,
           createdAt,
           runId: item.runId,
-          label: item.senderThreadId,
+          label: item.senderThreadId ?? item.messageId,
           detail: item.text,
           tone: "info",
           itemType: item.type,

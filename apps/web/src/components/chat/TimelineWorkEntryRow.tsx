@@ -27,6 +27,7 @@ import {
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
+  watchReportSummaryLines,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
@@ -36,6 +37,7 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import {
   ChevronRightIcon,
   CircleAlertIcon,
+  EyeIcon,
   MessagesSquareIcon,
   XIcon,
   RotateCcwIcon,
@@ -155,7 +157,10 @@ type WorkEntryRowProps = {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 };
 
-/** An agent's message to Home: its sender's title when folded, its text when expanded. */
+/**
+ * A report to Home: folded, its sender's title, or each watched event and thread title of a
+ * watch report; expanded, its text.
+ */
 function AgentMessageWorkRow({
   workEntry,
   onToggleEntry,
@@ -180,6 +185,10 @@ function AgentMessageWorkRow({
     senderThreadId !== undefined && localSender === null ? senderThreadId : null,
   );
   const title = (localSender ?? remoteSender)?.title.trim() || "Agent";
+  const reportLines =
+    item?.type === "user_message"
+      ? watchReportSummaryLines(item.messageId, workEntry.detail ?? "")
+      : null;
   const toggle = () => {
     const next = !expanded;
     if (groupView) {
@@ -200,7 +209,9 @@ function AgentMessageWorkRow({
       data-agent-message
       role="button"
       tabIndex={0}
-      aria-label={`Message from ${title}`}
+      aria-label={
+        reportLines === null ? `Message from ${title}` : `Watch report: ${reportLines.join(", ")}`
+      }
       aria-expanded={expanded}
       onClick={toggle}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -209,8 +220,27 @@ function AgentMessageWorkRow({
           toggle();
         }
       }}
-      icon={<MessagesSquareIcon className="size-4 shrink-0 text-icon-muted" aria-hidden />}
-      label={<span className="min-w-0 truncate text-sm text-secondary-label">{title}</span>}
+      icon={
+        reportLines === null ? (
+          <MessagesSquareIcon className="size-4 shrink-0 text-icon-muted" aria-hidden />
+        ) : (
+          <EyeIcon className="size-4 shrink-0 text-icon-muted" aria-hidden />
+        )
+      }
+      wrapLabel={reportLines !== null}
+      label={
+        reportLines === null ? (
+          <span className="min-w-0 truncate text-sm text-secondary-label">{title}</span>
+        ) : (
+          <span className="flex min-w-0 flex-col">
+            {(reportLines.length === 0 ? ["Watch report"] : reportLines).map((line) => (
+              <span key={line} className="truncate text-sm text-secondary-label">
+                {line}
+              </span>
+            ))}
+          </span>
+        )
+      }
       trailing={
         <>
           <TimelineRowTimestamp
