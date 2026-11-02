@@ -1,4 +1,8 @@
-import { watchReportMarkdown, watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
+import {
+  watchReportHeading,
+  watchReportMarkdown,
+  watchReportSummaryLines,
+} from "@t3tools/client-runtime/user-message";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import { findRevealRef } from "./markdownFindContext";
@@ -237,7 +241,12 @@ function AgentMessageWorkRow({
           <span className="min-w-0 truncate text-sm text-secondary-label">{title}</span>
         ) : (
           <span className="flex min-w-0 flex-col">
-            {(reportLines.length === 0 ? ["Watch report"] : reportLines).map((line) => (
+            {(expanded && reportMarkdown !== null
+              ? [watchReportHeading(reportLines.length)]
+              : reportLines.length === 0
+                ? ["Watch report"]
+                : reportLines
+            ).map((line) => (
               <span key={line} className="truncate text-sm text-secondary-label">
                 {line}
               </span>

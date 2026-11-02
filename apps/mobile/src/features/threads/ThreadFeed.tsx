@@ -1659,7 +1659,12 @@ function renderFeedEntry(
                 senderThreadId={message.senderThreadId}
                 fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
                 summary={
-                  reportLines?.join(", ") ??
+                  // Expanded, the body lists the events, so the header only counts them.
+                  (reportLines !== null && foldExpanded && reportMarkdown !== null
+                    ? reportLines.length > 1
+                      ? `${reportLines.length} events`
+                      : ""
+                    : reportLines?.join(", ")) ??
                   replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                     .split(/\r?\n/)
                     .find((line) => line.trim().length > 0)

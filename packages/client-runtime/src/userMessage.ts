@@ -135,3 +135,8 @@ export function watchReportMarkdown(messageId: string, text: string): string | n
     )
     .join("\n\n");
 }
+
+/** The header of an expanded watch report, whose body already lists each event. */
+export function watchReportHeading(eventCount: number): string {
+  return eventCount > 1 ? `Watch report · ${eventCount} events` : "Watch report";
+}
