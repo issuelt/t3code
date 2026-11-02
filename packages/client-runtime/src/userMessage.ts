@@ -87,7 +87,27 @@ export function resolveUserMessagePresentation(message: {
 }
 
 const WATCH_REPORT_EVENT =
-  /^- (?<event>[^:\n]+): (?:\[(?<title>[^\]\n]*)\]\([^)\n]*\)|<[^>\n]*>).*\bthreadId (?<threadId>[^)\s]+)\)/;
+  /^- (?<event>[^:\n]+): (?:\[(?<title>[^\]\n]*)\]\((?<titledHref>[^)\n]*)\)|<(?<href>[^>\n]*)>).*\bthreadId (?<threadId>[^)\s]+)\)/;
+
+/** Each watched event in a watch report, once. Null for any other message. */
+function watchReportEvents(
+  messageId: string,
+  text: string,
+): ReadonlyArray<{ readonly event: string; readonly title: string; readonly href: string }> | null {
+  if (!messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)) return null;
+  const events = new Map<string, { event: string; title: string; href: string }>();
+  for (const line of text.split("\n")) {
+    const groups = WATCH_REPORT_EVENT.exec(line)?.groups;
+    if (groups === undefined) continue;
+    const event = {
+      event: groups.event ?? "",
+      title: groups.title?.trim() || (groups.threadId ?? ""),
+      href: groups.titledHref ?? groups.href ?? "",
+    };
+    events.set(`${event.event}\n${event.href}`, event);
+  }
+  return [...events.values()];
+}
 
 /**
  * The folded lines of a watch report, one per watched event, such as
@@ -97,11 +117,21 @@ export function watchReportSummaryLines(
   messageId: string,
   text: string,
 ): ReadonlyArray<string> | null {
-  if (!messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)) return null;
-  const lines = text.split("\n").flatMap((line) => {
-    const groups = WATCH_REPORT_EVENT.exec(line)?.groups;
-    if (groups === undefined) return [];
-    return [`${groups.event} · ${groups.title?.trim() || groups.threadId}`];
-  });
-  return [...new Set(lines)];
+  return (
+    watchReportEvents(messageId, text)?.map(({ event, title }) => `${event} · ${title}`) ?? null
+  );
+}
+
+/**
+ * What an expanded watch report shows: each event with a link to its thread. The model reads
+ * the full text with its envelope; the ids in it are for the model, not the user.
+ */
+export function watchReportMarkdown(messageId: string, text: string): string | null {
+  const events = watchReportEvents(messageId, text);
+  if (events === null || events.length === 0) return null;
+  return events
+    .map(({ event, title, href }) =>
+      href === "" ? `${event} · ${title}` : `${event} · [${title.replaceAll("]", "\\]")}](${href})`,
+    )
+    .join("\n\n");
 }

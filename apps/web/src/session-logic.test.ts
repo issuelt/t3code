@@ -40,7 +40,7 @@ import {
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
-import { watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
+import { watchReportMarkdown, watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -475,6 +475,9 @@ describe("V2 session presentation", () => {
       "Asks a question · b",
     ]);
     expect(watchReportSummaryLines("from-pm", "Merged #17.")).toBeNull();
+    expect(watchReportMarkdown("home-report:1", report)).toBe(
+      "Completed · [OS exam study guide app](t3://v2/env/a)\n\nAsks a question · [b](t3://v2/env/b)",
+    );
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

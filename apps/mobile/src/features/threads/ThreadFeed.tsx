@@ -34,6 +34,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
   resolveUserMessagePresentation,
+  watchReportMarkdown,
   watchReportSummaryLines,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -1595,6 +1596,7 @@ function renderFeedEntry(
       const reportLines = homeReport
         ? watchReportSummaryLines(message.id, presentation.text)
         : null;
+      const reportMarkdown = homeReport ? watchReportMarkdown(message.id, presentation.text) : null;
       const foldRowId =
         presentation.attribution === "agent" || homeReport ? `agent:${message.id}` : null;
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
@@ -1755,7 +1757,7 @@ function renderFeedEntry(
                     value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                   >
                     <UserMessageContent
-                      text={renderedText}
+                      text={reportMarkdown ?? renderedText}
                       environmentId={props.environmentId}
                       context={message.context}
                       markdownStyles={styles}

@@ -1,4 +1,4 @@
-import { watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
+import { watchReportMarkdown, watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import { findRevealRef } from "./markdownFindContext";
@@ -189,6 +189,10 @@ function AgentMessageWorkRow({
     item?.type === "user_message"
       ? watchReportSummaryLines(item.messageId, workEntry.detail ?? "")
       : null;
+  const reportMarkdown =
+    item?.type === "user_message"
+      ? watchReportMarkdown(item.messageId, workEntry.detail ?? "")
+      : null;
   const toggle = () => {
     const next = !expanded;
     if (groupView) {
@@ -263,7 +267,7 @@ function AgentMessageWorkRow({
           <WorkLogDetails>
             <div className="border-s ps-3">
               <ChatMarkdown
-                text={workEntry.detail ?? ""}
+                text={reportMarkdown ?? workEntry.detail ?? ""}
                 cwd={ctx.markdownCwd}
                 threadRef={ctx.threadRef ?? undefined}
                 parseRawHtml={false}
