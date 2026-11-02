@@ -1,3 +1,4 @@
+import { watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import { findRevealRef } from "./markdownFindContext";
@@ -27,7 +28,6 @@ import {
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
-  watchReportSummaryLines,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,

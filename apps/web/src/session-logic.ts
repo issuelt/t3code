@@ -15,7 +15,6 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
-  HOME_REPORT_MESSAGE_ID_PREFIX,
   isHomeDeliveredMessage,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
@@ -174,26 +173,6 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
 /** An agent's message to Home, shown as its own folded row. */
 export function workEntryIsAgentMessage(entry: WorkLogEntry): boolean {
   return entry.itemType === "user_message";
-}
-
-const WATCH_REPORT_EVENT =
-  /^- (?<event>[^:\n]+): (?:\[(?<title>[^\]\n]*)\]\([^)\n]*\)|<[^>\n]*>).*\bthreadId (?<threadId>[^)\s]+)\)/;
-
-/**
- * The folded lines of a watch report, one per watched event, such as
- * "Completed · OS exam study guide app". Null for any other message.
- */
-export function watchReportSummaryLines(
-  messageId: string,
-  text: string,
-): ReadonlyArray<string> | null {
-  if (!messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)) return null;
-  const lines = text.split("\n").flatMap((line) => {
-    const groups = WATCH_REPORT_EVENT.exec(line)?.groups;
-    if (groups === undefined) return [];
-    return [`${groups.event} · ${groups.title?.trim() || groups.threadId}`];
-  });
-  return [...new Set(lines)];
 }
 
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {

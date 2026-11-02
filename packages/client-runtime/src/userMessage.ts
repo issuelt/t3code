@@ -1,5 +1,6 @@
 import {
   type GuestMessageAttribution,
+  HOME_REPORT_MESSAGE_ID_PREFIX,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
@@ -83,4 +84,24 @@ export function resolveUserMessagePresentation(message: {
             : "agent",
     scheduledTaskId: undefined,
   };
+}
+
+const WATCH_REPORT_EVENT =
+  /^- (?<event>[^:\n]+): (?:\[(?<title>[^\]\n]*)\]\([^)\n]*\)|<[^>\n]*>).*\bthreadId (?<threadId>[^)\s]+)\)/;
+
+/**
+ * The folded lines of a watch report, one per watched event, such as
+ * "Completed · OS exam study guide app". Null for any other message.
+ */
+export function watchReportSummaryLines(
+  messageId: string,
+  text: string,
+): ReadonlyArray<string> | null {
+  if (!messageId.startsWith(HOME_REPORT_MESSAGE_ID_PREFIX)) return null;
+  const lines = text.split("\n").flatMap((line) => {
+    const groups = WATCH_REPORT_EVENT.exec(line)?.groups;
+    if (groups === undefined) return [];
+    return [`${groups.event} · ${groups.title?.trim() || groups.threadId}`];
+  });
+  return [...new Set(lines)];
 }

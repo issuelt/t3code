@@ -26,7 +26,6 @@ import {
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
-  watchReportSummaryLines,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   isLatestRunSettled,
@@ -41,6 +40,7 @@ import {
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
+import { watchReportSummaryLines } from "@t3tools/client-runtime/user-message";
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {

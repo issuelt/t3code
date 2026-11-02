@@ -34,6 +34,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
   resolveUserMessagePresentation,
+  watchReportSummaryLines,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -51,6 +52,7 @@ import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
+  isHomeDeliveredMessage,
   type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -1019,6 +1021,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
 function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
+  readonly fallbackLabel: string;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -1031,7 +1034,7 @@ function AgentMessageFoldHeader(props: {
   const remoteSenderShell = useQuietThreadShellById(
     props.senderThreadId && localSenderShell === null ? props.senderThreadId : null,
   );
-  const label = (localSenderShell ?? remoteSenderShell)?.title.trim() || "Agent";
+  const label = (localSenderShell ?? remoteSenderShell)?.title.trim() || props.fallbackLabel;
   return (
     <Pressable
       accessibilityRole="button"
@@ -1584,7 +1587,16 @@ function renderFeedEntry(
     }
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
-      const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
+      // Home acts for the user, so anything an agent or T3 Code sent there folds like an agent message.
+      const homeReport = isHomeDeliveredMessage(props.threadId, {
+        createdBy: message.createdBy ?? "user",
+        idleCompaction: message.idleCompaction,
+      });
+      const reportLines = homeReport
+        ? watchReportSummaryLines(message.id, presentation.text)
+        : null;
+      const foldRowId =
+        presentation.attribution === "agent" || homeReport ? `agent:${message.id}` : null;
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
@@ -1616,7 +1628,7 @@ function renderFeedEntry(
           className="mb-5 items-end"
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
-          {presentation.attribution === "t3code" ? (
+          {presentation.attribution === "t3code" && foldRowId === null ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               Sent by T3 Code
             </Text>
@@ -1643,11 +1655,14 @@ function renderFeedEntry(
               <AgentMessageFoldHeader
                 environmentId={props.environmentId}
                 senderThreadId={message.senderThreadId}
+                fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
                 summary={
+                  reportLines?.join(", ") ??
                   replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                     .split(/\r?\n/)
                     .find((line) => line.trim().length > 0)
-                    ?.trim() ?? ""
+                    ?.trim() ??
+                  ""
                 }
                 expanded={foldExpanded}
                 onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
