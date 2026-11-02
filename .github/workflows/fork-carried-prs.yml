@@ -1,0 +1,29 @@
+name: Fork carried PRs
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Carried upstream PRs drift
+    if: github.repository == 'issuelt/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - name: Check carried PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Explicit bash adds pipefail, so drift still fails the step through tee.
+        shell: bash
+        run: node scripts/fork-carried-prs.ts | tee -a "$GITHUB_STEP_SUMMARY"
