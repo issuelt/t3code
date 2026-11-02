@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { closeSkillTokenAtCursor, matchInlineSkills, replaceSpokenSkills } from "./inlineSkills.ts";
+import {
+  closeSkillTokenAtCursor,
+  formatProviderSkillDisplayName,
+  matchInlineSkills,
+  replaceSpokenSkills,
+} from "./inlineSkills.ts";
 
 const skills = [
   { name: "review", displayName: undefined },
@@ -55,5 +60,22 @@ describe("closeSkillTokenAtCursor", () => {
     expect(closeSkillTokenAtCursor("then run $deploy", 16, skills).text).toBe("then run $deploy");
     expect(closeSkillTokenAtCursor("$review now", 7, skills).text).toBe("$review now");
     expect(closeSkillTokenAtCursor("costs $5", 8, skills).text).toBe("costs $5");
+  });
+});
+
+describe("formatProviderSkillDisplayName", () => {
+  it.each([
+    ["mca_lab_status", "mca_lab_status"],
+    ["frontend-design:frontend-design", "frontend-design:frontend-design"],
+    ["superpowers:brainstorming", "superpowers:brainstorming"],
+    ["DesignSync", "DesignSync"],
+  ])("shows %s as its skill name when the provider sets no display name", (name, label) => {
+    expect(formatProviderSkillDisplayName({ name })).toBe(label);
+  });
+
+  it("prefers the provider display name", () => {
+    expect(formatProviderSkillDisplayName({ name: "gh-fix-ci", displayName: " Fix CI " })).toBe(
+      "Fix CI",
+    );
   });
 });

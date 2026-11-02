@@ -20,7 +20,12 @@ import { type PendingUserInput } from "../../session-logic";
 import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
-import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
+import {
+  type ComposerListEdit,
+  listContinuationForEnter,
+  listIndentForTab,
+  listOutdentForTab,
+} from "../../composer-list-continuation";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 
 export function composerMenuControlKey(event: KeyboardEvent): "ArrowDown" | "ArrowUp" | null {
@@ -62,7 +67,7 @@ export function composerCommandKeyHandler(input: {
   readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
-  readonly promptHistoryMessages: ChatComposerProps["promptHistoryMessages"];
+  readonly promptHistoryEntries: ChatComposerProps["promptHistoryEntries"];
   readonly promptHistoryPositionRef: RefObject<{
     targetKey: string;
     position: ComposerPromptHistoryPosition;
@@ -114,7 +119,7 @@ export function composerCommandKeyHandler(input: {
     planModeUiEnabled,
     isLiteralPendingAnswer,
     pendingUserInputs,
-    promptHistoryMessages,
+    promptHistoryEntries,
     promptHistoryPositionRef,
     composerDraftTarget,
     promptRef,
@@ -183,7 +188,9 @@ export function composerCommandKeyHandler(input: {
     const step = stepComposerPromptHistory({
       direction,
       // Built on the keypress, not per render: the timeline changes on every streamed delta.
-      entries: buildComposerPromptHistoryEntries(promptHistoryMessages),
+      entries: buildComposerPromptHistoryEntries(
+        promptHistoryEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+      ),
       position,
       currentPrompt: promptRef.current,
     });
@@ -193,6 +200,25 @@ export function composerCommandKeyHandler(input: {
       : null;
     replacePromptFromHistory(step.prompt);
     return true;
+  };
+
+  const applyListEdit = (
+    event: KeyboardEvent,
+    listEdit: (value: string, start: number, end: number) => ComposerListEdit | null,
+  ): boolean => {
+    if (isLiteralPendingAnswer || event.isComposing) return false;
+    const selection = composerEditorRef.current?.readSelectionRange();
+    const snapshot = readComposerSnapshot();
+    if (!selection || selection.start !== selection.end || snapshot.value !== promptRef.current) {
+      return false;
+    }
+    const edit = listEdit(snapshot.value, selection.start, selection.end);
+    return (
+      edit !== null &&
+      applyPromptReplacement(edit.start, edit.end, edit.replacement, {
+        expandedCursorAfterReplace: edit.cursorAfter,
+      })
+    );
   };
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
@@ -206,6 +232,7 @@ export function composerCommandKeyHandler(input: {
       prompt: promptRef.current,
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
+      if (applyListEdit(event, listOutdentForTab)) return true;
       if (!planModeUiEnabled) return false;
       toggleInteractionMode();
       return true;
@@ -281,27 +308,8 @@ export function composerCommandKeyHandler(input: {
       return true;
     }
     if (key === "Enter" && isTaskItem) return false;
-    if (
-      !isLiteralPendingAnswer &&
-      !event.isComposing &&
-      (key === "Enter" || (key === "Tab" && !event.shiftKey))
-    ) {
-      const selection = composerEditorRef.current?.readSelectionRange();
-      const snapshot = readComposerSnapshot();
-      if (selection && selection.start === selection.end && snapshot.value === promptRef.current) {
-        const edit =
-          key === "Enter"
-            ? listContinuationForEnter(snapshot.value, selection.start)
-            : listIndentForTab(snapshot.value, selection.start, selection.end);
-        if (
-          edit &&
-          applyPromptReplacement(edit.start, edit.end, edit.replacement, {
-            expandedCursorAfterReplace: edit.cursorAfter,
-          })
-        ) {
-          return true;
-        }
-      }
+    if (key === "Enter" || (key === "Tab" && !event.shiftKey)) {
+      return applyListEdit(event, key === "Enter" ? listContinuationForEnter : listIndentForTab);
     }
     return false;
   };
