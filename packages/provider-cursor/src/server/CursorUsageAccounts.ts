@@ -431,9 +431,9 @@ const make = Effect.gen(function* () {
         const sources = (yield* Effect.forEach(prepared, ({ scan }) => scan(input))).flat();
         // Credentials for one account share its source, and a repeated source would count
         // sessions twice. A failed credential can hold older records, so a current read wins,
-        // then a refresh the client must follow up on.
+        // then a refresh the client must follow up on, then a notice the user can act on.
         const rank = (source: ProviderUsageScan) =>
-          source.status === "ok" ? 2 : source.refreshing ? 1 : 0;
+          source.status === "ok" ? 3 : source.refreshing ? 2 : source.action ? 1 : 0;
         const byAccount = new Map<string, ProviderUsageScan>();
         for (const source of sources) {
           const kept = byAccount.get(source.dir);

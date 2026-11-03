@@ -2134,6 +2134,50 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.live("keeps the Keychain prompt for a keyless instance beside a failing API key", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(() =>
+          Effect.succeed({
+            accountKey: null,
+            records: [],
+            missing: false,
+            error: "Cursor account usage could not be read.",
+          }),
+        );
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(
+          cursorSources(summary).map((source) => source.action),
+          ["enableCursorKeychain"],
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-keychain-and-key",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("cursor")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [],
+                },
+                [ProviderInstanceId.make("cursor-work")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "work-key", sensitive: true }],
+                },
+              },
+            },
+            platform: "darwin",
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reports one Cursor source when two API keys belong to the same account", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
