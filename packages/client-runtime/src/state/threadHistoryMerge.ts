@@ -112,34 +112,7 @@ export function mergeOlderHistoryIntoProjection(
       turnItemById.set(String(row.sourceItemId), row.item);
   }
   if (page.length === 0 && work === undefined) return projection;
-  // Shared rows anchor a retry page inside a larger conversation-only load.
-  // Keep existing gaps and rows outside the page in their current order.
-  const pageIndexByKey = new Map<string, number>();
-  let lastOverlapIndex = -1;
-  for (const [index, row] of page.entries()) {
-    const key = projectedItemKey(row);
-    pageIndexByKey.set(key, index);
-    if (currentByKey.has(key)) lastOverlapIndex = index;
-  }
   let visible: OrchestrationV2ProjectedTurnItem[] = [];
-  let pageOffset = 0;
-  if (lastOverlapIndex === -1) {
-    for (const row of page) visible.push(row);
-    pageOffset = page.length;
-  }
-  for (const row of projection.visibleTurnItems) {
-    const pageIndex = pageIndexByKey.get(projectedItemKey(row));
-    if (pageIndex === undefined) {
-      visible.push(row);
-      continue;
-    }
-    for (const pageRow of page.slice(pageOffset, pageIndex + 1)) visible.push(pageRow);
-    pageOffset = pageIndex + 1;
-    if (pageIndex === lastOverlapIndex) {
-      for (const pageRow of page.slice(pageOffset)) visible.push(pageRow);
-      pageOffset = page.length;
-    }
-  }
   if (work && anchor && deferred) {
     let end = start + 1;
     while (end < projection.visibleTurnItems.length) {
@@ -171,6 +144,34 @@ export function mergeOlderHistoryIntoProjection(
       ...projection.visibleTurnItems.slice(end),
     ];
     if (anchor.visibility === "local") turnItemById.set(String(updated.item.id), updated.item);
+  } else {
+    // Shared rows anchor a retry page inside a larger conversation-only load.
+    // Keep existing gaps and rows outside the page in their current order.
+    const pageIndexByKey = new Map<string, number>();
+    let lastOverlapIndex = -1;
+    for (const [index, row] of page.entries()) {
+      const key = projectedItemKey(row);
+      pageIndexByKey.set(key, index);
+      if (currentByKey.has(key)) lastOverlapIndex = index;
+    }
+    let pageOffset = 0;
+    if (lastOverlapIndex === -1) {
+      for (const row of page) visible.push(row);
+      pageOffset = page.length;
+    }
+    for (const row of projection.visibleTurnItems) {
+      const pageIndex = pageIndexByKey.get(projectedItemKey(row));
+      if (pageIndex === undefined) {
+        visible.push(row);
+        continue;
+      }
+      for (const pageRow of page.slice(pageOffset, pageIndex + 1)) visible.push(pageRow);
+      pageOffset = pageIndex + 1;
+      if (pageIndex === lastOverlapIndex) {
+        for (const pageRow of page.slice(pageOffset)) visible.push(pageRow);
+        pageOffset = page.length;
+      }
+    }
   }
   if (
     visible.length === projection.visibleTurnItems.length &&

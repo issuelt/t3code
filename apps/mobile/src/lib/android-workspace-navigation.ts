@@ -1,15 +1,16 @@
 import type { NavigationState } from "@react-navigation/native";
 import { resetRootStack, type RootStackNavigation } from "./root-stack-reset";
 
-function androidWorkspaceBackReturnsToThread(state: NavigationState) {
+function androidWorkspaceBackReturnsToDetail(state: NavigationState) {
   const current = state.routes[state.index];
-  const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
-  return (
-    current?.name === "Thread" &&
-    state.routes[state.index - 1]?.name === "Thread" &&
-    params !== undefined &&
-    !parentThreadIsBelow(state, params)
-  );
+  const previous = state.routes[state.index - 1];
+  if (current?.name !== "Thread" && current?.name !== "PullRequest") return false;
+  if (previous?.name === "PullRequest" || previous?.name === "PullRequestFile") return true;
+  if (previous?.name !== "Thread") return false;
+  if (current.name === "PullRequest") return true;
+  // Git actions can leave a duplicate Thread route that should return to its list.
+  const params = current.params as ReactNavigation.RootParamList["Thread"] | undefined;
+  return params !== undefined && !parentThreadIsBelow(state, params);
 }
 
 /** The root stack with only the workspace list. */
@@ -62,7 +63,7 @@ export function returnToAndroidWorkspaceList(
   selectTab: () => void,
 ) {
   const state = navigation.getState();
-  if (state && androidWorkspaceBackReturnsToThread(state)) return navigation.goBack();
+  if (state && androidWorkspaceBackReturnsToDetail(state)) return navigation.goBack();
   selectTab();
   resetAndroidWorkspace(navigation);
 }

@@ -137,7 +137,8 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -209,7 +210,6 @@ import {
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand } from "../../keybindings";
-import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { ComposerDictationControl } from "./ComposerDictationControl";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
@@ -361,6 +361,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  getShortcutContext: (target: EventTarget | null) => Partial<ShortcutMatchContext>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -984,11 +985,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         start: inserted.start,
         end: inserted.end + (closed.cursor - selection.start),
       };
-      const previous = promptRef.current;
-      applyPromptReplacement(0, previous.length, closed.text, {
-        expandedCursorAfterReplace: closed.cursor,
-        focusEditorAfterReplace: false,
-      });
+      onPromptChange(
+        closed.text,
+        collapseExpandedComposerCursor(closed.text, closed.cursor, isLiteralPendingAnswer),
+        closed.cursor,
+        isLiteralPendingAnswer,
+        isLiteralPendingAnswer ? [] : collectInlineContextIds(closed.text),
+      );
     },
     onCommitted: () => {
       composerEditorRef.current?.focusAt(composerCursor);
@@ -1266,10 +1269,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   /** The editor refuses text for these reasons; dictation also freezes it while active. */
   const composerTextUnavailable =
-    isComposerApprovalState ||
-    projectSelectionRequired ||
-    isChoiceOnlyPendingQuestion ||
-    activePendingIsResponding;
+    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
@@ -2592,12 +2592,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     enabled: !composerTextUnavailable,
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
+      (backgroundThread
+        ? event.target instanceof Node && composerFormRef.current?.contains(event.target) === true
+        : !isInSideChatPane(event.target)) &&
       resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: getTerminalFocusOwner() !== null,
-          terminalOpen,
-          modelPickerOpen: isComposerModelPickerOpen,
-        },
+        context: props.getShortcutContext(event.target),
       }) === "composer.dictate",
   });
 

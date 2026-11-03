@@ -16,7 +16,7 @@ const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
 /** Recording time, counted here so the ticking clock re-renders only this label. */
 function RecordingElapsed() {
   const [seconds, setSeconds] = useState(0);
-  // oxlint-disable-next-line t3code/react-effect-budget -- a ticking clock for the mounted label
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a ticking clock for the mounted label
   useEffect(() => {
     const startedAt = Date.now();
     const interval = setInterval(
@@ -37,7 +37,7 @@ function DictationWaveform(props: { readonly level: DictationLevel; readonly liv
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const animate = props.live && !reduceMotion;
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- drives bar transforms directly so audio levels never re-render React
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives bar transforms directly so audio levels never re-render React
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;

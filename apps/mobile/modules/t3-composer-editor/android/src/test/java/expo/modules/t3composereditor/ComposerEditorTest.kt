@@ -1,18 +1,26 @@
 package expo.modules.t3composereditor
 
 import android.app.Activity
-import android.content.ContentProvider
-import android.content.ContentValues
-import android.database.Cursor
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.hardware.input.InputManager
 import android.net.Uri
+import android.os.Looper
+import android.os.SystemClock
+import android.text.InputType
 import android.view.DragEvent
-import android.view.View
+import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.View
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -20,15 +28,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
-import org.robolectric.shadows.DragEventBuilder
-import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.DragEventBuilder
+import org.robolectric.shadows.InputDeviceBuilder
+import org.robolectric.shadows.ShadowContentResolver
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], manifest = Config.NONE)
-class ComposerPasteTest {
+class ComposerEditorTest {
   private val context = RuntimeEnvironment.getApplication()
   private val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
   private val editor = SelectionAwareEditText(context).apply {
@@ -198,7 +208,7 @@ class ComposerPasteTest {
 
   private fun imageClip(vararg names: String): ClipData {
     val provider = DropImageProvider().apply {
-      attachInfo(this@ComposerPasteTest.context, ProviderInfo().apply { authority = "images" })
+      attachInfo(this@ComposerEditorTest.context, ProviderInfo().apply { authority = "images" })
     }
     ShadowContentResolver.registerProviderInternal("images", provider)
     return ClipData(
@@ -314,5 +324,174 @@ class ComposerPasteTest {
       selection: String?,
       selectionArgs: Array<out String>?
     ) = 0
+  }
+
+  private fun submissionEditor(sends: MutableList<Boolean>) =
+    SelectionAwareEditText(context).apply {
+      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+      setText("draft")
+      setSelection(length())
+      submitEnabled = true
+      submitListener = { sends += it }
+    }
+
+  private fun SelectionAwareEditText.pressReturn(
+    modifiers: Int = 0,
+    repeats: Int = 0,
+    deviceId: Int = 1,
+    flags: Int = 0
+  ) {
+    val down = KeyEvent(
+      0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER,
+      0, modifiers, deviceId, 0, flags,
+    )
+    dispatchKeyEvent(down)
+    repeat(repeats) { dispatchKeyEvent(KeyEvent.changeTimeRepeat(down, 0, it + 1)) }
+    dispatchKeyEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP))
+  }
+
+  @Test
+  fun hardwareReturnSendsOnceWithAnAlternateAndANewlineChord() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends)
+
+    editor.pressReturn(repeats = 2)
+    editor.pressReturn(KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+    editor.pressReturn(KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON)
+
+    assertEquals(listOf(false, true), sends)
+    assertEquals("draft\n", editor.text.toString())
+  }
+
+  @Test
+  fun hardwareReturnWaitsUntilCompositionEndsToSubmit() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends)
+    BaseInputConnection.setComposingSpans(editor.text)
+    assertTrue(BaseInputConnection.getComposingSpanStart(editor.text) >= 0)
+
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
+
+    BaseInputConnection.removeComposingSpans(editor.text)
+    assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))
+
+    editor.pressReturn()
+    assertEquals(listOf(false), sends)
+  }
+
+  @Test
+  fun newlineSettingKeepsReturnForEditingAndCtrlForSubmission() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends).apply { returnSends = false }
+
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
+    assertEquals("draft\n", editor.text.toString())
+
+    editor.pressReturn(KeyEvent.META_CTRL_ON)
+    editor.pressReturn(KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+    assertEquals(listOf(false, true), sends)
+    assertEquals("draft\n", editor.text.toString())
+  }
+
+  @Test
+  fun imeReturnKeepsSoftEditsAndForwardedHardwareChords() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends)
+
+    editor.pressReturn(deviceId = KeyCharacterMap.VIRTUAL_KEYBOARD)
+    editor.pressReturn(flags = KeyEvent.FLAG_SOFT_KEYBOARD)
+
+    assertEquals(emptyList<Boolean>(), sends)
+    assertEquals("draft\n\n", editor.text.toString())
+
+    Robolectric.buildActivity(Activity::class.java).use { controller ->
+      controller.setup().get().setContentView(editor)
+      editor.requestFocus()
+      controller.windowFocusChanged(true)
+      val connection = checkNotNull(editor.onCreateInputConnection(EditorInfo()))
+
+      fun forwardReturn(deviceId: Int, modifiers: Int = 0) {
+        val now = SystemClock.uptimeMillis()
+        val down = KeyEvent(
+          now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, modifiers, deviceId, 0, 0,
+        )
+        connection.sendKeyEvent(down)
+        connection.sendKeyEvent(KeyEvent.changeAction(down, KeyEvent.ACTION_UP))
+        shadowOf(Looper.getMainLooper()).idle()
+      }
+
+      assertNull(InputDevice.getDevice(1))
+      for (returnSends in listOf(false, true)) {
+        editor.returnSends = returnSends
+        editor.setText("draft")
+        editor.setSelection(editor.length())
+        forwardReturn(deviceId = 1)
+
+        assertEquals(
+          "IME Return must not submit (returnSends=$returnSends)",
+          emptyList<Boolean>(),
+          sends,
+        )
+        assertEquals("draft\n", editor.text.toString())
+      }
+
+      val keyboard = InputDeviceBuilder.newBuilder()
+        .setId(42)
+        .setName("Physical keyboard")
+        .setExternal(true)
+        .setSources(InputDevice.SOURCE_KEYBOARD)
+        .setKeyboardType(InputDevice.KEYBOARD_TYPE_ALPHABETIC)
+        .build()
+      shadowOf(context.getSystemService(InputManager::class.java)).addInputDevice(keyboard)
+      val registered = checkNotNull(InputDevice.getDevice(keyboard.id))
+      assertFalse(registered.isVirtual)
+      assertEquals(InputDevice.KEYBOARD_TYPE_ALPHABETIC, registered.keyboardType)
+
+      for (returnSends in listOf(false, true)) {
+        editor.returnSends = returnSends
+        editor.setText("draft")
+        editor.setSelection(editor.length())
+        sends.clear()
+
+        forwardReturn(keyboard.id)
+        assertEquals(if (returnSends) listOf(false) else emptyList<Boolean>(), sends)
+        val expectedText = if (returnSends) "draft" else "draft\n"
+        assertEquals(expectedText, editor.text.toString())
+
+        forwardReturn(keyboard.id, KeyEvent.META_CTRL_ON)
+        if (!returnSends) {
+          forwardReturn(keyboard.id, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+        }
+        assertEquals(
+          "Forwarded hardware Return chords must submit (returnSends=$returnSends)",
+          listOf(false, true),
+          sends,
+        )
+        assertEquals(expectedText, editor.text.toString())
+      }
+    }
+  }
+
+  @Test
+  fun unavailableSubmissionFallsThroughToEditing() {
+    val sends = mutableListOf<Boolean>()
+    val editor = submissionEditor(sends).apply { submitEnabled = false }
+
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
+    assertEquals("draft\n", editor.text.toString())
+
+    editor.submitEnabled = true
+    editor.submitListener = null
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
+    assertEquals("draft\n\n", editor.text.toString())
+
+    editor.submitListener = { sends += it }
+    editor.readOnly = true
+    editor.pressReturn()
+    assertEquals(emptyList<Boolean>(), sends)
   }
 }

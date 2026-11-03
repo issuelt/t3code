@@ -85,8 +85,12 @@ start of the composer to edit the most recently queued message. Change
 
 Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
-other action for a single message, or hold `Cmd` while sending from a hardware
-keyboard. The button only offers Steer when the running agent supports it.
+other action for a single message. With a hardware keyboard, `Cmd+Return` on
+iPad or `Ctrl+Return` on Android uses the other action when Return sends. If
+Return inserts a new line instead (**Settings → Keyboard**), add `Shift` for the
+other action; without `Shift`, the shortcut uses your default. See
+[mobile keyboard shortcuts](./keybindings.md#ipad-and-android). The button only
+offers Steer when the running agent supports it.
 
 ## Queue messages offline on mobile
 
@@ -213,7 +217,7 @@ transcription or cancellation; only the message text is sent when you submit.
 ## Dictation on web and desktop
 
 Dictation turns speech into text with a speech model that runs on one of your T3 Code
-machines. Set it up for that machine in **Settings → Integrations → Dictation**: turn it on and
+machines. Set it up for that machine in **Settings → Devices → Dictation**: turn it on and
 pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
 base is a small English-only model. Nothing downloads until dictation is on; then the machine
 downloads the model you picked and the status line shows the progress. **Language** can pin

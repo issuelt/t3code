@@ -76,8 +76,10 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+sends using the alternate follow-up behavior (queue or steer). To make Return insert
+a new line instead, change the Return key behavior in Settings → Keyboard. With that
+setting, `Cmd+Return` sends and `Cmd+Shift+Return` uses the alternate behavior.
+Soft keyboards always insert a new line.
 
 On Android, use `Ctrl` in place of `Cmd`. Thread shortcuts and the command palette
 need a tablet-sized screen; on a phone, `Ctrl+K` opens search.

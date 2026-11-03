@@ -20,10 +20,12 @@ import android.util.TypedValue
 import android.view.DragEvent
 import android.view.Gravity
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
@@ -599,16 +601,11 @@ internal class SelectionAwareEditText(
   var pasteContextListener: ((Map<String, String>) -> Unit)? = null
   var pasteTextListener: ((String, Int, Int) -> Unit)? = null
 
-  /** Called for a hardware-keyboard send chord. The argument is true for the alternate send. */
   var submitListener: ((Boolean) -> Unit)? = null
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
-
-  /** Whether a hardware Return sends (`enterBehavior` "send") or inserts a newline. */
   var returnSends = true
-
-  /** The JS wrapper enables submission only when it has an onSubmit handler. */
   var submitEnabled = false
 
   /**
@@ -661,20 +658,15 @@ internal class SelectionAwareEditText(
     return spans.isNotEmpty()
   }
 
-  /**
-   * Maps a hardware Return chord to a send, like the iOS composer. The plainer chord does the
-   * configured behavior and the Ctrl chord does the other one: with "send", Return sends,
-   * Ctrl-Return sends the alternate way and Shift-Return inserts a newline; with "newline",
-   * Ctrl-Return sends and Ctrl-Shift-Return sends the alternate way. Returns whether the send is
-   * the alternate one, or null to insert a newline. Soft keyboards always insert a newline.
-   */
+  // Match iPad submission chords with Ctrl in place of Command; null leaves normal editing.
   private fun submitChord(keyCode: Int, event: KeyEvent): Boolean? {
     val isReturn = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
     val fromSoftKeyboard =
       event.deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD ||
         (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD) != 0
-    val canSubmit = submitEnabled && submitListener != null && !readOnly
-    if (!isReturn || fromSoftKeyboard || !canSubmit) {
+    val canSubmit = isEnabled && !readOnly && submitEnabled && submitListener != null
+    val composing = BaseInputConnection.getComposingSpanStart(text) >= 0
+    if (!isReturn || fromSoftKeyboard || !canSubmit || composing) {
       return null
     }
     return when {
@@ -710,6 +702,23 @@ internal class SelectionAwareEditText(
   override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
     val connection = super.onCreateInputConnection(outAttrs) ?: return null
     return object : InputConnectionWrapper(connection, false) {
+      // IMEs can also forward physical keys with their original device ID.
+      override fun sendKeyEvent(event: KeyEvent): Boolean {
+        val device = InputDevice.getDevice(event.deviceId)
+        val fromHardwareKeyboard = device != null && !device.isVirtual &&
+          device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
+        return super.sendKeyEvent(
+          if (fromHardwareKeyboard) {
+            event
+          } else {
+            KeyEvent.changeFlags(
+              event,
+              event.flags or KeyEvent.FLAG_SOFT_KEYBOARD
+            )
+          }
+        )
+      }
+
       override fun deleteSurroundingText(
         beforeLength: Int,
         afterLength: Int

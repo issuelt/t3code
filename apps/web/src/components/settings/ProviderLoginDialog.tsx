@@ -77,7 +77,7 @@ export function ProviderLoginDialog({
   // without making `state.output` a dependency of it (which would tear down and
   // recreate the terminal on every streamed byte).
   const outputRef = useRef(state.output);
-  // oxlint-disable-next-line t3code/react-effect-budget -- refs must not be written during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs must not be written during render
   useLayoutEffect(() => {
     outputRef.current = state.output;
   }, [state.output]);
@@ -105,7 +105,7 @@ export function ProviderLoginDialog({
   };
 
   // Create the xterm surface when the dialog opens; tear it down on close.
-  // oxlint-disable-next-line t3code/react-effect-budget -- xterm mounts into a DOM node React has rendered
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- xterm mounts into a DOM node React has rendered
   useEffect(() => {
     if (!open) return;
     const mount = containerRef.current;
@@ -186,7 +186,7 @@ export function ProviderLoginDialog({
   }, [open, environmentId, instanceId, write, resize]);
 
   // Write output deltas to the terminal as they stream in.
-  // oxlint-disable-next-line t3code/react-effect-budget -- pushes streamed output into the imperative xterm instance
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes streamed output into the imperative xterm instance
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
