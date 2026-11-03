@@ -18,12 +18,12 @@ export function useDictationHoldShortcut(input: {
   readonly isDictateShortcut: (event: KeyboardEvent) => boolean;
 }) {
   const latest = useRef(input);
-  // oxlint-disable-next-line t3code/react-effect-budget -- refs must not be written during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs must not be written during render
   useLayoutEffect(() => {
     latest.current = input;
   });
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to window key events for the hook's lifetime
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window key events for the hook's lifetime
   useEffect(() => {
     // The physical key that started the hold, so only its release ends it.
     let heldCode: string | null = null;
@@ -39,6 +39,7 @@ export function useDictationHoldShortcut(input: {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const { dictation, enabled, isDictateShortcut } = latest.current;
       const phase = dictation.readPhase();
       const active = phase === "preparing" || phase === "recording" || phase === "transcribing";

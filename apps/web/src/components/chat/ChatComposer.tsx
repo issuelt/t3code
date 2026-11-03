@@ -138,6 +138,7 @@ import {
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -1266,10 +1267,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   /** The editor refuses text for these reasons; dictation also freezes it while active. */
   const composerTextUnavailable =
-    isComposerApprovalState ||
-    projectSelectionRequired ||
-    isChoiceOnlyPendingQuestion ||
-    activePendingIsResponding;
+    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
@@ -2592,6 +2590,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     enabled: !composerTextUnavailable,
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
+      (backgroundThread
+        ? event.target instanceof Node && composerFormRef.current?.contains(event.target) === true
+        : !isInSideChatPane(event.target)) &&
       resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
