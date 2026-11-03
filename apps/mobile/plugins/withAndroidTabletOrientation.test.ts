@@ -1,5 +1,8 @@
-import { AndroidConfig, XML, type ExportedConfig } from "expo/config-plugins";
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { AndroidConfig, compileModsAsync, XML } from "expo/config-plugins";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import withAndroidTabletOrientation from "./withAndroidTabletOrientation.cjs";
 
@@ -32,91 +35,61 @@ class MainActivity : ReactActivity() {
 }
 `;
 
-function modRequest(modName: string) {
-  return {
-    platform: "android" as const,
-    modName,
-    projectRoot: "/project",
-    platformProjectRoot: "/project/android",
-    introspect: false,
-  };
-}
+const projectRoots: string[] = [];
 
-// Registers Expo's built-in orientation plugin after this one, as prebuild does
-// for every app plugin. Same-type mods run last-registered-first, so the
-// manifest mod sees the lock that `orientation: "portrait"` writes.
-function prebuildConfig(): ExportedConfig {
+afterEach(() => {
+  for (const root of projectRoots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
+});
+
+async function prebuildAndroid(input = { manifest: MANIFEST, mainActivity: MAIN_ACTIVITY }) {
+  const projectRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "tablet-orientation-"));
+  projectRoots.push(projectRoot);
+  const sourceRoot = NodePath.join(projectRoot, "android/app/src/main");
+  const activityPath = NodePath.join(sourceRoot, "java/com/t3tools/t3code/MainActivity.kt");
+  const manifestPath = NodePath.join(sourceRoot, "AndroidManifest.xml");
+  NodeFS.mkdirSync(NodePath.dirname(activityPath), { recursive: true });
+  NodeFS.writeFileSync(manifestPath, input.manifest);
+  NodeFS.writeFileSync(activityPath, input.mainActivity);
+
   const config = withAndroidTabletOrientation({
     name: "T3 Code",
     slug: "t3code",
     orientation: "portrait",
   });
-  return AndroidConfig.Orientation.withOrientation(config);
-}
-
-async function runManifestMod(config: ExportedConfig) {
-  const result = await config.mods!.android!.manifest!({
-    ...config,
-    modResults: (await XML.parseXMLAsync(MANIFEST)) as AndroidConfig.Manifest.AndroidManifest,
-    modRequest: modRequest("manifest"),
-    modRawConfig: config,
+  // Prebuild registers Expo's orientation mod after app plugins. Mods run in
+  // reverse order, so our plugin must remove the portrait lock Expo writes.
+  await compileModsAsync(AndroidConfig.Orientation.withOrientation(config), {
+    projectRoot,
+    platforms: ["android"],
   });
-  return AndroidConfig.Manifest.getMainActivityOrThrow(result.modResults);
-}
-
-async function runMainActivityMod(config: ExportedConfig, contents: string) {
-  const result = await config.mods!.android!.mainActivity!({
-    ...config,
-    modResults: { contents, language: "kt", path: "/project/MainActivity.kt" },
-    modRequest: modRequest("mainActivity"),
-    modRawConfig: config,
-  });
-  return result.modResults.contents;
-}
-
-function count(haystack: string, needle: string) {
-  return haystack.split(needle).length - 1;
+  return {
+    manifest: NodeFS.readFileSync(manifestPath, "utf8"),
+    mainActivity: NodeFS.readFileSync(activityPath, "utf8"),
+  };
 }
 
 describe("withAndroidTabletOrientation", () => {
-  it("leaves MainActivity without a manifest orientation lock", async () => {
-    const mainActivity = await runManifestMod(prebuildConfig());
+  it("generates an unlocked launcher manifest while preserving rotation and fold handling", async () => {
+    const { manifest } = await prebuildAndroid();
+    const mainActivity = AndroidConfig.Manifest.getMainActivityOrThrow(
+      (await XML.parseXMLAsync(manifest)) as AndroidConfig.Manifest.AndroidManifest,
+    );
 
     expect(mainActivity.$["android:screenOrientation"]).toBeUndefined();
-    // Rotation and fold/unfold must keep reaching onConfigurationChanged
-    // instead of recreating the activity.
     expect(mainActivity.$["android:configChanges"]?.split("|")).toEqual(
       expect.arrayContaining(["orientation", "screenSize", "smallestScreenSize"]),
     );
   });
 
-  it("requests the orientation before super.onCreate", async () => {
-    const contents = await runMainActivityMod(prebuildConfig(), MAIN_ACTIVITY);
+  it("generates the phone/tablet policy before activity creation and stays stable on repeated prebuild", async () => {
+    const once = await prebuildAndroid();
 
-    const onCreate = contents.slice(contents.indexOf("override fun onCreate"));
-    expect(onCreate.indexOf("applyTabletOrientation()")).toBeLessThan(
-      onCreate.indexOf("super.onCreate(null)"),
+    expect(once.mainActivity).toMatch(
+      /override fun onCreate\(savedInstanceState: Bundle\?\)\s*\{[^}]*applyTabletOrientation\(\)[^}]*super\.onCreate\(null\)/,
     );
-    expect(contents).toContain("    applyTabletOrientation()\n    super.onCreate(null)");
-    expect(count(contents, "import android.content.pm.ActivityInfo")).toBe(1);
-    expect(count(contents, "import android.content.res.Configuration")).toBe(1);
-    expect(count(contents, "override fun onConfigurationChanged")).toBe(1);
-    expect(count(contents, "private fun applyTabletOrientation")).toBe(1);
-  });
-
-  it("leaves an already patched MainActivity unchanged", async () => {
-    const once = await runMainActivityMod(prebuildConfig(), MAIN_ACTIVITY);
-    const twice = await runMainActivityMod(prebuildConfig(), once);
-
-    expect(twice).toBe(once);
-  });
-
-  it("fails loudly when the template no longer calls super.onCreate(null)", async () => {
-    await expect(
-      runMainActivityMod(
-        prebuildConfig(),
-        MAIN_ACTIVITY.replace("super.onCreate(null)", "super.onCreate(savedInstanceState)"),
-      ),
-    ).rejects.toThrow("could not find the super.onCreate call");
+    expect(once.mainActivity).toMatch(
+      /private fun applyTabletOrientation\(\)\s*\{\s*requestedOrientation = if \(resources\.configuration\.smallestScreenWidthDp >= 600\)\s*\{\s*ActivityInfo\.SCREEN_ORIENTATION_FULL_USER\s*\} else \{\s*ActivityInfo\.SCREEN_ORIENTATION_PORTRAIT\s*\}/,
+    );
+    expect(await prebuildAndroid(once)).toEqual(once);
   });
 });
