@@ -11,7 +11,7 @@ export function HtmlArtifactFrame(props: { title: string; html: string }) {
   const theme = useHtmlRenderTheme();
   const frame = useRef<HTMLIFrameElement>(null);
   const [srcDoc] = useState(() => htmlArtifactDocument(props.html, theme));
-  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize theme values into the opaque frame without accepting requests from it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize theme values into the opaque frame without accepting requests from it.
   useEffect(() => {
     frame.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   }, [theme]);
