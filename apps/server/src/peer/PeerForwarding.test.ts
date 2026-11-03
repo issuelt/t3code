@@ -340,7 +340,10 @@ const laptopTools = (
 const makeLaptop = Effect.gen(function* () {
   const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
   const here = yield* Layer.build(
-    laptopTools(linking).pipe(Layer.provideMerge(McpServer.McpServer.layer), Layer.fresh),
+    laptopTools(linking).pipe(
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.fresh,
+    ),
   );
   const server = Context.get(here, McpServer.McpServer);
   const scopeOf = (

@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { IsoDateTime, Project, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -90,5 +91,5 @@ it.effect("isolates Home's repository and preserves its notes when preparing it 
       assert.include(yield* fs.readFileString(agents), "Keep my notes.");
       assert.equal(yield* fs.readFileString(path.join(root, "notes.md")), "A durable note.");
     }).pipe(Effect.provide(layer));
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { DictationModelId } from "@t3tools/contracts";
@@ -164,5 +165,8 @@ it.live.skipIf(!fixture)("installs and transcribes through the real native runti
         ) + "\n",
       );
     }).pipe(Effect.provide(layer), Effect.scoped);
-  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)), Effect.scoped),
+  }).pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
+    Effect.scoped,
+  ),
 );

@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -81,7 +81,7 @@ const unavailable = (message: string) =>
   new OrchestratorMcpFailure({ code: "environment_unavailable", message });
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const state = yield* SynchronizedRef.make<State>({ host: null, pending: new Map() });
 
   // Ends one host generation and fails what it still owed.
@@ -154,7 +154,7 @@ const make = Effect.gen(function* () {
     ),
 
     invoke: Effect.fn("FleetBroker.invoke")(function* (environmentId, invoke) {
-      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const requestId = yield* random.uuidV4().pipe(Effect.orDie);
       const deferred = yield* Deferred.make<unknown, OrchestratorMcpFailure>();
       const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
         const host = current.host;

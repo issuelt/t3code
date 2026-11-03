@@ -1,6 +1,6 @@
 import { CommandId, ProjectId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -75,7 +75,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* ProjectService.ProjectService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const root = path.resolve(config.baseDir, "home");
 
@@ -121,8 +121,8 @@ const make = Effect.gen(function* () {
         .writeFileString(claudePath, "@AGENTS.md\n")
         .pipe(Effect.mapError(folderError));
     }
-    const id = yield* crypto
-      .randomUUIDv4()
+    const id = yield* random
+      .uuidV4()
       .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
     const bootstrapped = yield* projects
       .bootstrap({

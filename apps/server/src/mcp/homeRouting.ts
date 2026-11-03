@@ -8,7 +8,7 @@ import {
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { threadManagementFailure } from "./OrchestratorMcpService.ts";
 import * as Option from "effect/Option";
@@ -22,7 +22,7 @@ import { assertFullAccess, assertLiveCaller, readCaller } from "./threadAccess.t
 
 /** Services a tool needs to declare when it routes Home calls. */
 export const homeRoutingDependencies = [
-  Crypto.Crypto,
+  SecureRandom.SecureRandom,
   ThreadManagement.ThreadManagementService,
   HomeWorkspace.HomeWorkspace,
   HomeService.HomeService,
@@ -105,7 +105,7 @@ export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetO
   ) {
     const key =
       invoke.request.input.clientRequestId ??
-      (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
+      (yield* (yield* SecureRandom.SecureRandom).uuidV4().pipe(Effect.orDie));
     invoke.request = {
       ...invoke.request,
       input: { ...invoke.request.input, clientRequestId: key },

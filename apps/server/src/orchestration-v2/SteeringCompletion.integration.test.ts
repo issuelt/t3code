@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   MessageId,
   EventId,
@@ -451,6 +452,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   canRestart = false,
   canSteer = true,
   interruptTurn: Effect.Effect<void> = Effect.void,
+  steeringAcceptsAttachments = true,
   threadId = ThreadId.make(`thread:${name}`),
 ) {
   const cwd = yield* checkpointWorkspace(name);
@@ -464,6 +466,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       ...CodexProviderCapabilitiesV2.turns,
       supportsActiveSteering: canSteer,
       supportsSteeringByInterruptRestart: canRestart,
+      activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
     },
   };
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -474,28 +477,33 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     openSession: (input) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
+        const turnUpdated = (
+          turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+          status: "running" | "interrupted",
+        ) =>
+          Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: {
+              id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+              providerThreadId: turn.providerThread.id,
+              nodeId: turn.rootNodeId,
+              runAttemptId: turn.attemptId,
+              nativeTurnRef: {
+                driver,
+                nativeId: `native:${turn.attemptId}`,
+                strength: "strong",
+              },
+              ordinal: turn.providerTurnOrdinal,
+              status,
+              startedAt: now,
+              completedAt: status === "running" ? null : now,
+            },
+          });
         const startTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           Effect.gen(function* () {
             started.push(turn);
-            yield* Queue.offer(events, {
-              type: "provider_turn.updated",
-              driver,
-              providerTurn: {
-                id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                providerThreadId: turn.providerThread.id,
-                nodeId: turn.rootNodeId,
-                runAttemptId: turn.attemptId,
-                nativeTurnRef: {
-                  driver,
-                  nativeId: `native:${turn.attemptId}`,
-                  strength: "strong",
-                },
-                ordinal: turn.providerTurnOrdinal,
-                status: "running",
-                startedAt: now,
-                completedAt: null,
-              },
-            });
+            yield* turnUpdated(turn, "running");
           });
         return {
           instanceId,
@@ -542,7 +550,19 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
           interruptTurn: ({ providerTurnId }) =>
             Effect.sync(() => {
               interrupted.push(providerTurnId);
-            }).pipe(Effect.andThen(interruptTurn)),
+            }).pipe(
+              Effect.andThen(interruptTurn),
+              Effect.andThen(
+                Effect.forEach(
+                  started.filter(
+                    (turn) =>
+                      ProviderTurnId.make(`provider-turn:${turn.attemptId}`) === providerTurnId,
+                  ),
+                  (turn) => turnUpdated(turn, "interrupted"),
+                  { discard: true },
+                ),
+              ),
+            ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => Effect.die("unused"),
           rollbackThread: () => Effect.die("unused"),
@@ -627,6 +647,7 @@ it.effect.each([
           false,
           true,
           Effect.void,
+          true,
           threadId,
         );
         yield* Effect.gen(function* () {
@@ -994,6 +1015,54 @@ it.effect(
         }).pipe(Effect.provide(layer));
       }),
     ),
+);
+
+it.effect("restarts the turn for an image when native steering takes text only", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        "steering-text-only-attachment",
+        true,
+        true,
+        Effect.void,
+        false,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("steer-image"),
+          threadId,
+          messageId: MessageId.make("message:steer-image"),
+          text: "look at this",
+          attachments: [
+            {
+              type: "image",
+              id: ChatAttachmentId.make("steer-image"),
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          modelSelection: runSelection,
+          dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        assert.deepEqual(steered, []);
+        assert.deepEqual(
+          started.map((turn) => [turn.message.text, turn.message.attachments.length]),
+          [
+            ["first", 0],
+            ["look at this", 1],
+          ],
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
 );
 
 it.effect("starts a steer that missed the turn on the saved next-turn selection", () =>
