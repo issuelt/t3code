@@ -272,6 +272,119 @@ const make = Effect.gen(function* () {
     } satisfies ProviderUsageScan;
   });
 
+  type PreparedScan = {
+    readonly cacheKey: string;
+    /** Credentials whose refreshes this snapshot keeps. */
+    readonly credentialKeys: ReadonlyArray<string>;
+    readonly scan: (input: ScanInput) => Effect.Effect<ReadonlyArray<ProviderUsageScan>>;
+  };
+
+  const notice = (cacheKey: string, source: ProviderUsageScan): PreparedScan => ({
+    cacheKey,
+    credentialKeys: [],
+    scan: () => Effect.succeed([source]),
+  });
+
+  const prepareApiKeys = Effect.fn("CursorUsageAccounts.prepareApiKeys")(function* (
+    apiKeys: ReadonlyArray<string>,
+    authPath: string,
+  ) {
+    yield* ensureLoaded;
+    const keyed = yield* Effect.forEach(apiKeys, (apiKey) =>
+      digest.digest(Digest.sha256, new TextEncoder().encode(apiKey)).pipe(
+        // A fingerprint, so a replaced key never reads the previous account's cache.
+        Effect.map((hash) => ({ apiKey, credentialKey: `api-key:${Hex.encode(hash)}` })),
+      ),
+    );
+    const credentialKeys = keyed.map(({ credentialKey }) => credentialKey).toSorted();
+    return {
+      cacheKey: encodeCredentialKey(credentialKeys),
+      credentialKeys,
+      scan: ({ windowStartMs, retentionCutoffMs, awaitRefresh }: ScanInput) =>
+        Effect.forEach(keyed, ({ apiKey, credentialKey }) =>
+          accountSource(
+            { kind: "apiKey", apiKey },
+            credentialKey,
+            authPath,
+            windowStartMs,
+            retentionCutoffMs,
+            awaitRefresh,
+          ),
+        ).pipe(Effect.map((sources) => sources.filter((source) => source !== null))),
+    } satisfies PreparedScan;
+  });
+
+  const prepareLogin = Effect.fn("CursorUsageAccounts.prepareLogin")(function* (
+    keychainUsageEnabled: boolean,
+    authPath: string,
+    generation: number,
+  ): Effect.fn.Return<PreparedScan> {
+    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
+    const loginUnavailable =
+      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) || credentialStore === "memory";
+    const useKeychain = platform === "darwin" && credentialStore !== "file";
+    if (useKeychain && !loginUnavailable && !keychainUsageEnabled) {
+      return notice("keychain-disabled", {
+        dir: authPath,
+        volumeId: "",
+        files: null,
+        message: "Cursor account usage is off on this environment.",
+        action: "enableCursorKeychain",
+      });
+    }
+    if (loginUnavailable) {
+      return notice("login-unavailable", {
+        dir: authPath,
+        files: null,
+        message: "Cursor account history needs a Cursor CLI login on this server.",
+      });
+    }
+    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
+    if (
+      useKeychain &&
+      !(yield* fileSystem.exists(path.dirname(authPath)).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return {
+        cacheKey: "not-installed",
+        credentialKeys: [],
+        scan: () => Effect.succeed([]),
+      } satisfies PreparedScan;
+    }
+    yield* ensureLoaded;
+    const sourceKey = useKeychain ? "keychain" : authPath;
+    const resolved = yield* accountReader.resolve(useKeychain ? { kind: "keychain" } : authPath);
+    const cacheKey =
+      resolved.kind === "token" ? encodeCredentialKey([sourceKey, resolved.fingerprint]) : "";
+    // A slower credential resolution keeps its request's snapshot, but cannot
+    // drop the caches of the identity observed by a newer preparation.
+    if (generation === preparationGeneration) {
+      const prefix = encodeCredentialKey([sourceKey]).slice(0, -1) + ",";
+      for (const key of caches.keys()) {
+        if (key !== cacheKey && (key === sourceKey || key.startsWith(prefix))) {
+          caches.delete(key);
+          cacheDirty = true;
+        }
+      }
+      for (const key of failures.keys()) {
+        if (key !== cacheKey && (key === sourceKey || key.startsWith(prefix))) failures.delete(key);
+      }
+      if (cacheDirty) yield* schedulePersist;
+    }
+    return {
+      cacheKey: resolved.kind === "token" ? cacheKey : encodeCredentialKey(resolved),
+      credentialKeys: [cacheKey],
+      scan: ({ windowStartMs, retentionCutoffMs, awaitRefresh }: ScanInput) =>
+        accountSource(
+          resolved,
+          cacheKey,
+          authPath,
+          windowStartMs,
+          retentionCutoffMs,
+          awaitRefresh,
+        ).pipe(Effect.map((source) => (source === null ? [] : [source]))),
+    } satisfies PreparedScan;
+  });
+
   const prepare: CursorUsageAccounts["Service"]["prepare"] = Effect.fn(
     "CursorUsageAccounts.prepare",
   )(function* ({ instances, keychainUsageEnabled }) {
@@ -303,126 +416,30 @@ const make = Effect.gen(function* () {
           ),
     );
     const uniqueApiKeys = [...new Set(apiKeys.filter((apiKey) => apiKey !== undefined))];
-    if (uniqueApiKeys.length > 0) {
-      yield* ensureLoaded;
-      const keyed = yield* Effect.forEach(uniqueApiKeys, (apiKey) =>
-        digest.digest(Digest.sha256, new TextEncoder().encode(apiKey)).pipe(
-          // A fingerprint, so a replaced key never reads the previous account's cache.
-          Effect.map((hash) => ({ apiKey, credentialKey: `api-key:${Hex.encode(hash)}` })),
-        ),
-      );
-      if (generation === preparationGeneration) {
-        activeCredentialKeys = new Set(keyed.map(({ credentialKey }) => credentialKey));
-      }
-      return {
-        cacheKey: encodeCredentialKey(keyed.map(({ credentialKey }) => credentialKey).toSorted()),
-        scan: Effect.fn("CursorUsageAccounts.scanApiKeys")(function* ({
-          windowStartMs,
-          retentionCutoffMs,
-          awaitRefresh,
-        }: ScanInput) {
-          const sources = yield* Effect.forEach(keyed, ({ apiKey, credentialKey }) =>
-            accountSource(
-              { kind: "apiKey", apiKey },
-              credentialKey,
-              authPath,
-              windowStartMs,
-              retentionCutoffMs,
-              awaitRefresh,
-            ),
-          );
-          // Keys for one account share its source, and a repeated source would count sessions
-          // twice. A failed key can hold older records, so a current read wins, then a refresh
-          // the client must follow up on.
-          const rank = (source: ProviderUsageScan) =>
-            source.status === "ok" ? 2 : source.refreshing ? 1 : 0;
-          const byAccount = new Map<string, ProviderUsageScan>();
-          for (const source of sources) {
-            if (source === null) continue;
-            const kept = byAccount.get(source.dir);
-            if (kept === undefined || rank(source) > rank(kept)) byAccount.set(source.dir, source);
-          }
-          return [...byAccount.values()];
-        }),
-      };
-    }
-
-    const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-    const loginUnavailable =
-      Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) || credentialStore === "memory";
-    const useKeychain = platform === "darwin" && credentialStore !== "file";
-    if (useKeychain && !loginUnavailable && !keychainUsageEnabled) {
-      return {
-        cacheKey: "keychain-disabled",
-        scan: () =>
-          Effect.succeed([
-            {
-              dir: authPath,
-              volumeId: "",
-              files: null,
-              message: "Cursor account usage is off on this environment.",
-              action: "enableCursorKeychain",
-            },
-          ]),
-      };
-    }
-    if (loginUnavailable) {
-      return {
-        cacheKey: "login-unavailable",
-        scan: () =>
-          Effect.succeed([
-            {
-              dir: authPath,
-              files: null,
-              message: "Cursor account history needs a Cursor CLI login on this server.",
-            },
-          ]),
-      };
-    }
-    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
-    if (
-      useKeychain &&
-      !(yield* fileSystem.exists(path.dirname(authPath)).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return { cacheKey: "not-installed", scan: () => Effect.succeed([]) };
-    }
-    yield* ensureLoaded;
-    const sourceKey = useKeychain ? "keychain" : authPath;
-    const resolved = yield* accountReader.resolve(useKeychain ? { kind: "keychain" } : authPath);
-    const cacheKey =
-      resolved.kind === "token" ? encodeCredentialKey([sourceKey, resolved.fingerprint]) : "";
-    // A slower credential resolution keeps its request's snapshot, but cannot
-    // replace the identity observed by a newer preparation.
+    // An instance without a key runs on the CLI login, so that account still counts.
+    const usesLogin = uniqueApiKeys.length === 0 || apiKeys.includes(undefined);
+    const prepared: ReadonlyArray<PreparedScan> = [
+      ...(uniqueApiKeys.length > 0 ? [yield* prepareApiKeys(uniqueApiKeys, authPath)] : []),
+      ...(usesLogin ? [yield* prepareLogin(keychainUsageEnabled, authPath, generation)] : []),
+    ];
     if (generation === preparationGeneration) {
-      activeCredentialKeys = new Set([cacheKey]);
-      const prefix = encodeCredentialKey([sourceKey]).slice(0, -1) + ",";
-      for (const key of caches.keys()) {
-        if (key !== cacheKey && (key === sourceKey || key.startsWith(prefix))) {
-          caches.delete(key);
-          cacheDirty = true;
-        }
-      }
-      for (const key of failures.keys()) {
-        if (key !== cacheKey && (key === sourceKey || key.startsWith(prefix))) failures.delete(key);
-      }
-      if (cacheDirty) yield* schedulePersist;
+      activeCredentialKeys = new Set(prepared.flatMap(({ credentialKeys }) => credentialKeys));
     }
     return {
-      cacheKey: resolved.kind === "token" ? cacheKey : encodeCredentialKey(resolved),
-      scan: Effect.fn("CursorUsageAccounts.scanPrepared")(function* ({
-        windowStartMs,
-        retentionCutoffMs,
-        awaitRefresh,
-      }: ScanInput) {
-        const source = yield* accountSource(
-          resolved,
-          cacheKey,
-          authPath,
-          windowStartMs,
-          retentionCutoffMs,
-          awaitRefresh,
-        );
-        return source === null ? [] : [source];
+      cacheKey: encodeCredentialKey(prepared.map(({ cacheKey }) => cacheKey)),
+      scan: Effect.fn("CursorUsageAccounts.scanPrepared")(function* (input: ScanInput) {
+        const sources = (yield* Effect.forEach(prepared, ({ scan }) => scan(input))).flat();
+        // Credentials for one account share its source, and a repeated source would count
+        // sessions twice. A failed credential can hold older records, so a current read wins,
+        // then a refresh the client must follow up on.
+        const rank = (source: ProviderUsageScan) =>
+          source.status === "ok" ? 2 : source.refreshing ? 1 : 0;
+        const byAccount = new Map<string, ProviderUsageScan>();
+        for (const source of sources) {
+          const kept = byAccount.get(source.dir);
+          if (kept === undefined || rank(source) > rank(kept)) byAccount.set(source.dir, source);
+        }
+        return [...byAccount.values()];
       }),
     };
   });

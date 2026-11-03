@@ -2086,6 +2086,54 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("keeps the CLI login's account beside another instance's API key", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      yield* writeCursorLogin(home);
+      const login = makeFakeCursor();
+      login.state.events = [{ timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 }];
+      const work = makeFakeCursor();
+      work.state.accountKey = "account-b";
+      work.state.events = [{ timestampMs: CURSOR_NOW - 2 * HOUR_MS, outputTokens: 5 }];
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor((credential, sinceMs, untilMs) =>
+          (credential as { apiKey?: string }).apiKey === "work-key"
+            ? work.read(credential, sinceMs, untilMs)
+            : login.read(credential, sinceMs, untilMs),
+        );
+        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(
+          cursorSources(summary).map((source) => source.status),
+          ["ok", "ok"],
+        );
+        assert.strictEqual(totalOutputTokens(summary), 12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-login-and-key",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("cursor")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [],
+                },
+                [ProviderInstanceId.make("cursor-work")]: {
+                  driver: ProviderDriverKind.make("cursor"),
+                  environment: [{ name: "CURSOR_API_KEY", value: "work-key", sensitive: true }],
+                },
+              },
+            },
+            environment: {},
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live("reports one Cursor source when two API keys belong to the same account", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
