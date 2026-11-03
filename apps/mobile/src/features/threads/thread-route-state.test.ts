@@ -18,13 +18,26 @@ const { StackRouter, CommonActions, StackActions } = requireNavigation(
 };
 
 describe("draft thread handoff", () => {
-  it("submits in the existing route and stops suppressing the live thread selection", () => {
+  it.each(["Home", "PullRequest"])("submits in place and preserves Back to %s", (origin) => {
     const router = StackRouter({});
-    const options = { routeNames: ["Home", "Thread"], routeParamList: {}, routeGetIdList: {} };
+    const options = {
+      routeNames: ["Home", "Thread", "PullRequest"],
+      routeParamList: {},
+      routeGetIdList: {},
+    };
     const initial = router.getInitialState(options);
+    const parent =
+      origin === "Home"
+        ? initial
+        : router.getStateForAction(
+            initial,
+            StackActions.push("PullRequest", { number: 42 }),
+            options,
+          )!;
+    if (parent.stale !== false) throw new Error("Parent route was not initialized");
     const draft = router.getStateForAction(
-      initial,
-      CommonActions.navigate("Thread", { draft: { projectId: "project" } }),
+      parent,
+      StackActions.push("Thread", { draft: { projectId: "project" } }),
       options,
     )!;
     if (!draft || draft.stale !== false) throw new Error("Draft route was not initialized");
@@ -34,6 +47,7 @@ describe("draft thread handoff", () => {
       CommonActions.setParams(submittedThreadParams("environment", "thread")),
       options,
     )!;
+    if (submitted.stale !== false) throw new Error("Submitted route was not initialized");
     expect(submitted.routes.map((route) => route.key)).toEqual(
       draft.routes.map((route) => route.key),
     );
@@ -44,6 +58,9 @@ describe("draft thread handoff", () => {
       threadId: "thread",
     });
     expect(isDraftThreadRoute(submitted.routes.at(-1))).toBe(false);
+    expect(router.getStateForAction(submitted, CommonActions.goBack(), options)?.routes).toEqual(
+      parent.routes,
+    );
   });
 });
 
