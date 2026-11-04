@@ -229,6 +229,8 @@ export class ProjectMutationError extends Schema.TaggedError<ProjectMutationErro
   {
     commandId: CommandId,
     message: Schema.String,
+    /** Set when the workspace already belongs to another active project. */
+    conflictingProjectId: Schema.optional(ProjectId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
