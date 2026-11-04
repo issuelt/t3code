@@ -1,9 +1,10 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type {
-  PreparedVoiceTranscription,
-  VoiceTranscriber,
-  VoiceTranscript,
+import {
+  VoiceTranscriptionError,
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+  type VoiceTranscript,
 } from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
@@ -38,7 +39,7 @@ export type VoiceRecorderStatus = {
 
 export interface VoiceRecorder {
   readonly uri: string | null;
-  prepareToRecordAsync(): Promise<void>;
+  prepareToRecordAsync(signal?: AbortSignal): Promise<void>;
   record(options: { readonly forDuration: number }): void;
   stop(): Promise<void>;
 }
@@ -214,14 +215,18 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
-  return "Could not prepare voice transcription.";
+  return error instanceof VoiceTranscriptionError
+    ? error.message
+    : "Could not prepare voice transcription.";
 }
 
 function transcriptionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
-  return "Could not transcribe this recording.";
+  return error instanceof VoiceTranscriptionError
+    ? error.message
+    : "Could not transcribe this recording.";
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -308,7 +313,7 @@ export class VoiceInputController {
       await this.dependencies.configureRecording();
       this.recordingConfigured = true;
       if (!this.isCurrent(operationToken)) return;
-      await this.dependencies.recorder.prepareToRecordAsync();
+      await this.dependencies.recorder.prepareToRecordAsync(abortController.signal);
       if (!this.isCurrent(operationToken)) return;
       this.recordingUri = this.dependencies.recorder.uri;
       this.rememberRecordingUri(this.recordingUri);
@@ -501,12 +506,7 @@ export class VoiceInputController {
         ? { phase: "error", error, errorAction: "retry" }
         : { phase: "idle", error: null, errorAction: null },
     );
-    try {
-      await this.dependencies.recorder.stop();
-    } catch {
-    } finally {
-      await this.releaseResources();
-    }
+    await this.releaseResources();
   }
 
   private async releaseResources(): Promise<void> {
@@ -514,6 +514,11 @@ export class VoiceInputController {
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);
     } catch {}
+    if (this.recordingConfigured) {
+      try {
+        await this.dependencies.recorder.stop();
+      } catch {}
+    }
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {
