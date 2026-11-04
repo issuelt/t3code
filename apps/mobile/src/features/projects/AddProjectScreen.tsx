@@ -56,6 +56,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   ProjectId,
+  ProjectMutationError,
   resolveEnvironmentMachineKind,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -72,6 +73,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
@@ -128,6 +130,8 @@ function platformFromOs(os: string | null | undefined): string {
   if (os === "linux") return "Linux";
   return "";
 }
+
+const isProjectMutationError = Schema.is(ProjectMutationError);
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -733,12 +737,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       return;
     }
 
-    const existing = findExistingAddProject({
-      projects,
-      environmentId: environment.environmentId,
-      path: workspaceRoot,
-    });
-    if (existing) {
+    const openExisting = async (existing: (typeof projects)[number]) => {
       // Adding an archived project's folder again brings the project back.
       const unarchived =
         existing.archivedAt == null ||
@@ -760,6 +759,15 @@ function useCreateProject(environment: EnvironmentOption | null) {
         },
         originRoute,
       );
+    };
+
+    const existing = findExistingAddProject({
+      projects,
+      environmentId: environment.environmentId,
+      path: workspaceRoot,
+    });
+    if (existing) {
+      await openExisting(existing);
       return;
     }
 
@@ -774,6 +782,19 @@ function useCreateProject(environment: EnvironmentOption | null) {
       input: command,
     });
     if (AsyncResult.isFailure(result)) {
+      // The server can know an owner this device's path check missed.
+      const failure = Cause.squash(result.cause);
+      const conflicting = isProjectMutationError(failure)
+        ? projects.find(
+            (project) =>
+              project.environmentId === environment.environmentId &&
+              project.id === failure.conflictingProjectId,
+          )
+        : undefined;
+      if (conflicting) {
+        await openExisting(conflicting);
+        return;
+      }
       return result;
     }
     // A successful command can precede its project in the client store. The

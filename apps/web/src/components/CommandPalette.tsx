@@ -47,6 +47,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  ProjectMutationError,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
@@ -266,7 +267,9 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
+import * as Schema from "effect/Schema";
 
+const isProjectMutationError = Schema.is(ProjectMutationError);
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
@@ -1833,11 +1836,7 @@ function OpenCommandPaletteDialog(props: {
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
 
-    const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
-      cwd,
-    );
-    if (existing) {
+    const openExistingProject = async (existing: (typeof projects)[number]) => {
       // Adding an archived project's folder again brings the project back.
       if (existing.archivedAt != null) {
         void updateProject({
@@ -1874,6 +1873,14 @@ function OpenCommandPaletteDialog(props: {
         }
       }
       setOpen(false);
+    };
+
+    const environmentProjects = projects.filter(
+      (project) => project.environmentId === input.environmentId,
+    );
+    const existing = findProjectByPath(environmentProjects, cwd);
+    if (existing) {
+      await openExistingProject(existing);
       return;
     }
 
@@ -1901,6 +1908,14 @@ function OpenCommandPaletteDialog(props: {
     if (createResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(createResult)) {
         const error = squashAtomCommandFailure(createResult);
+        // The server can know an owner this client's path check missed.
+        const conflicting = isProjectMutationError(error)
+          ? environmentProjects.find((project) => project.id === error.conflictingProjectId)
+          : undefined;
+        if (conflicting) {
+          await openExistingProject(conflicting);
+          return;
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",

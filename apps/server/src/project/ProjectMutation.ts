@@ -1,8 +1,32 @@
-import { type ProjectMutation } from "@t3tools/contracts";
+import { type CommandId, type ProjectMutation, ProjectMutationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { type ServerRuntimeStartupError } from "../serverRuntimeStartup.ts";
 import { type ProjectCloneTracker } from "./ProjectCloneTracker.ts";
-import { type ProjectService } from "./ProjectService.ts";
+import { type ProjectService, type ProjectServiceError } from "./ProjectService.ts";
+
+/** The client-facing error for a failed mutation. Only domain rejections expose their detail. */
+export function toProjectMutationError(
+  commandId: CommandId,
+  cause: ProjectServiceError | ServerRuntimeStartupError,
+): ProjectMutationError {
+  switch (cause._tag) {
+    case "ProjectConflictError":
+      return new ProjectMutationError({
+        commandId,
+        message: `${cause.workspaceRoot} is already added as a project.`,
+        conflictingProjectId: cause.conflictingProjectId,
+        cause,
+      });
+    case "ProjectNotFoundError":
+      return new ProjectMutationError({ commandId, message: "The project was not found.", cause });
+    case "ProjectNotEmptyError":
+      return new ProjectMutationError({ commandId, message: cause.message, cause });
+    case "ProjectOperationError":
+    case "ServerRuntimeStartupError":
+      return new ProjectMutationError({ commandId, message: "Failed to mutate project.", cause });
+  }
+}
 
 type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
 
