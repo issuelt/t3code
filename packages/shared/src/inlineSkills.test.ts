@@ -84,3 +84,27 @@ describe("formatProviderSkillDisplayName", () => {
     );
   });
 });
+
+describe("matchInlineSkills", () => {
+  it("preserves offsets, skill identity, first-name precedence, and unknown tokens", () => {
+    const first = { name: "design", displayName: "Design" };
+    const duplicate = { name: "design", displayName: "Other design" };
+    const namespaced = { name: "pdf:pdf" };
+    const matches = [
+      ...matchInlineSkills("Use $design then $missing and $pdf:pdf, $pdf:pdf $design", [
+        first,
+        duplicate,
+        namespaced,
+      ]),
+    ];
+    expect(matches).toEqual([
+      { start: 4, end: 11, skill: first, rawText: "$design" },
+      { start: 30, end: 38, skill: namespaced, rawText: "$pdf:pdf" },
+      { start: 40, end: 48, skill: namespaced, rawText: "$pdf:pdf" },
+      { start: 49, end: 56, skill: first, rawText: "$design" },
+    ]);
+    expect(matches[0]?.skill).toBe(first);
+    expect(matches[1]?.skill).toBe(namespaced);
+    expect(matches[3]?.skill).toBe(first);
+  });
+});

@@ -64,6 +64,7 @@ import {
   ThreadId,
   isHomeThreadId,
   isOrchestrationV2WorkActive,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
@@ -355,14 +356,22 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
 export function providerCapabilities(
   providers: ReadonlyArray<ServerProvider>,
   orchestrationCapableInstanceIds: ReadonlySet<string>,
-  settings: Pick<ServerSettingsValue, "providerModelPreferences" | "favorites">,
+  settings: Pick<
+    ServerSettingsValue,
+    "providerModelPreferences" | "favorites" | "providerInstances" | "projectSettingsOverrides"
+  >,
   input: OrchestratorMcpCapabilitiesInput = {},
   inherited?: ModelSelection,
+  callerProjectId?: ProjectId | null,
 ): OrchestratorMcpCapabilitiesResult["providers"] {
   const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
   return providers.map((provider) => {
+    // Snapshots list instances any project enables; delegate_task checks the caller's project.
+    const enabledForCaller =
+      callerProjectId === undefined ||
+      resolveProjectProviderInstanceEnabled(settings, callerProjectId, provider.instanceId);
     const constraints = providerConstraints(
-      provider,
+      enabledForCaller ? provider : { ...provider, enabled: false },
       orchestrationCapableInstanceIds.has(provider.instanceId),
     );
     const { listed, omitted } = listCapabilityModels({
@@ -2394,6 +2403,7 @@ const make = Effect.gen(function* () {
           settings,
           input,
           inherited,
+          parent?.thread.projectId,
         ),
         features: {
           appOwnedSubagents: true,
