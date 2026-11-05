@@ -27,6 +27,7 @@ function homeTopStatus(
   status: SidebarThreadStatus,
   isUnread: boolean,
 ): SidebarV2TopStatusKind | null {
+  if (status === "preparing") return "working";
   if (status !== "ready") return status;
   return isUnread ? "done" : null;
 }
