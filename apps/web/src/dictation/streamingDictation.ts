@@ -45,7 +45,12 @@ type DictationSession = {
 function rejectOnAbort(signal: AbortSignal): Promise<never> {
   return new Promise((_resolve, reject) => {
     const abort = () =>
-      reject(new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled."));
+      reject(
+        new VoiceTranscriptionError({
+          code: "cancelled",
+          message: "Voice transcription was cancelled.",
+        }),
+      );
     if (signal.aborted) abort();
     else signal.addEventListener("abort", abort, { once: true });
   });
@@ -165,15 +170,22 @@ export function createStreamingDictation(input: {
     prepare: async ({ signal }) => {
       const current = session;
       if (current === null) {
-        throw new VoiceTranscriptionError("unavailable", "No environment can transcribe.");
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message: "No environment can transcribe.",
+        });
       }
       // A start that never answers must not hold dictation open after a cancel.
       const failure = await Promise.race([current.ready, current.lost, rejectOnAbort(signal)]);
-      if (failure !== null) throw new VoiceTranscriptionError("preparation-failed", failure);
+      if (failure !== null)
+        throw new VoiceTranscriptionError({ code: "preparation-failed", message: failure });
       const sessionId = current.sessionId;
       if (signal.aborted || sessionId === null) close(current);
       if (sessionId === null) {
-        throw new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled.");
+        throw new VoiceTranscriptionError({
+          code: "cancelled",
+          message: "Voice transcription was cancelled.",
+        });
       }
       throwIfVoiceTranscriptionAborted(signal);
       signal.addEventListener("abort", () => close(current), { once: true });
@@ -189,12 +201,15 @@ export function createStreamingDictation(input: {
               input: { sessionId, chunkCount: current.chunks },
             }),
             current.lost.then((message) => {
-              throw new VoiceTranscriptionError("transcription-failed", message);
+              throw new VoiceTranscriptionError({ code: "transcription-failed", message });
             }),
             rejectOnAbort(options.signal),
           ]);
           if (finished._tag === "Failure") {
-            throw new VoiceTranscriptionError("transcription-failed", failureMessage(finished));
+            throw new VoiceTranscriptionError({
+              code: "transcription-failed",
+              message: failureMessage(finished),
+            });
           }
           current.open = false;
           return { ...finished.value, text: input.rewriteTranscript(finished.value.text) };
