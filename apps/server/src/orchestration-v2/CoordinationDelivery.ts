@@ -1,14 +1,15 @@
-import type {
-  MessageId,
-  OrchestrationV2ConversationMessage,
-  OrchestrationV2Run,
+import {
+  type MessageId,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2Run,
   RunId,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
-export class CoordinationResultDeferred extends Data.TaggedError("CoordinationResultDeferred")<{
-  readonly sourceRunId: RunId;
-}> {}
+export class CoordinationResultDeferred extends Schema.TaggedError<CoordinationResultDeferred>()(
+  "CoordinationResultDeferred",
+  { sourceRunId: RunId },
+) {}
 
 /**
  * A restart cuts a run and continues it as a new run. The cut run's inputs belong to

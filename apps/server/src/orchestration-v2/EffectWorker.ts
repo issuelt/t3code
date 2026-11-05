@@ -32,6 +32,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { CoordinationResultDeferred } from "./CoordinationDelivery.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
+const isCoordinationResultDeferred = Schema.is(CoordinationResultDeferred);
+
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
   {
@@ -869,7 +871,7 @@ export const layerWithOptions = (
             Option.isSome(failure) &&
             ((isMcpFailure(failure.value.cause) &&
               failure.value.cause.code === "environment_unavailable") ||
-              failure.value.cause instanceof CoordinationResultDeferred);
+              isCoordinationResultDeferred(failure.value.cause));
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
