@@ -20,8 +20,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as FleetBroker from "../home/FleetBroker.ts";
 import * as ServerConfig from "../config.ts";
 import { notHomeLayer } from "../home/HomeTestkit.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -274,6 +276,7 @@ const mcpClient = McpSchema.McpServerClient.of({
  */
 const laptopTools = (
   linking: Context.Context<PeerLinks.PeerLinks | import("./PeerMcpClient.ts").PeerMcpClient>,
+  desktop: Layer.Layer<FleetBroker.FleetBroker> = Layer.mock(FleetBroker.FleetBroker)({}),
 ) =>
   Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
@@ -281,7 +284,11 @@ const laptopTools = (
     McpHttpServer.layerThreadToolkit,
   ).pipe(
     Layer.provide(
-      Layer.mergeAll(notHomeLayer, DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      Layer.mergeAll(
+        notHomeLayer,
+        desktop,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
     ),
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
@@ -337,63 +344,66 @@ const laptopTools = (
     ),
   );
 
-const makeLaptop = Effect.gen(function* () {
-  const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-  const here = yield* Layer.build(
-    laptopTools(linking).pipe(
-      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-      Layer.fresh,
-    ),
-  );
-  const server = Context.get(here, McpServer.McpServer);
-  const scopeOf = (
-    caller: string,
-    capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["orchestration"]),
-  ): McpInvocationContext.McpInvocationScope => ({
-    environmentId: laptop.environmentId,
-    requestNamespace: `provider-session:${caller}`,
-    thread: {
-      threadId: ThreadId.make(caller),
-      providerSessionId: `provider-session:${caller}`,
-      providerInstanceId: ProviderInstanceId.make("codex"),
-    },
-    client: undefined,
-    capabilities,
-    issuedAt: 1,
-  });
-  const call = (
-    caller: string,
-    name: string,
-    args: Record<string, unknown>,
-    capabilities?: ReadonlySet<McpInvocationContext.McpCapability>,
-  ) =>
-    server
-      .callTool({ name, arguments: args })
-      .pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          scopeOf(caller, capabilities),
-        ),
+const makeLaptopWithDesktop = (desktop?: Layer.Layer<FleetBroker.FleetBroker>) =>
+  Effect.gen(function* () {
+    const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+    const here = yield* Layer.build(
+      laptopTools(linking, desktop).pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.fresh,
+      ),
+    );
+    const server = Context.get(here, McpServer.McpServer);
+    const scopeOf = (
+      caller: string,
+      capabilities: ReadonlySet<McpInvocationContext.McpCapability> = new Set(["orchestration"]),
+    ): McpInvocationContext.McpInvocationScope => ({
+      environmentId: laptop.environmentId,
+      requestNamespace: `provider-session:${caller}`,
+      thread: {
+        threadId: ThreadId.make(caller),
+        providerSessionId: `provider-session:${caller}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities,
+      issuedAt: 1,
+    });
+    const call = (
+      caller: string,
+      name: string,
+      args: Record<string, unknown>,
+      capabilities?: ReadonlySet<McpInvocationContext.McpCapability>,
+    ) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            scopeOf(caller, capabilities),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, mcpClient),
+        );
+    const callClient = (
+      name: string,
+      args: Record<string, unknown>,
+      access: "read-only" | "full-access",
+    ) =>
+      server.callTool({ name, arguments: args }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          environmentId: laptop.environmentId,
+          requestNamespace: "client:external",
+          thread: undefined,
+          client: { sessionId: "external", label: "External", access },
+          capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
+          issuedAt: 1,
+        }),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  const callClient = (
-    name: string,
-    args: Record<string, unknown>,
-    access: "read-only" | "full-access",
-  ) =>
-    server.callTool({ name, arguments: args }).pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, {
-        environmentId: laptop.environmentId,
-        requestNamespace: "client:external",
-        thread: undefined,
-        client: { sessionId: "external", label: "External", access },
-        capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
-        issuedAt: 1,
-      }),
-      Effect.provideService(McpSchema.McpServerClient, mcpClient),
-    );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call, callClient };
-});
+    return { links: Context.get(linking, PeerLinks.PeerLinks), call, callClient };
+  });
+
+const makeLaptop = makeLaptopWithDesktop();
 
 const failureOf = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
@@ -921,4 +931,27 @@ it.live(
         expect((yield* Ref.get(seen)).sends).toHaveLength(1);
       }),
     ).pipe(Effect.provide(layerHttpsTest)),
+);
+
+it.effect("ordinary sessions discover an existing desktop connection without peer pairing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const desktop = yield* FleetBroker.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.build);
+      const broker = Context.get(desktop, FleetBroker.FleetBroker);
+      yield* Stream.toPull(
+        yield* broker.connect({
+          clientId: "desktop",
+          environments: [{ environmentId: box.environmentId, label: "Box", connected: true }],
+        }),
+      );
+      const a = yield* makeLaptopWithDesktop(Layer.succeedContext(desktop));
+      for (const caller of ["thread:project-one-codex", "thread:project-two-native"]) {
+        const listed = yield* a.call(caller, "t3_environment_links", {});
+        expect(listed.structuredContent).toMatchObject({
+          links: [{ environmentId: box.environmentId, source: "desktop" }],
+        });
+      }
+      expect(yield* a.links.list).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
