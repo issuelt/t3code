@@ -1,12 +1,13 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { Platform } from "react-native";
-import { useSelectWorkspaceDetail } from "../features/workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../features/layout/workspace/useSelectWorkspaceDetail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
@@ -24,10 +25,11 @@ export function useNavigateToPullRequest(options?: {
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const params = nativePullRequestDestination(url, context, projects, (environmentId) =>
+    const destination = nativePullRequestDestination(url, context, projects, (environmentId) =>
       serverConfigs.has(environmentId),
     );
-    if (!params) return tryOpenExternalUrl(url, "pull-request");
+    if (!destination) return tryOpenExternalUrl(url, "pull-request");
+    const params = withKnownPullRequestSummary(destination);
     // Contextual links open over the current page, so Back returns to the chat they came from.
     if (Platform.OS === "android" && mode === "workspace")
       selectDetail({ name: "PullRequest", params });

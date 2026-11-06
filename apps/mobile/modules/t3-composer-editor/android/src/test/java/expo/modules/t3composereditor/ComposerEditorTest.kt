@@ -190,6 +190,15 @@ class ComposerEditorTest {
     assertNull(intercepted)
   }
 
+  @Test
+  fun autofillCannotWriteIntoTheDraft() {
+    assertEquals(
+      "Autofill services such as SMS verification codes must not target the composer",
+      View.AUTOFILL_TYPE_NONE,
+      editor.autofillType,
+    )
+  }
+
   private fun dropEditor(): SelectionAwareEditText {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     return SelectionAwareEditText(activity).apply {

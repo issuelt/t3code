@@ -21,6 +21,7 @@ export function toProjectMutationError(
     case "ProjectNotFoundError":
       return new ProjectMutationError({ commandId, message: "The project was not found.", cause });
     case "ProjectNotEmptyError":
+    case "ProjectInvalidError":
       return new ProjectMutationError({ commandId, message: cause.message, cause });
     case "ProjectOperationError":
     case "ServerRuntimeStartupError":

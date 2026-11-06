@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
-} from "../features/workspace/android-workspace-tabs";
+} from "../features/layout/workspace/android-workspace-tabs";
 import {
   linkedThreadStep,
   parentThreadIsBelow,
@@ -43,14 +43,14 @@ vi.mock("react-native", () => ({
     },
   },
 }));
-vi.mock("../features/workspace/WorkspaceTabsContext", () => ({
+vi.mock("../features/layout/workspace/WorkspaceTabsContext", () => ({
   useWorkspaceTabs: () => ({ dispatch: selectTab }),
 }));
 vi.mock("../state/entities", () => ({
   useThreadShell: () => ({ projectId: "project-a" }),
   useProjects: () => [],
 }));
-vi.mock("../features/workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../features/layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => (detail: typeof pullRequest) => {
     current = apply(
       current,
@@ -64,6 +64,9 @@ vi.mock("../features/workspace/useSelectWorkspaceDetail", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: { get: () => new Map() } }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/use-thread-pr", () => ({
+  withKnownPullRequestSummary: <T>(destination: T) => destination,
+}));
 vi.mock("./pullRequestNavigation", () => ({
   nativePullRequestDestination: (_url: string, context: object) => ({
     ...pullRequest.params,
@@ -76,7 +79,7 @@ import { useOpenPullRequest } from "../native/useOpenPullRequest";
 import {
   useAndroidWorkspaceBack,
   useWorkspaceListNavigation,
-} from "../features/workspace/useAndroidWorkspaceNavigation";
+} from "../features/layout/workspace/useAndroidWorkspaceNavigation";
 
 const { CommonActions, StackActions, StackRouter } = loadRouters();
 const router = StackRouter({});
