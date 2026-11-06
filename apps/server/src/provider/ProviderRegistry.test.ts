@@ -1161,10 +1161,13 @@ it.layer(
       );
     });
 
-    it.effect.each(["replay", "in-flight missing", "in-flight installed"] as const)(
+    it.effect.each(["replay", "in-flight missing", "in-flight installed", "launcher"] as const)(
       "recovers a copied driver environment after late PATH (%s)",
       (mode) =>
         Effect.gen(function* () {
+          // "launcher": the CLI is found on the early PATH, but its check fails until the late
+          // PATH brings the interpreter it needs, like an npm launcher that runs node.
+          const replay = mode === "replay" || mode === "launcher";
           const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
           const environment = providerHostEnvironment(
             { organization: "PATH test", lockedSettings: [] },
@@ -1190,8 +1193,9 @@ it.layer(
               Effect.gen(function* () {
                 const copied = { ...environment };
                 paths.push(copied.PATH);
-                const installed =
-                  mode === "in-flight installed" || copied.PATH?.includes("/late/bin") === true;
+                const late = copied.PATH?.includes("/late/bin") === true;
+                const installed = mode === "in-flight installed" || mode === "launcher" || late;
+                const ready = mode === "launcher" ? late : installed;
                 const snapshot: ServerProvider = {
                   instanceId,
                   driver: driverKind,
@@ -1222,7 +1226,7 @@ it.layer(
                       ),
                     getSnapshot: Ref.get(current),
                     refresh: Effect.gen(function* () {
-                      if (first && mode !== "replay") {
+                      if (first && !replay) {
                         first = false;
                         yield* Deferred.succeed(entered, undefined);
                         yield* Deferred.await(release);
@@ -1230,7 +1234,7 @@ it.layer(
                       const checked = {
                         ...snapshot,
                         installed,
-                        status: installed ? ("ready" as const) : ("error" as const),
+                        status: ready ? ("ready" as const) : ("error" as const),
                       };
                       yield* Ref.set(current, checked);
                       return checked;
@@ -1249,8 +1253,7 @@ it.layer(
           }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            const running =
-              mode === "replay" ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
+            const running = replay ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
             if (running) yield* Deferred.await(entered);
             yield* updates.apply({
               version: 1,
@@ -1260,7 +1263,7 @@ it.layer(
               environment: { PATH: "/early/bin:/late/bin" },
             });
             expect(paths).toEqual(["/early/bin"]);
-            if (mode === "replay") {
+            if (replay) {
               yield* Layer.build(
                 ProviderHostPathWatcher.layer.pipe(
                   Layer.provide(
@@ -1286,10 +1289,11 @@ it.layer(
             yield* Deferred.succeed(release, undefined);
             if (running) yield* Fiber.join(running);
             yield* Deferred.await(finished);
-            expect(
-              (yield* registry.getProviders).find((row) => row.instanceId === instanceId)
-                ?.installed,
-            ).toBe(true);
+            const row = (yield* registry.getProviders).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            expect(row?.installed).toBe(true);
+            expect(row?.status).toBe("ready");
             expect(paths).toEqual(
               mode === "in-flight installed"
                 ? ["/early/bin"]
