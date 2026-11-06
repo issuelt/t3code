@@ -44,6 +44,16 @@
       "number": 19273,
       "takenSha": "b8d5c37cf59f7989edaf14dea2822f28ae841fdb",
       "reason": "Local-model composer dictation"
+    },
+    {
+      "number": 28719,
+      "takenSha": "8dc3e6ff446dc1f1a714288091249ee86c91735b",
+      "reason": "Desktop cache miss lets the server hydrate PATH before provider checks"
+    },
+    {
+      "number": 31169,
+      "takenSha": "afede16a7a38b21be21ee696a1c3027f6f6b73e7",
+      "reason": "Providers re-check when a shell PATH arrives after startup; fork also re-checks failed checks"
     }
   ]
 }
