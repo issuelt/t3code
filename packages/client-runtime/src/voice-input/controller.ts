@@ -556,8 +556,9 @@ export class VoiceInputController {
       const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
       let transcript: string;
-      // An engine that detects the language itself reports it with the transcript.
-      let transcriptLocale = transcription.locale;
+      // Read after transcription: preparation can still settle the language, and an engine that
+      // detects it itself reports it with the transcript.
+      let transcriptLocale: string;
       try {
         const live = this.liveTranscription ? await this.liveTranscription : null;
         if (live && "error" in live) throw live.error;
@@ -570,6 +571,7 @@ export class VoiceInputController {
           ));
         if (typeof result === "string") {
           transcript = result;
+          transcriptLocale = transcription.locale;
         } else {
           transcript = result.text;
           transcriptLocale = result.locale;

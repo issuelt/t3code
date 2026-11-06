@@ -1,4 +1,5 @@
 import * as Dialog from "./ui/Dialog";
+import { Platform } from "react-native";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -175,9 +176,10 @@ export function ComposerEditor({
   );
   return (
     <>
-      {/* Reset revision history with the recreated iOS view without aborting context imports. */}
+      {/* Reset revision history with the recreated iOS view without aborting context imports.
+          Android has no reset-generation check, so a new draft remounts its editor. */}
       <NativeComposerEditor
-        key={hidden ? "hidden" : "visible"}
+        key={`${hidden ? "hidden" : "visible"}${Platform.OS === "android" ? `:${draftKey ?? "no-draft"}` : ""}`}
         {...props}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
