@@ -1000,6 +1000,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
             Effect.as(references.map(() => "sk-live")),
           ),
         invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
       });
       const { registry, mutator } = yield* makeProviderInstanceRegistry({
         drivers: [driver],
