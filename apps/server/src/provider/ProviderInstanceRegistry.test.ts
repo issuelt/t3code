@@ -32,6 +32,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -942,6 +943,73 @@ describe("ProviderInstanceRegistry secret environment", () => {
         "sk-live",
         "sk-rotated",
       ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("does not rebuild an instance replaced after selection", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+      const selected = yield* registry.listInstances;
+      fixture.vault.set(secret.reference, "sk-rotated");
+      yield* mutator.reloadSecrets();
+      const replacement = yield* registry.getInstance(instanceId);
+      expect(replacement).not.toBe(selected[0]);
+      yield* mutator.rebuild(selected);
+      expect(yield* registry.getInstance(instanceId)).toBe(replacement);
+      expect(fixture.created).toHaveLength(2);
+      yield* mutator.rebuild([replacement!]);
+      expect(fixture.created).toHaveLength(3);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("keeps a rebuilt instance live while another instance's secret read waits", () => {
+    const plainId = ProviderInstanceId.make("fake_plain");
+    const created: Array<ProviderInstanceId> = [];
+    return Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const readStarts = yield* Queue.unbounded<void>();
+      const driver: AnyProviderDriver = {
+        driverKind,
+        metadata: { displayName: "Fake" },
+        configSchema: Schema.Unknown,
+        defaultConfig: () => ({}),
+        create: (input) =>
+          Effect.sync(() => {
+            created.push(input.instanceId);
+            return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          }),
+      };
+      const resolver = Layer.succeed(SecretResolver.SecretResolver, {
+        read: (references) =>
+          Queue.offer(readStarts, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.as(references.map(() => "sk-live")),
+          ),
+        invalidate: () => Effect.void,
+      });
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: {
+          [instanceId]: {
+            driver: driverKind,
+            config: {},
+            environment: [{ name: "OPENAI_API_KEY", value: secret, sensitive: true }],
+          },
+          [plainId]: { driver: driverKind, config: {} },
+        },
+      }).pipe(Effect.provide(resolver));
+      const plain = yield* registry.getInstance(plainId);
+      // Startup's read and the rebuild's read both wait on the vault.
+      const rebuilding = yield* mutator.rebuild([plain!]).pipe(Effect.forkScoped);
+      yield* Queue.take(readStarts);
+      yield* Queue.take(readStarts);
+      expect(yield* registry.getInstance(plainId)).toBe(plain);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(rebuilding);
+      expect(yield* registry.getInstance(plainId)).not.toBe(plain);
+      expect(created.filter((id) => id === plainId)).toHaveLength(2);
     }).pipe(Effect.scoped);
   });
 

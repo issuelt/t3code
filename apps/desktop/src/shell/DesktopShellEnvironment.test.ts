@@ -182,6 +182,10 @@ describe("DesktopShellEnvironment", () => {
             const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
             yield* Deferred.await(started);
             assert.isDefined(startup.pollUnsafe());
+            assert.isFalse(
+              yield* Fiber.join(startup),
+              "nothing was installed yet, so the server must hydrate PATH itself",
+            );
             yield* Deferred.succeed(release, undefined);
             return yield* service.awaitDiscovery;
           }),
@@ -249,7 +253,7 @@ describe("DesktopShellEnvironment", () => {
           }),
           use: (service) =>
             Effect.gen(function* () {
-              yield* service.installIntoProcess;
+              assert.isTrue(yield* service.installIntoProcess);
               yield* service.installIntoProcess;
               assert.equal(env.PATH, "/old/bin:/usr/bin:/launcher/bin");
               assert.equal(env.SSH_AUTH_SOCK, "/current-session.sock");

@@ -74,6 +74,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as PromptSuggestions from "./provider/PromptSuggestions.ts";
+import * as ProviderHostPathWatcher from "./provider/ProviderHostPathWatcher.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProviderLoginManager from "./provider/ProviderLoginManager.ts";
@@ -652,6 +653,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AccountFallbackWorkerLive,
   AgentAwarenessRelay.layer,
+  ProviderHostPathWatcher.layer.pipe(Layer.provide(layerDesktopTelemetryReceiver)),
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
