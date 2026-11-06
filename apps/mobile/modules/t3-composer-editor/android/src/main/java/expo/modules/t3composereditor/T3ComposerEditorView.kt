@@ -12,6 +12,7 @@ import android.os.Build
 import android.text.Editable
 import android.text.InputType
 import android.text.InputFilter
+import android.text.Layout
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -24,6 +25,7 @@ import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.MotionEvent
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
@@ -35,6 +37,7 @@ import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import org.json.JSONObject
+import kotlin.math.ceil
 import kotlin.math.max
 
 class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
@@ -450,7 +453,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     // wrapping it, so getLineMax leaves it out.
     val layout = editor.layout
     val contentHeight = layout?.height ?: editor.measuredHeight
-    val contentWidth = if (layout?.lineCount == 1) layout.getLineMax(0).toInt() else 0
+    val contentWidth = singleLineContentWidth(layout)
     if (contentHeight == lastContentHeight && contentWidth == lastContentWidth) return
     lastContentHeight = contentHeight
     lastContentWidth = contentWidth
@@ -511,6 +514,11 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       fallback
     }
 }
+
+// Round up: a truncated width can match a slot the line overflows, and the composer
+// then flips between its compact and expanded rows.
+internal fun singleLineContentWidth(layout: Layout?): Int =
+  if (layout?.lineCount == 1) ceil(layout.getLineMax(0)).toInt() else 0
 
 private fun Int.withAlpha(alpha: Int): Int = (this and 0x00FFFFFF) or (alpha shl 24)
 
@@ -607,6 +615,9 @@ internal class SelectionAwareEditText(
   var clipboardFragment = ""
   var returnSends = true
   var submitEnabled = false
+
+  // Keeps autofill services such as SMS verification codes from writing into the draft.
+  override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
 
   /**
    * Editable TextView hints do not ellipsize, so long placeholders wrap and grow the composer.
