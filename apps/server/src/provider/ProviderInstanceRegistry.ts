@@ -505,20 +505,41 @@ export const makeProviderInstanceRegistry = Effect.fn(
     );
 
   const rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"] =
-    Effect.fn("ProviderInstanceRegistry.rebuild")(
-      function* (instances) {
-        const live = yield* Ref.get(entries);
-        const ids = new Set(
-          instances
-            .filter((instance) => live.get(instance.instanceId)?.instance === instance)
-            .map((instance) => instance.instanceId),
-        );
-        if (ids.size === 0) return;
-        yield* reconcileWithR(yield* Ref.get(configMapRef), ids);
-      },
-      (effect) => semaphore.withPermits(1)(effect),
-      Effect.provideContext(driverContext),
-    );
+    Effect.fn("ProviderInstanceRegistry.rebuild")(function* (instances) {
+      // Reconcile also builds every pending instance, so read the secrets it needs first and
+      // outside the lock, as startup does; a vault prompt then holds neither the lock nor the
+      // selected instances, which stay live until the cached read lets them rebuild at once.
+      const configMap = yield* Ref.get(configMapRef);
+      const live = yield* Ref.get(entries);
+      const selected = new Set(instances.map((instance) => instance.instanceId));
+      const references = yield* Effect.filter(
+        Object.entries(configMap),
+        ([rawInstanceId, entry]) => {
+          const id = ProviderInstanceId.make(rawInstanceId);
+          return (selected.has(id) || !live.has(id)) &&
+            secretReferencesOf(driversById, entry).length > 0
+            ? isEntryEnabled(driversById, entry)
+            : Effect.succeed(false);
+        },
+      ).pipe(
+        Effect.map((targets) =>
+          targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry)),
+        ),
+      );
+      if (references.length > 0) yield* (yield* SecretResolver.SecretResolver).read(references);
+      yield* semaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(entries);
+          const ids = new Set(
+            instances
+              .filter((instance) => current.get(instance.instanceId)?.instance === instance)
+              .map((instance) => instance.instanceId),
+          );
+          if (ids.size === 0) return;
+          yield* reconcileWithR(yield* Ref.get(configMapRef), ids);
+        }),
+      );
+    }, Effect.provideContext(driverContext));
 
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
