@@ -242,31 +242,15 @@ jobs:
               'openjdk-17-jre-headless=17.0.20.1+1-1~24.04' 'openjdk-17-jdk-headless=17.0.20.1+1-1~24.04'
             echo 'JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> "$GITHUB_ENV"
             echo '/usr/lib/jvm/java-17-openjdk-amd64/bin' >> "$GITHUB_PATH"
-            sdk="$PROOF_ROOT/tools/android-sdk"
-            mkdir -p "$sdk/licenses"
-            # Archive revisions and checksums match the provisioned guest SDK.
-            while read -r destination archive checksum; do
-              curl --fail --silent --show-error --location "https://dl.google.com/android/repository/$archive" -o sdk.zip
-              echo "$checksum  sdk.zip" | sha1sum --check
-              mkdir unpack
-              unzip -q sdk.zip -d unpack
-              mkdir -p "$(dirname "$sdk/$destination")"
-              if [[ -f unpack/source.properties ]]; then
-                mv unpack "$sdk/$destination"
-              else
-                mapfile -t roots < <(find unpack -mindepth 1 -maxdepth 1 -type d)
-                [[ ${#roots[@]} == 1 ]]
-                mv "${roots[0]}" "$sdk/$destination"
-                rmdir unpack
-              fi
-            done <<'SDK'
-            platforms/android-37.0 platform-37.0_r02.zip ed8ebf7f8822a4de5686d427f237d2fa30ff7410
-            build-tools/36.0.0 build-tools_r36_linux.zip b0b6376977657e8ad9b969bacf4093601da2c6fb
-            build-tools/37.0.0 build-tools_r37_linux.zip 70954e99f4c3d9d46ee70fa32624672fe7cd6ebe
-            ndk/27.1.12297006 android-ndk-r27b-linux.zip 6fc476b2e57d7c01ac0c95817746b927035b9749
-            cmake/3.22.1 cmake-3.22.1-linux.zip fd0a48b4a758310df8c7aa51f59840ed48fe7ed8
-          SDK
-            printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > "$sdk/licenses/android-sdk-license"
+            # Raw archives lack the package metadata Gradle uses to find android-37.0, so install
+            # the pinned packages with the image's sdkmanager, which writes it.
+            sdk=/usr/local/lib/android/sdk
+            yes | sudo "$sdk/cmdline-tools/latest/bin/sdkmanager" --install \
+              'platforms;android-37.0' 'build-tools;36.0.0' 'build-tools;37.0.0' \
+              'ndk;27.1.12297006' 'cmake;3.22.1' | tee "$PROOF_ROOT/tools/sdkmanager.log" > /dev/null
+            for package in platforms/android-37.0 build-tools/36.0.0 build-tools/37.0.0 ndk/27.1.12297006 cmake/3.22.1; do
+              test -f "$sdk/$package/source.properties"
+            done
             echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
             echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
           fi
