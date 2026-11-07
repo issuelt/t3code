@@ -58,7 +58,7 @@ import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
-  isHomeDeliveredMessage,
+  isAgentDeliveredMessage,
   type ScheduledTaskId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -1377,6 +1377,7 @@ function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
   readonly fallbackLabel: string;
+  readonly variant: "work" | "bubble";
   readonly summary: string;
   /** Shown one per line instead of `summary`, such as each event of a folded watch report. */
   readonly summaryLines?: ReadonlyArray<string> | undefined;
@@ -1409,25 +1410,41 @@ function AgentMessageFoldHeader(props: {
         name="bubble.left.and.bubble.right"
         size={14}
         weight="medium"
-        tintColorClassName="accent-user-bubble-foreground-muted"
+        tintColor={props.iconSubtleColor}
         type="monochrome"
       />
       <Text
         numberOfLines={1}
-        className="max-w-[50%] shrink-0 font-t3-medium text-sm text-user-bubble-foreground-muted"
+        className={cn(
+          "max-w-[50%] shrink-0 font-t3-medium text-sm",
+          props.variant === "work" ? "text-foreground-muted" : "text-user-bubble-foreground-muted",
+        )}
       >
         {label}
       </Text>
       {props.summaryLines !== undefined && props.summaryLines.length > 1 ? (
         <View className="min-w-0 shrink">
           {props.summaryLines.map((line) => (
-            <Text key={line} numberOfLines={1} className="text-sm text-user-bubble-foreground">
+            <Text
+              key={line}
+              numberOfLines={1}
+              className={cn(
+                "text-sm",
+                props.variant === "work" ? "text-foreground-muted" : "text-user-bubble-foreground",
+              )}
+            >
               {line}
             </Text>
           ))}
         </View>
       ) : (
-        <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+        <Text
+          numberOfLines={1}
+          className={cn(
+            "min-w-0 shrink text-sm",
+            props.variant === "work" ? "text-foreground-muted" : "text-user-bubble-foreground",
+          )}
+        >
           {props.summary}
         </Text>
       )}
@@ -1960,20 +1977,82 @@ function renderFeedEntry(
         />
       );
     }
+    if (isUser && isAgentDeliveredMessage(props.threadId, message)) {
+      const rowId = `agent:${message.id}`;
+      const expanded = props.expandedWorkRows[rowId] ?? false;
+      const reportLines = watchReportSummaryLines(message.id, presentation.text);
+      const senderThreadId =
+        message.senderThreadId ??
+        (message.coordination?.kind === "request"
+          ? message.coordination.requester.threadId
+          : undefined);
+      return (
+        <View className="mb-2">
+          <AgentMessageFoldHeader
+            environmentId={props.environmentId}
+            senderThreadId={senderThreadId}
+            fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
+            variant="work"
+            summaryLines={expanded ? undefined : (reportLines ?? undefined)}
+            summary={
+              reportLines?.join(", ") ??
+              replaceComposerContextReferences(presentation.text, (ref) => ref.label)
+                .split(/\r?\n/)
+                .find((line) => line.trim().length > 0)
+                ?.trim() ??
+              ""
+            }
+            expanded={expanded}
+            onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
+            iconSubtleColor={iconSubtleColor}
+          />
+          {expanded ? (
+            <View className="gap-2 px-3.5 pb-2.5">
+              <AssistantMarkdownContent
+                markdown={watchReportMarkdown(message.id, presentation.text) ?? renderedText}
+                environmentId={props.environmentId}
+                markdownStyles={markdownStyles.assistant}
+                linkHandlers={props.markdownLinkHandlers}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+              {attachments.map((attachment) =>
+                isImageAttachment(attachment) ? (
+                  <MessageAttachmentImage
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachmentId={attachment.id}
+                    name={attachment.name}
+                    mimeType={attachment.mimeType}
+                    className="h-24 w-24 rounded-[14px]"
+                    onPressPreview={props.onPressPreview}
+                  />
+                ) : isFileAttachment(attachment) ? (
+                  <MessageAttachmentFile
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachment={attachment}
+                    onPressPreview={props.onPressPreview}
+                    onPlaybackStart={props.onPlaybackStart}
+                  />
+                ) : (
+                  <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                ),
+              )}
+              {senderThreadId ? (
+                <OpenSenderThreadButton
+                  environmentId={props.environmentId}
+                  senderThreadId={senderThreadId}
+                />
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      );
+    }
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
-      // Home acts for the user, so anything an agent or T3 Code sent there folds like an agent message.
-      const homeReport = isHomeDeliveredMessage(props.threadId, {
-        createdBy: message.createdBy ?? "user",
-        idleCompaction: message.idleCompaction,
-        scheduledTaskId: message.scheduledTaskId,
-      });
-      const reportLines = homeReport
-        ? watchReportSummaryLines(message.id, presentation.text)
-        : null;
-      const reportMarkdown = homeReport ? watchReportMarkdown(message.id, presentation.text) : null;
-      const foldRowId =
-        presentation.attribution === "agent" || homeReport ? `agent:${message.id}` : null;
+      const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
@@ -2093,20 +2172,13 @@ function renderFeedEntry(
                 <AgentMessageFoldHeader
                   environmentId={props.environmentId}
                   senderThreadId={message.senderThreadId}
-                  fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
-                  summaryLines={foldExpanded ? undefined : (reportLines ?? undefined)}
+                  fallbackLabel="Agent"
+                  variant="bubble"
                   summary={
-                    // Expanded, the body lists the events, so the header only counts them.
-                    (reportLines !== null && foldExpanded && reportMarkdown !== null
-                      ? reportLines.length > 1
-                        ? `${reportLines.length} events`
-                        : ""
-                      : reportLines?.join(", ")) ??
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)
                       .find((line) => line.trim().length > 0)
-                      ?.trim() ??
-                    ""
+                      ?.trim() ?? ""
                   }
                   expanded={foldExpanded}
                   onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
@@ -2191,7 +2263,7 @@ function renderFeedEntry(
                       value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                     >
                       <UserMessageContent
-                        text={reportMarkdown ?? renderedText}
+                        text={renderedText}
                         environmentId={props.environmentId}
                         context={message.context}
                         markdownStyles={styles}

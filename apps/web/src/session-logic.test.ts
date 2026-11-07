@@ -474,6 +474,37 @@ describe("V2 session presentation", () => {
       "Completed · OS exam study guide app",
       "Asks a question · b",
     ]);
+    for (const inputIntent of [
+      "queued_turn",
+      "turn_start",
+      "steer",
+      "promoted_queued_to_steer",
+    ] as const) {
+      const item = {
+        ...message(ThreadId.make("worker"), "agent-history", pm),
+        inputIntent,
+        status: "pending" as const,
+      };
+      expect(
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [
+            {
+              position: 0,
+              visibility: "inherited",
+              sourceThreadId: item.threadId,
+              sourceItemId: item.id,
+              item,
+            },
+          ],
+          optimisticMessages: [],
+        }),
+      ).toMatchObject([
+        {
+          kind: "work",
+          entry: { detail: "Merged #17.", projectedItem: { item: { senderThreadId: pm } } },
+        },
+      ]);
+    }
     expect(watchReportSummaryLines("from-pm", "Merged #17.")).toBeNull();
     expect(watchReportMarkdown("home-report:1", report)).toBe(
       "Completed · [OS exam study guide app](t3://v2/env/a)\n\nAsks a question · [b](t3://v2/env/b)",

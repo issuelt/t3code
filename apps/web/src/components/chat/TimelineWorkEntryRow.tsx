@@ -179,7 +179,11 @@ function AgentMessageWorkRow({
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   const item = workEntry.projectedItem?.item;
-  const senderThreadId = item?.type === "user_message" ? item.senderThreadId : undefined;
+  const senderThreadId =
+    item?.type === "user_message"
+      ? (item.senderThreadId ??
+        (item.coordination?.kind === "request" ? item.coordination.requester.threadId : undefined))
+      : undefined;
   const localSender = useQuietThreadShell(
     senderThreadId === undefined
       ? null

@@ -130,7 +130,7 @@ export function visibleDeltaRunOrdinals(
   return from === Infinity ? { from: 1, to: 1 } : { from, to };
 }
 
-/** Drops rolled-back runs and cancelled queued messages, which are not part of the conversation. */
+/** Only delivered conversation items belong in provider context. */
 export function visibleConversationItems(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts">,
   items: ReadonlyArray<OrchestrationV2TurnItem>,
@@ -140,7 +140,15 @@ export function visibleConversationItems(
     attempts: projection.attempts,
     items,
   });
-  return items.filter(visible);
+  return items.filter(
+    (item) =>
+      visible(item) &&
+      !(
+        item.type === "user_message" &&
+        item.inputIntent === "queued_turn" &&
+        item.status === "pending"
+      ),
+  );
 }
 
 type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "attempts">;

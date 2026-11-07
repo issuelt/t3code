@@ -5506,7 +5506,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const send = (key: string, createdBy: "user" | "agent", start: boolean, senderThreadId?: ThreadId) =>
+      const send = (
+        key: string,
+        createdBy: "user" | "agent",
+        start: boolean,
+        senderThreadId?: ThreadId,
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy,
@@ -5644,14 +5649,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end("earlier", "completed");
       yield* send("active", "agent", true);
       yield* send("issue", "agent", false, ThreadId.make("coordinator"));
-      const pending = (yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(threadId)).turnItems.find(
-        (item) => item.type === "user_message" && item.messageId === MessageId.make(`${threadId}:message:issue`),
+      const pending = (yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(
+        threadId,
+      )).turnItems.find(
+        (item) =>
+          item.type === "user_message" &&
+          item.messageId === MessageId.make(`${threadId}:message:issue`),
       );
       assert.deepInclude(pending, {
         type: "user_message",
         inputIntent: "queued_turn",
         status: "pending",
-        senderThreadId: "coordinator",
+        senderThreadId: ThreadId.make("coordinator"),
       });
       yield* send("user", "user", false);
       yield* end("active", "failed");
