@@ -95,6 +95,10 @@ const pendingAgentPresentations = new WeakMap<
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadProjection
 >();
+const pendingAgentRows = new WeakMap<
+  OrchestrationV2ThreadProjection["messages"][number],
+  { readonly run: OrchestrationV2ThreadProjection["runs"][number]; readonly row: VisibleTurnItem }
+>();
 
 // Older servers queued coordination without a turn item. This is presentation, never provider input.
 function withPendingAgentMessages(
@@ -127,9 +131,20 @@ function withPendingAgentMessages(
     )
       continue;
     represented.add(message.id);
+    const position = lastPosition + pending.length + 1;
+    const ordinal = lastOrdinal + pending.length + 1;
+    const previous = pendingAgentRows.get(message);
+    if (
+      previous?.run === run &&
+      previous.row.position === position &&
+      previous.row.item.ordinal === ordinal
+    ) {
+      pending.push(previous.row);
+      continue;
+    }
     const id = TurnItemId.make(`pending-agent:${message.id}`);
-    pending.push({
-      position: lastPosition + pending.length + 1,
+    const row: VisibleTurnItem = {
+      position,
       visibility: "local",
       sourceThreadId: projection.thread.id,
       sourceItemId: id,
@@ -142,7 +157,7 @@ function withPendingAgentMessages(
         providerTurnId: null,
         nativeItemRef: null,
         parentItemId: null,
-        ordinal: lastOrdinal + pending.length + 1,
+        ordinal,
         type: "user_message",
         messageId: message.id,
         text: message.text,
@@ -159,7 +174,9 @@ function withPendingAgentMessages(
         completedAt: null,
         updatedAt: message.updatedAt,
       },
-    });
+    };
+    pendingAgentRows.set(message, { run, row });
+    pending.push(row);
   }
   const presented =
     pending.length === 0
