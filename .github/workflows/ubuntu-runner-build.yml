@@ -220,7 +220,8 @@ jobs:
           sudo apt-get install -y --allow-downgrades --no-install-recommends "${packages[@]}"
           node_version=$(python3 -c 'import json; print(json.load(open("package.json"))["engines"]["node"])')
           pnpm_version=$(python3 -c 'import json; print(json.load(open("package.json"))["packageManager"])')
-          vp_version=$(sed -n 's/^  vite-plus: //p' pnpm-workspace.yaml)
+          # pnpm-workspace.yaml also has a vite-plus override, so read only the catalog entry.
+          vp_version=$(awk '/^catalog:/ {c = 1; next} /^[^ #]/ {c = 0} c && /^  vite-plus: / {print $2; exit}' pnpm-workspace.yaml)
           [[ "$node_version" == 26.12.1 && "$pnpm_version" == pnpm@12.14.0 && "$vp_version" == 1.4.0 ]]
           mkdir "$PROOF_ROOT/tools"
           cd "$PROOF_ROOT/tools"
