@@ -1,0 +1,500 @@
+name: Ubuntu runner build proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner for the same cold build recipe
+        required: true
+        type: choice
+        default: self-hosted
+        options:
+          - self-hosted
+          - hosted
+      target:
+        description: Build proof to run
+        required: true
+        type: choice
+        default: linux
+        options:
+          - linux
+          - android
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-runner-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'issuelt/t3code' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.target == 'linux' || inputs.target == 'android') &&
+      (inputs.runner == 'hosted' || inputs.runner == 'self-hosted')
+    # Conf must restrict this group to this workflow at refs/heads/main.
+    runs-on: ${{ fromJSON(inputs.runner == 'hosted' && '"ubuntu-24.04"' || '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}') }}
+    timeout-minutes: ${{ inputs.target == 'linux' && 90 || 120 }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: "1"
+      VP_REMOTE_CACHE: "off"
+      NODE_OPTIONS: --max-old-space-size=1536
+      CC: gcc-13
+      CXX: g++-13
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "1"
+      CMAKE_BUILD_PARALLEL_LEVEL: "1"
+      RAYON_NUM_THREADS: "1"
+      npm_config_jobs: "1"
+      npm_config_child_concurrency: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      PROOF_RUNNER: ${{ inputs.runner }}
+      RUSTUP_TOOLCHAIN: 1.99.1
+      PROOF_TARGET: ${{ inputs.target }}
+      PROOF_VERSION: 0.0.0-runner-proof
+      PROOF_APT_PACKAGES: >-
+        build-essential=12.10ubuntu1 pkg-config=1.8.1-2build1 libsecret-1-dev=0.21.4-1build3
+        imagemagick=8:6.9.12.98+dfsg1-5.2build2 patchelf=0.18.0-1.1build1
+        gcc-13=13.3.0-6ubuntu2~24.04.1 g++-13=13.3.0-6ubuntu2~24.04.1
+        gcc-13-x86-64-linux-gnu=13.3.0-6ubuntu2~24.04.1 g++-13-x86-64-linux-gnu=13.3.0-6ubuntu2~24.04.1
+        binutils=2.42-4ubuntu2.10 make=4.3-4.1build2
+        xvfb=2:21.1.12-1ubuntu1.9 xauth=1:1.1.2-1build1 time=1.9-0.2build1
+        unzip=6.0-28ubuntu4.1 zip=3.0-13ubuntu0.2 xz-utils=5.6.1+really5.4.5-1ubuntu0.4
+    steps:
+      - name: Require trusted dispatch and runner limits
+        id: preflight
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$GITHUB_REPOSITORY" == issuelt/t3code && "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || fail 'Only issuelt/t3code main dispatch is supported'
+          [[ "$(uname -m)" == x86_64 && "$(uname -s)" == Linux ]] || fail 'Requires Linux x86_64'
+          # shellcheck source=/dev/null
+          . /etc/os-release
+          [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || fail 'Requires Ubuntu 24.04'
+          [[ "$EUID" != 0 ]] || fail 'Runner must be unprivileged'
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          def require(ok, message):
+              if not ok:
+                  raise SystemExit(f"::error::{message}")
+
+          if os.environ["PROOF_RUNNER"] == "hosted":
+              require(os.environ["RUNNER_ENVIRONMENT"] == "github-hosted", "Requires a GitHub-hosted runner")
+              raise SystemExit(0)
+          require(os.environ["PROOF_RUNNER"] == "self-hosted", "Unknown runner choice")
+          require("NoNewPrivs:\t1" in Path("/proc/self/status").read_text(), "Runner must enforce NoNewPrivileges")
+          entry = next((line[3:] for line in Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::")), None)
+          require(entry is not None, "Requires cgroup v2")
+          root = Path("/sys/fs/cgroup")
+          current = root / entry.lstrip("/")
+          limits = {"memory.high": 4 * 1024**3, "memory.max": 4500 * 1024**2, "memory.swap.max": 8 * 1024**3}
+          bounded = None
+          for candidate in [current, *current.parents]:
+              if candidate == root or root not in candidate.parents:
+                  break
+              files = [candidate / name for name in [*limits, "cpu.max"]]
+              if not all(path.is_file() for path in files):
+                  continue
+              values = {name: (candidate / name).read_text().strip() for name in limits}
+              quota, period = (candidate / "cpu.max").read_text().split()
+              if not all(value.isdigit() and (0 if name == "memory.swap.max" else 1) <= int(value) <= limits[name] for name, value in values.items()):
+                  continue
+              if quota == "max" or not 0 < int(quota) <= 4 * int(period):
+                  continue
+              require(not any(os.access(path, os.W_OK) for path in files), "Runner can change its own resource bounds")
+              bounded = candidate
+              print(f"Enforced cgroup: {candidate}, CPU {quota}/{period}, {values}")
+              break
+          require(bounded is not None, "Conf must enforce CPUQuota<=400%, MemoryHigh<=4G, MemoryMax<=4500M, MemorySwapMax<=8G on the runner service")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"PROOF_CGROUP={bounded}\n")
+          PY
+      - name: Initialize cold caches and evidence
+        id: evidence
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          proof_root=$(mktemp -d "$RUNNER_TEMP/runner-proof.XXXXXX")
+          mkdir "$proof_root/evidence" "$proof_root/cache"
+          {
+            echo "PROOF_ROOT=$proof_root"
+            echo "PROOF_EVIDENCE=$proof_root/evidence"
+            echo "BASH_ENV=$proof_root/timing.sh"
+            echo "XDG_CACHE_HOME=$proof_root/cache/xdg"
+            echo "npm_config_cache=$proof_root/cache/npm"
+            echo "npm_config_store_dir=$proof_root/cache/pnpm"
+            echo "pnpm_config_store_dir=$proof_root/cache/pnpm"
+            echo "pnpm_config_cache_dir=$proof_root/cache/pnpm-metadata"
+            echo "GRADLE_USER_HOME=$proof_root/cache/gradle"
+            echo "CARGO_HOME=$proof_root/cache/cargo"
+            echo "ELECTRON_CACHE=$proof_root/cache/electron"
+            echo "ELECTRON_BUILDER_CACHE=$proof_root/cache/electron-builder"
+            echo "SCCACHE_DISABLE=1"
+            echo "CCACHE_DISABLE=1"
+          } >> "$GITHUB_ENV"
+          cat > "$proof_root/timing.sh" <<'SH'
+          # Only the Actions step shell records timing, not nested build shells.
+          if [[ -z "${PROOF_TIMING_ACTIVE:-}" ]]; then
+            export PROOF_TIMING_ACTIVE=1
+            export PROOF_STEP_STARTED
+            PROOF_STEP_STARTED=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+            proof_started=$SECONDS
+            trap 'proof_status=$?; python3 "$PROOF_ROOT/timing.py" "$proof_status" "$((SECONDS - proof_started))"' EXIT
+          fi
+          SH
+          cat > "$proof_root/timing.py" <<'PYTHON'
+          import datetime, json, os, sys
+          from pathlib import Path
+          row = dict(step=os.environ["GITHUB_ACTION"], started_at=os.environ["PROOF_STEP_STARTED"],
+                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                     elapsed_seconds=int(sys.argv[2]), exit_code=int(sys.argv[1]))
+          with (Path(os.environ["PROOF_EVIDENCE"]) / "step-timings.jsonl").open("a") as f:
+              f.write(json.dumps(row) + "\n")
+          PYTHON
+          cat > "$proof_root/resources.py" <<'PYTHON'
+          import datetime, json, os, shutil, subprocess, sys
+          from pathlib import Path
+          def read(path):
+              p = Path(path)
+              return p.read_text() if p.is_file() else None
+          root = Path("/sys/fs/cgroup")
+          entry = next((line[3:] for line in Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::")), "")
+          current = root / entry.lstrip("/")
+          groups = {}
+          for path in [current, *current.parents]:
+              if path != root and root not in path.parents:
+                  break
+              groups[str(path)] = {name: read(path / name) for name in (
+                  "cpu.max", "cpu.stat", "memory.high", "memory.max", "memory.peak", "memory.events",
+                  "memory.swap.max", "memory.swap.peak", "io.stat", "cpu.pressure", "memory.pressure", "io.pressure")}
+          data = dict(captured_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                      cpu=json.loads(subprocess.check_output(["lscpu", "--json"])),
+                      kernel=subprocess.check_output(["uname", "-r"], text=True).strip(),
+                      block_devices=json.loads(subprocess.check_output(["lsblk", "--json", "-o", "NAME,TYPE,SIZE,ROTA,MODEL"])),
+                      meminfo=read("/proc/meminfo"), loadavg=read("/proc/loadavg"),
+                      disk=shutil.disk_usage(os.environ["RUNNER_TEMP"])._asdict(), cgroups=groups)
+          Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + "\n")
+          PYTHON
+          python3 "$proof_root/resources.py" "$proof_root/evidence/resources-before.json"
+          python3 - "$proof_root/evidence/run.json" <<'PYTHON'
+          import datetime, json, os, sys
+          from pathlib import Path
+          data = {key: os.environ.get(key) for key in (
+              "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_JOB",
+              "GITHUB_WORKFLOW_REF", "RUNNER_ENVIRONMENT", "RUNNER_ARCH", "PROOF_RUNNER", "PROOF_TARGET")}
+          data.update(evidence_initialized_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                      cache_policy="fresh user and build caches; OS page caches uncontrolled",
+                      queue_timing="Derive externally from Actions run and job API timestamps; setup is not queue time")
+          Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + "\n")
+          PYTHON
+
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        timeout-minutes: 5
+        with:
+          repository: issuelt/t3code
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Provision pinned hosted tools
+        id: hosted_setup
+        if: inputs.runner == 'hosted'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          read -r -a packages <<< "$PROOF_APT_PACKAGES"
+          sudo apt-get install -y --allow-downgrades --no-install-recommends "${packages[@]}"
+          node_version=$(python3 -c 'import json; print(json.load(open("package.json"))["engines"]["node"])')
+          pnpm_version=$(python3 -c 'import json; print(json.load(open("package.json"))["packageManager"])')
+          vp_version=$(sed -n 's/^  vite-plus: //p' pnpm-workspace.yaml)
+          [[ "$node_version" == 26.12.1 && "$pnpm_version" == pnpm@12.14.0 && "$vp_version" == 1.4.0 ]]
+          mkdir "$PROOF_ROOT/tools"
+          cd "$PROOF_ROOT/tools"
+          curl --fail --silent --show-error --location "https://nodejs.org/dist/v$node_version/node-v$node_version-linux-x64.tar.xz" -o node.tar.xz
+          curl --fail --silent --show-error --location "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o SHASUMS256.txt
+          awk -v file="node-v$node_version-linux-x64.tar.xz" '$2 == file { print $1 "  node.tar.xz" }' SHASUMS256.txt > node.sha256
+          test -s node.sha256
+          sha256sum --check node.sha256
+          tar -xf node.tar.xz
+          export PATH="$PWD/node-v$node_version-linux-x64/bin:$PATH"
+          echo "$PWD/node-v$node_version-linux-x64/bin" >> "$GITHUB_PATH"
+          npm --cache "$PROOF_ROOT/tools/npm-cache" install --global --prefix "$PROOF_ROOT/tools/npm" "vite-plus@$vp_version" "$pnpm_version"
+          echo "$PROOF_ROOT/tools/npm/bin" >> "$GITHUB_PATH"
+          if [[ "$PROOF_TARGET" == linux ]]; then
+            rustup toolchain install 1.99.1 --profile minimal --target x86_64-unknown-linux-gnu
+          else
+            sudo apt-get install -y --allow-downgrades \
+              'openjdk-17-jre-headless=17.0.20.1+1-1~24.04' 'openjdk-17-jdk-headless=17.0.20.1+1-1~24.04'
+            echo 'JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64' >> "$GITHUB_ENV"
+            echo '/usr/lib/jvm/java-17-openjdk-amd64/bin' >> "$GITHUB_PATH"
+            sdk="$PROOF_ROOT/tools/android-sdk"
+            mkdir -p "$sdk/licenses"
+            # Archive revisions and checksums match the provisioned guest SDK.
+            while read -r destination archive checksum; do
+              curl --fail --silent --show-error --location "https://dl.google.com/android/repository/$archive" -o sdk.zip
+              echo "$checksum  sdk.zip" | sha1sum --check
+              mkdir unpack
+              unzip -q sdk.zip -d unpack
+              mkdir -p "$(dirname "$sdk/$destination")"
+              if [[ -f unpack/source.properties ]]; then
+                mv unpack "$sdk/$destination"
+              else
+                mapfile -t roots < <(find unpack -mindepth 1 -maxdepth 1 -type d)
+                [[ ${#roots[@]} == 1 ]]
+                mv "${roots[0]}" "$sdk/$destination"
+                rmdir unpack
+              fi
+            done <<'SDK'
+            platforms/android-37.0 platform-37.0_r02.zip ed8ebf7f8822a4de5686d427f237d2fa30ff7410
+            build-tools/36.0.0 build-tools_r36_linux.zip b0b6376977657e8ad9b969bacf4093601da2c6fb
+            build-tools/37.0.0 build-tools_r37_linux.zip 70954e99f4c3d9d46ee70fa32624672fe7cd6ebe
+            ndk/27.1.12297006 android-ndk-r27b-linux.zip 6fc476b2e57d7c01ac0c95817746b927035b9749
+            cmake/3.22.1 cmake-3.22.1-linux.zip fd0a48b4a758310df8c7aa51f59840ed48fe7ed8
+          SDK
+            printf '%s\n' 8933bad161af4178b1185d1a37fbf41ea5269c55 d56f5187479451eabf01fb78af6dfcb131a6481e 24333f8a63b6825ea9c5514f83c2829b004d1fee > "$sdk/licenses/android-sdk-license"
+            echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          fi
+
+      - name: Require matching provisioned build tools
+        id: tools
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          for tool in node vp pnpm git python3 timeout sha256sum tar unzip zip xz make cc c++ pkg-config; do
+            command -v "$tool" >/dev/null || fail "Missing provisioned tool: $tool"
+          done
+          read -r -a packages <<< "$PROOF_APT_PACKAGES"
+          for package in "${packages[@]}"; do
+            actual=$(dpkg-query -W -f='${Version}' "${package%%=*}")
+            [[ "$actual" == "${package#*=}" ]] || fail "Requires $package, found $actual"
+          done
+          vp --version | grep -Eq '^vp v1[.]4[.]0$' || fail 'Requires Vite+ 1.4.0'
+          [[ "$("$CC" -dumpfullversion)" == 13.3.0 && "$("$CXX" -dumpfullversion)" == 13.3.0 ]] || fail 'Requires GCC 13.3.0'
+          [[ -x /usr/bin/time ]] || fail 'Missing GNU time'
+          if [[ "$PROOF_TARGET" == linux ]]; then
+            for tool in cargo rustc rustup patchelf; do
+              command -v "$tool" >/dev/null || fail "Missing provisioned tool: $tool"
+            done
+            command -v magick >/dev/null || command -v convert >/dev/null || fail 'Missing ImageMagick'
+            pkg-config --exists libsecret-1 || fail 'Missing libsecret development files'
+            [[ "$(rustc --version)" == "rustc 1.99.1 (58cf8f9c3 2026-10-13)" ]]
+            rustup target list --installed | grep -Fx x86_64-unknown-linux-gnu
+          else
+            command -v java >/dev/null || fail 'Missing JDK 17'
+            java -version 2>&1 | grep -F 'version "17.0.20.1"' || fail 'Requires JDK 17'
+            [[ -n "${ANDROID_HOME:-}" && "${ANDROID_SDK_ROOT:-}" == "$ANDROID_HOME" ]] || fail 'Set both Android SDK paths to the provisioned SDK'
+            for file in platforms/android-37.0/android.jar build-tools/36.0.0/aapt build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
+              [[ -s "$ANDROID_HOME/$file" ]] || fail "Missing provisioned SDK component: $file"
+            done
+            for tool in build-tools/37.0.0/aapt cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja; do
+              [[ -x "$ANDROID_HOME/$tool" ]] || fail "SDK tool is not executable: $tool"
+            done
+          fi
+          {
+            node --version
+            pnpm --version
+            vp --version
+            if [[ "$PROOF_TARGET" == linux ]]; then rustc --version; cargo --version; else java -version; fi
+            dpkg-query -W -f='${Package}=${Version}\n'
+            if [[ "$PROOF_TARGET" == android ]]; then
+              find "$ANDROID_HOME" -name source.properties -exec sh -c 'echo "$1"; cat "$1"' sh {} \;
+            fi
+          } > "$PROOF_EVIDENCE/tool-versions.txt" 2>&1
+          free -h
+          df -h . "$RUNNER_TEMP"
+
+      - name: Restore locked project dependencies
+        id: dependencies
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          node --input-type=module - <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (process.versions.node !== pkg.engines.node) throw new Error(`Provision Node ${pkg.engines.node}`);
+          const pnpm = execFileSync('pnpm', ['--version'], { encoding: 'utf8' }).trim();
+          if (`pnpm@${pnpm}` !== pkg.packageManager) throw new Error(`Provision ${pkg.packageManager}`);
+          JS
+          [[ ! -e runner-proof ]] || { echo '::error::Proof output must be fresh'; exit 1; }
+          ln -s "$PROOF_EVIDENCE" runner-proof
+          store=$(vp pm cache dir)
+          [[ "$store" == "$PROOF_ROOT/cache/"* ]] || { echo '::error::pnpm store is not isolated'; exit 1; }
+          [[ ! -d "$store" || -z "$(find "$store" -type f -print -quit)" ]] || { echo '::error::pnpm store is not cold'; exit 1; }
+          printf '%s\n' "$store" > runner-proof/pnpm-store.txt
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 18m \
+            vp install --frozen-lockfile 2>&1 | tee runner-proof/dependencies.log
+          git diff --exit-code -- pnpm-lock.yaml
+
+      - name: Test and package Linux desktop
+        id: linux
+        if: inputs.target == 'linux'
+        timeout-minutes: 65
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+          APP_VERSION: 0.0.0-runner-proof
+          # XZ_OPT overrides the packager's XZ_DEFAULTS=-T0.
+          XZ_OPT: -T1
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 63m bash -euo pipefail <<'BUILD' 2>&1 | tee runner-proof/linux.log
+          cargo test --locked --manifest-path native/resource-monitor/Cargo.toml --jobs 2 2>&1 | tee runner-proof/rust-tests.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' runner-proof/rust-tests.log
+          node scripts/update-release-package-versions.ts "$PROOF_VERSION"
+          vp run --concurrency-limit 1 --filter @t3tools/desktop --filter t3 build
+          vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 \
+            --build-version "$PROOF_VERSION" --skip-build --output-dir runner-proof/artifacts --verbose
+          shopt -s nullglob
+          artifacts=(runner-proof/artifacts/*.AppImage)
+          [[ ${#artifacts[@]} -gt 0 ]] || { echo '::error::No AppImage produced'; exit 1; }
+          python3 - "${artifacts[@]}" <<'PY'
+          import sys
+          from pathlib import Path
+          for artifact in sys.argv[1:]:
+              with Path(artifact).open("rb") as f:
+                  header = f.read(11)
+              if header[:4] != b"\x7fELF" or header[8:11] != b"AI\x02":
+                  raise SystemExit(f"Invalid type-2 AppImage: {artifact}")
+          PY
+          (cd runner-proof/artifacts && sha256sum ./*.AppImage > SHA256SUMS && sha256sum --check SHA256SUMS)
+          BUILD
+
+      - name: Assemble and inspect unsigned Android APK
+        id: android
+        if: inputs.target == 'android'
+        timeout-minutes: 95
+        env:
+          APP_VARIANT: preview
+          T3CODE_MOBILE_UPDATE_CHANNEL: fork
+          T3CODE_MOBILE_VERSION: 0.0.0-runner-proof
+          EXPO_NO_GIT_STATUS: "1"
+          EXPO_NO_TELEMETRY: "1"
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 93m bash -euo pipefail <<'BUILD' 2>&1 | tee runner-proof/android.log
+          cd apps/mobile
+          node_modules/.bin/expo prebuild --clean --platform android --no-install
+          cat >> android/app/build.gradle <<'GRADLE'
+          react { extraPackagerArgs = ["--max-workers", "1"] }
+          android.buildTypes.release.signingConfig = null
+          GRADLE
+          # Ninja pools still cap compilation when Gradle supplies an explicit -j.
+          cat > android/runner-proof-pools.gradle <<'GRADLE'
+          subprojects { project ->
+              ["com.android.application", "com.android.library"].each { pluginId ->
+                  project.plugins.withId(pluginId) {
+                      project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                          android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                              "-DCMAKE_JOB_POOLS=runner_proof=1",
+                              "-DCMAKE_JOB_POOL_COMPILE=runner_proof",
+                              "-DCMAKE_JOB_POOL_LINK=runner_proof"
+                          ])
+                      }
+                  }
+              }
+          }
+          GRADLE
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("android/build.gradle")
+          text = path.read_text()
+          marker = 'apply plugin: "expo-root-project"'
+          if text.count(marker) != 1:
+              raise SystemExit("Expected one Expo root plugin application")
+          path.write_text(text.replace(marker, 'apply from: "runner-proof-pools.gradle"\n\n' + marker))
+          PY
+          cat > android/runner-proof.init.gradle <<'GRADLE'
+          gradle.settingsEvaluated {
+              def heap = Runtime.runtime.maxMemory()
+              assert heap > 2900L * 1024 * 1024 && heap <= 3072L * 1024 * 1024 : "Unexpected Gradle heap: ${heap}"
+              println "Runner proof Gradle max heap: ${heap}"
+          }
+          GRADLE
+          cp android/runner-proof.init.gradle ../../runner-proof/
+          cp android/runner-proof-pools.gradle ../../runner-proof/
+          cp android/gradle.properties ../../runner-proof/generated-gradle.properties
+          cp android/build.gradle ../../runner-proof/root-build.gradle
+          cp android/app/build.gradle ../../runner-proof/app-build.gradle
+          cd android
+          ./gradlew assembleRelease --no-daemon --no-parallel --max-workers=1 --info \
+            --init-script runner-proof.init.gradle \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.builder.sdkDownload=false \
+            -Dorg.gradle.java.installations.auto-download=false \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError'
+          cd ../../..
+          mkdir -p runner-proof/artifacts
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > runner-proof/apk-badging.txt
+          cat runner-proof/apk-badging.txt
+          grep -F "package: name='com.t3tools.t3code.preview'" runner-proof/apk-badging.txt
+          grep -F "versionName='$PROOF_VERSION'" runner-proof/apk-badging.txt
+          grep -Fx "native-code: 'arm64-v8a'" runner-proof/apk-badging.txt
+          unzip -t "$apk"
+          cp "$apk" runner-proof/artifacts/
+          (cd runner-proof/artifacts && sha256sum ./*.apk > SHA256SUMS && sha256sum --check SHA256SUMS)
+          BUILD
+
+      - name: Record outcomes and resource counters
+        id: results
+        if: always() && steps.evidence.outcome == 'success'
+        timeout-minutes: 2
+        env:
+          PROOF_STEPS: ${{ toJSON(steps) }}
+        run: |
+          set -euo pipefail
+          python3 "$PROOF_ROOT/resources.py" "$PROOF_EVIDENCE/resources-after.json"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ["PROOF_EVIDENCE"])
+          steps = json.loads(os.environ["PROOF_STEPS"])
+          artifacts = []
+          for path in sorted((root / "artifacts").glob("*")):
+              if path.is_file():
+                  artifacts.append(dict(name=path.name, bytes=path.stat().st_size,
+                                        sha256=hashlib.file_digest(path.open("rb"), "sha256").hexdigest()))
+          result = dict(steps=steps, failed_steps=sum(s["outcome"] == "failure" for s in steps.values()),
+                        cancelled_steps=sum(s["outcome"] == "cancelled" for s in steps.values()),
+                        build_succeeded=steps.get(os.environ["PROOF_TARGET"], {}).get("outcome") == "success",
+                        artifacts=artifacts)
+          (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        id: upload
+        if: always() && steps.evidence.outcome == 'success'
+        timeout-minutes: 5
+        with:
+          name: ubuntu-runner-${{ inputs.runner }}-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PROOF_EVIDENCE }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      # Action upload timing and failures are available only after the evidence archive closes.
+      - name: Record artifact upload result
+        if: always() && steps.evidence.outcome == 'success'
+        timeout-minutes: 1
+        env:
+          UPLOAD_RESULT: ${{ toJSON(steps.upload) }}
+        run: |
+          printf '%s\n' "$UPLOAD_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Use the Actions jobs API for checkout, upload, admission, and provisioning step timestamps and final job conclusion.' >> "$GITHUB_STEP_SUMMARY"
