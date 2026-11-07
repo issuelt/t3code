@@ -130,6 +130,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
   const proofs: Array<ManagedRelay.ManagedRelayDpopProofInput> = [];
   const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
+    authorizeDirect: () => Effect.die("Unexpected direct connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {

@@ -118,6 +118,8 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly credential: string;
+  /** An access token renews or converts a session; the default redeems a bootstrap credential. */
+  readonly subjectTokenType?: typeof AuthAccessTokenType | typeof AuthEnvironmentBootstrapTokenType;
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly dpopProof: string;
@@ -132,7 +134,7 @@ export const exchangeRemoteDpopAccessToken = Effect.fn(
       payload: {
         grant_type: AuthTokenExchangeGrantType,
         subject_token: input.credential,
-        subject_token_type: AuthEnvironmentBootstrapTokenType,
+        subject_token_type: input.subjectTokenType ?? AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
         ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
         ...clientMetadataTokenExchangeFields(input.clientMetadata),
@@ -167,6 +169,19 @@ export const bootstrapRemoteBearerSession = Effect.fn(
       },
     }),
   );
+});
+
+/** The server's auth descriptor, which an unauthenticated session request also returns. */
+export const fetchRemoteAuthDescriptor = Effect.fn(
+  "clientRuntime.authorization.fetchRemoteAuthDescriptor",
+)(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
+  const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  const state = yield* executeEnvironmentHttpRequest(
+    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/session"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.session({ headers: {} }),
+  );
+  return state.auth;
 });
 
 export const fetchRemoteSessionState = Effect.fn(

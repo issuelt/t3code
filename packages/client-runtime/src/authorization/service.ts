@@ -1,4 +1,5 @@
 import {
+  AuthAccessTokenType,
   type ClientConnectionMethod,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
@@ -7,11 +8,19 @@ import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   exchangeRemoteDpopAccessToken,
+  fetchRemoteAuthDescriptor,
   type RemoteEnvironmentAuthError,
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import {
+  BearerConnectionCredential,
+  type ConnectionCredential,
+  DpopConnectionCredential,
+} from "../connection/catalog.ts";
+import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
+import {
+  credentialMissingError,
   environmentMismatchError,
   mapManagedRelayError,
   mapRemoteDpopEnvironmentError,
@@ -78,9 +87,21 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
        */
       readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
+    /**
+     * Authorizes a paired address with its saved credential. A DPoP credential
+     * renews with the environment; a paired bearer converts to DPoP once when
+     * the environment offers it.
+     */
+    readonly authorizeDirect: (input: {
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly httpBaseUrl: string;
+      readonly wsBaseUrl: string;
+      readonly credentialId: string;
+    }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpopHttp: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly rejectedAccessToken?: string;
+      readonly direct?: DirectDpopCredential;
     }) => Effect.Effect<AuthorizedRemoteHttpEnvironment, ConnectionAttemptError>;
     /**
      * Renews a live socket's token before it expires, so the server moves the
@@ -89,17 +110,34 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly renewDpopBeforeExpiry: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly expiresAtEpochMs: number;
+      readonly direct?: DirectDpopCredential;
     }) => Effect.Effect<void, ConnectionBlockedError>;
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
+/** A paired DPoP credential and the address its renewals go to. */
+export interface DirectDpopCredential {
+  readonly credentialId: string;
+  readonly httpBaseUrl: string;
+  readonly label: string;
+}
+
+/**
+ * Pairing names its credentials `bearer:…`. Desktop-local backends and SSH
+ * routes keep their own bearer tokens, so only paired ones may convert.
+ */
+const PAIRED_CREDENTIAL_PREFIX = "bearer:";
+
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
-function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
+function mapDpopSocketError(
+  error: RemoteEnvironmentAuthError | ConnectionAttemptError,
+  connectionMethod: "relay" | "direct" = "relay",
+) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
-    : mapRemoteDpopEnvironmentError(error);
+    : mapRemoteDpopEnvironmentError(error, connectionMethod);
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -119,8 +157,12 @@ export const make = Effect.gen(function* () {
   const deviceIdentity = yield* ClientCapabilities.RelayDeviceIdentity;
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const tokenStore = yield* TokenStore.RemoteDpopAccessTokenStore;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const httpClient = yield* HttpClient.HttpClient;
   const tokenLock = yield* Semaphore.make(1);
+  const directLocks = new Map<string, Semaphore.Semaphore>();
+  // Bearers already offered for conversion, or found on a server without it, this run.
+  const conversionChecked = new Set<string>();
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
@@ -167,41 +209,53 @@ export const make = Effect.gen(function* () {
       readonly bearerToken: string;
       readonly connectionMethod: ClientConnectionMethod;
     }) {
-      const descriptor = yield* verifyDirectEndpoint(input);
-      const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
-        wsBaseUrl: input.wsBaseUrl,
-        httpBaseUrl: input.httpBaseUrl,
-        bearerToken: input.bearerToken,
-        clientMetadata: presentation.metadata,
-        connectionMethod: input.connectionMethod,
-      }).pipe(
-        Effect.mapError(mapRemoteEnvironmentError),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      );
-      return {
-        environmentId: descriptor.environmentId,
-        label: descriptor.label,
-        httpBaseUrl: input.httpBaseUrl,
-        socketUrl,
-        descriptor,
-        httpAuthorization: {
-          _tag: "Bearer" as const,
-          token: input.bearerToken,
-        },
-      };
+      return yield* bearerSocket(input, yield* verifyDirectEndpoint(input));
     },
   );
 
+  const bearerSocket = Effect.fn("clientRuntime.connection.remote.bearerSocket")(function* (
+    input: {
+      readonly httpBaseUrl: string;
+      readonly wsBaseUrl: string;
+      readonly bearerToken: string;
+      readonly connectionMethod: ClientConnectionMethod;
+    },
+    descriptor: ExecutionEnvironmentDescriptor,
+  ) {
+    const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
+      wsBaseUrl: input.wsBaseUrl,
+      httpBaseUrl: input.httpBaseUrl,
+      bearerToken: input.bearerToken,
+      clientMetadata: presentation.metadata,
+      connectionMethod: input.connectionMethod,
+    }).pipe(
+      Effect.mapError(mapRemoteEnvironmentError),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    return {
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      httpBaseUrl: input.httpBaseUrl,
+      socketUrl,
+      descriptor,
+      httpAuthorization: {
+        _tag: "Bearer" as const,
+        token: input.bearerToken,
+      },
+    };
+  });
+
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
     function* (
-      token: TokenStore.RemoteDpopAccessToken,
+      accessToken: string,
+      endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string },
+      connectionMethod: "relay" | "direct",
       timeoutMs?: number,
-      endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
     ) {
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
         wsBaseUrl: endpoint.wsBaseUrl,
         httpBaseUrl: endpoint.httpBaseUrl,
-        accessToken: token.accessToken,
+        accessToken,
         createProof: (proof) =>
           signer.createProof(proof).pipe(
             Effect.mapError(
@@ -213,7 +267,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
         clientMetadata: presentation.metadata,
-        connectionMethod: "relay",
+        connectionMethod,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       });
     },
@@ -488,9 +542,10 @@ export const make = Effect.gen(function* () {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
       const cachedSocket = yield* createDpopSocketUrl(
-        selected.token,
+        selected.token.accessToken,
+        endpoint ?? selected.token.endpoint,
+        "relay",
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-        endpoint,
       ).pipe(Effect.result);
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
@@ -510,9 +565,11 @@ export const make = Effect.gen(function* () {
         rejectedAccessToken: selected.token.accessToken,
       });
     }
-    const socket = yield* createDpopSocketUrl(selected.token, undefined, endpoint).pipe(
-      Effect.result,
-    );
+    const socket = yield* createDpopSocketUrl(
+      selected.token.accessToken,
+      endpoint ?? selected.token.endpoint,
+      "relay",
+    ).pipe(Effect.result);
     if (Result.isFailure(socket)) {
       if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
         yield* tokenLock.withPermits(1)(
@@ -525,13 +582,220 @@ export const make = Effect.gen(function* () {
     return authorized(selected.token, socket.success);
   });
 
+  const directLock = (credentialId: string) => {
+    let lock = directLocks.get(credentialId);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      directLocks.set(credentialId, lock);
+    }
+    return lock;
+  };
+
+  /** Exchanges an access token for a session bound to this device's key. */
+  const exchangeForDirectDpop = Effect.fn("clientRuntime.connection.remote.exchangeDirectDpop")(
+    function* (httpBaseUrl: string, subjectToken: string) {
+      const thumbprint = yield* signer.thumbprint.pipe(
+        Effect.mapError(
+          () =>
+            new ConnectionBlockedError({
+              reason: "configuration",
+              detail: "Could not load the environment authorization key.",
+            }),
+        ),
+      );
+      const dpopProof = yield* signer
+        .createProof({ method: "POST", url: environmentEndpointUrl(httpBaseUrl, "/oauth/token") })
+        .pipe(
+          Effect.mapError(
+            () =>
+              new ConnectionBlockedError({
+                reason: "configuration",
+                detail: "Could not create the environment authorization proof.",
+              }),
+          ),
+        );
+      const access = yield* exchangeRemoteDpopAccessToken({
+        httpBaseUrl,
+        credential: subjectToken,
+        subjectTokenType: AuthAccessTokenType,
+        dpopProof,
+        clientMetadata: presentation.metadata,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      if (access.token_type !== "DPoP") {
+        return new BearerConnectionCredential({ token: access.access_token });
+      }
+      const issuedAt = yield* Clock.currentTimeMillis;
+      return new DpopConnectionCredential({
+        accessToken: access.access_token,
+        expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
+        dpopThumbprint: thumbprint,
+      });
+    },
+  );
+
+  const convertBearer = Effect.fn("clientRuntime.connection.remote.convertBearer")(function* (
+    input: { readonly credentialId: string; readonly httpBaseUrl: string },
+    bearer: BearerConnectionCredential,
+  ) {
+    if (
+      !input.credentialId.startsWith(PAIRED_CREDENTIAL_PREFIX) ||
+      conversionChecked.has(input.credentialId)
+    ) {
+      return bearer;
+    }
+    const auth = yield* fetchRemoteAuthDescriptor({ httpBaseUrl: input.httpBaseUrl }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.option,
+    );
+    // An unreachable descriptor says nothing about the server, so ask again next connect.
+    if (Option.isNone(auth)) return bearer;
+    if (auth.value.dpopRenewal !== true) {
+      conversionChecked.add(input.credentialId);
+      return bearer;
+    }
+    const converted = yield* exchangeForDirectDpop(input.httpBaseUrl, bearer.token).pipe(
+      Effect.result,
+    );
+    if (Result.isFailure(converted)) {
+      const error = converted.failure;
+      if (
+        error._tag === "ConnectionBlockedError" ||
+        error._tag === "EnvironmentAuthInvalidError" ||
+        error._tag === "EnvironmentRequestInvalidError"
+      ) {
+        conversionChecked.add(input.credentialId);
+        yield* Effect.logWarning("The environment kept the saved bearer credential.", { error });
+      }
+      return bearer;
+    }
+    conversionChecked.add(input.credentialId);
+    // The server revoked the bearer, so a lost successor means pairing again.
+    yield* credentials.put(input.credentialId, converted.success);
+    return converted.success;
+  });
+
+  /**
+   * Returns the saved credential, renewed or converted when it needs to be.
+   * One lock per credential keeps a socket renewal and an HTTP retry from
+   * spending the same token twice.
+   */
+  const resolveDirectCredential = Effect.fn(
+    "clientRuntime.connection.remote.resolveDirectCredential",
+  )(function* (input: {
+    readonly credentialId: string;
+    readonly httpBaseUrl: string;
+    readonly rejectedAccessToken?: string;
+  }) {
+    return yield* directLock(input.credentialId).withPermits(1)(
+      Effect.gen(function* (): Effect.fn.Return<ConnectionCredential, ConnectionAttemptError> {
+        const stored = yield* credentials.get(input.credentialId);
+        if (Option.isNone(stored)) {
+          return yield* credentialMissingError(input.credentialId);
+        }
+        const credential = stored.value;
+        if (credential._tag === "BearerConnectionCredential") {
+          return yield* convertBearer(input, credential);
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          credential.accessToken !== input.rejectedAccessToken &&
+          credential.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS
+        ) {
+          return credential;
+        }
+        const renewed = yield* exchangeForDirectDpop(
+          input.httpBaseUrl,
+          credential.accessToken,
+        ).pipe(Effect.mapError((error) => mapDpopSocketError(error, "direct")));
+        yield* credentials.put(input.credentialId, renewed);
+        return renewed;
+      }),
+    );
+  });
+
+  const directHttpAuthorization = (
+    credentialId: string,
+    credential: DpopConnectionCredential,
+  ): AuthorizedRemoteHttpEnvironment["httpAuthorization"] => ({
+    _tag: "Dpop",
+    accessToken: credential.accessToken,
+    expiresAtEpochMs: credential.expiresAtEpochMs,
+    credentialId,
+  });
+
+  const authorizeDirect = Effect.fn("clientRuntime.connection.remote.authorizeDirect")(function* (
+    input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDirect"]>[0],
+  ) {
+    const descriptor = yield* verifyDirectEndpoint({ ...input, connectionMethod: "direct" });
+    const endpoint = { httpBaseUrl: input.httpBaseUrl, wsBaseUrl: input.wsBaseUrl };
+    const bearer = (credential: BearerConnectionCredential) =>
+      bearerSocket(
+        { ...endpoint, bearerToken: credential.token, connectionMethod: "direct" },
+        descriptor,
+      );
+    let credential = yield* resolveDirectCredential(input);
+    if (credential._tag === "BearerConnectionCredential") return yield* bearer(credential);
+    let socket = yield* createDpopSocketUrl(credential.accessToken, endpoint, "direct").pipe(
+      Effect.result,
+    );
+    // The server may have ended this session early; its successor may still be granted.
+    if (Result.isFailure(socket) && socket.failure._tag === "EnvironmentAuthInvalidError") {
+      const renewed = yield* resolveDirectCredential({
+        ...input,
+        rejectedAccessToken: credential.accessToken,
+      });
+      if (renewed._tag === "BearerConnectionCredential") return yield* bearer(renewed);
+      credential = renewed;
+      socket = yield* createDpopSocketUrl(credential.accessToken, endpoint, "direct").pipe(
+        Effect.result,
+      );
+    }
+    if (Result.isFailure(socket)) {
+      return yield* mapDpopSocketError(socket.failure, "direct");
+    }
+    return {
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      httpBaseUrl: input.httpBaseUrl,
+      socketUrl: socket.success,
+      descriptor,
+      httpAuthorization: directHttpAuthorization(input.credentialId, credential),
+    };
+  });
+
+  const resolveDirectDpop = Effect.fn("clientRuntime.connection.remote.resolveDirectDpop")(
+    function* (direct: DirectDpopCredential, rejectedAccessToken?: string) {
+      const credential = yield* resolveDirectCredential({
+        credentialId: direct.credentialId,
+        httpBaseUrl: direct.httpBaseUrl,
+        ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+      });
+      // Pairing again with an older server can replace it with a bearer.
+      if (credential._tag !== "DpopConnectionCredential") {
+        return yield* credentialMissingError(direct.credentialId);
+      }
+      return credential;
+    },
+  );
+
   return RemoteEnvironmentAuthorization.of({
+    authorizeDirect,
     authorizeBearer,
     authorizeDpop: Effect.fn("environment.authorization")(function (input) {
       return authorizeDpop(input);
     }),
     // The relay tracer must wrap span creation, not just the token request.
     authorizeDpopHttp: Effect.fnUntraced(function* (input) {
+      const direct = input.direct;
+      if (direct !== undefined) {
+        const credential = yield* resolveDirectDpop(direct, input.rejectedAccessToken);
+        return {
+          environmentId: input.expectedEnvironmentId,
+          label: direct.label,
+          httpBaseUrl: direct.httpBaseUrl,
+          httpAuthorization: directHttpAuthorization(direct.credentialId, credential),
+        };
+      }
       return yield* getDpopToken(input).pipe(
         Effect.map(({ token }) => httpAuthorization(token)),
         Effect.withSpan("environment.authorization.http"),
@@ -549,12 +813,19 @@ export const make = Effect.gen(function* () {
         yield* Effect.sleep(
           Math.max(5_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
         );
-        const renewed = yield* getDpopToken({
-          expectedEnvironmentId: input.expectedEnvironmentId,
-        }).pipe(
-          Effect.map(({ token }) => token.expiresAtEpochMs),
-          Effect.withSpan("environment.authorization.renewSocket"),
-          withRelayClientTracing,
+        const direct = input.direct;
+        const renewed = yield* (
+          direct === undefined
+            ? getDpopToken({ expectedEnvironmentId: input.expectedEnvironmentId }).pipe(
+                Effect.map(({ token }) => token.expiresAtEpochMs),
+                Effect.withSpan("environment.authorization.renewSocket"),
+                withRelayClientTracing,
+              )
+            : resolveDirectDpop(direct).pipe(
+                Effect.map((credential) => credential.expiresAtEpochMs),
+                Effect.withSpan("environment.authorization.renewDirectSocket"),
+              )
+        ).pipe(
           // A relay blip retries until expiry; a blocked credential ends the loop.
           Effect.catchTags({ ConnectionTransientError: () => Effect.succeed(expiresAtEpochMs) }),
         );
