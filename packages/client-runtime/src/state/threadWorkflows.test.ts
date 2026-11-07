@@ -146,10 +146,11 @@ describe("thread workflows", () => {
         userMessageId: `message-${id}`,
         ordinal,
       });
-      const state = deriveThreadQueueWorkflowState({
+      const projection = {
         thread: { id: threadId, activeProviderThreadId: null },
         runs: [
           { id: "active", status: "starting", ordinal: 1 },
+          { id: "steered", status: "running", userMessageId: "message-agent", ordinal: 10 },
           queued("user", 2),
           queued("watch", 3),
           queued("agent", 4),
@@ -187,12 +188,17 @@ describe("thread workflows", () => {
         providerThreads: [],
         providerTurns: [],
         providerSessions: [],
-      } as never);
+      } as never;
+      const state = deriveThreadQueueWorkflowState(projection);
 
       expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(
         threadId === "ordinary"
           ? ["user", "watch", "compact", "scheduled", "guest"]
           : ["user", "compact", "scheduled", "guest"],
+      );
+      // Only a queued agent message gets Discard; Home reports are steered in, never discarded.
+      expect([...state.discardableAgentRunIds]).toEqual(
+        threadId === "ordinary" ? ["agent", "result", "old-agent"] : [],
       );
     },
   );

@@ -5639,6 +5639,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       return { send, runFor, end, startedRunIds, releasedAfter, awaitHeld };
     });
 
+  // Discard on a folded agent row sends the human Remove command.
+  it.effect("discards a queued agent message before delivery", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-discard-agent-message");
+      const { send, runFor } = yield* queueTestThread(threadId);
+      yield* send("active", "agent", true);
+      yield* send("duplicate", "agent", false, ThreadId.make("coordinator"));
+      const queued = yield* runFor("duplicate");
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`${threadId}:discard`),
+        threadId,
+        runId: queued.id,
+      });
+      assert.equal((yield* runFor("duplicate")).status, "cancelled");
+    }),
+  );
+
   it.effect("releases held agent messages once a later run completes, not the user's", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
