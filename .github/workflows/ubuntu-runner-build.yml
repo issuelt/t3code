@@ -110,7 +110,7 @@ jobs:
             command -v java >/dev/null || fail 'Missing JDK 17'
             java -version 2>&1 | grep -E 'version "17[.]' || fail 'Requires JDK 17'
             [[ -n "${ANDROID_HOME:-}" && "${ANDROID_SDK_ROOT:-}" == "$ANDROID_HOME" ]] || fail 'Set both Android SDK paths to the provisioned SDK'
-            for file in platforms/android-37.0/android.jar build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
+            for file in platforms/android-37.0/android.jar build-tools/36.0.0/aapt build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
               [[ -s "$ANDROID_HOME/$file" ]] || fail "Missing provisioned SDK component: $file"
             done
             for tool in build-tools/37.0.0/aapt cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja; do
@@ -193,7 +193,7 @@ jobs:
           android.buildTypes.release.signingConfig = null
           GRADLE
           # Ninja pools still cap compilation when Gradle supplies an explicit -j.
-          cat >> android/build.gradle <<'GRADLE'
+          cat > android/runner-proof-pools.gradle <<'GRADLE'
           subprojects { project ->
               ["com.android.application", "com.android.library"].each { pluginId ->
                   project.plugins.withId(pluginId) {
@@ -208,6 +208,15 @@ jobs:
               }
           }
           GRADLE
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("android/build.gradle")
+          text = path.read_text()
+          marker = 'apply plugin: "expo-root-project"'
+          if text.count(marker) != 1:
+              raise SystemExit("Expected one Expo root plugin application")
+          path.write_text(text.replace(marker, 'apply from: "runner-proof-pools.gradle"\n\n' + marker))
+          PY
           cat > android/runner-proof.init.gradle <<'GRADLE'
           gradle.settingsEvaluated {
               def heap = Runtime.runtime.maxMemory()
@@ -216,6 +225,7 @@ jobs:
           }
           GRADLE
           cp android/runner-proof.init.gradle ../../runner-proof/
+          cp android/runner-proof-pools.gradle ../../runner-proof/
           cp android/gradle.properties ../../runner-proof/generated-gradle.properties
           cp android/build.gradle ../../runner-proof/root-build.gradle
           cp android/app/build.gradle ../../runner-proof/app-build.gradle
