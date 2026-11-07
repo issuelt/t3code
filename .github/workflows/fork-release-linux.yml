@@ -194,6 +194,8 @@ jobs:
     needs: route
     if: ${{ !cancelled() && inputs.stage == 'build' }}
     name: Build linux-x64
+    # route-blacksmith.sh reserves this many minutes for the job.
+    timeout-minutes: 60
     runs-on: >-
       ${{ fromJSON(
         github.repository == 'issuelt/t3code' && (
@@ -323,6 +325,8 @@ jobs:
   android:
     needs: route
     if: ${{ !cancelled() && inputs.stage == 'build' && github.event_name != 'pull_request' }}
+    # route-blacksmith.sh reserves this many minutes for the job.
+    timeout-minutes: 90
     # Android skips VM104 until an APK build passes on the runner; an admin sets ANDROID_ON_VM104.
     runs-on: >-
       ${{ fromJSON(

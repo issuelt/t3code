@@ -62,7 +62,12 @@ const usage = (overrides = {}) => ({
 
 const routes = ({
   tally = usage(),
-  run = { id: 7, head_branch: "main", event: "schedule" },
+  run = {
+    id: 7,
+    head_branch: "main",
+    event: "schedule",
+    head_repository: { full_name: "issuelt/t3code" },
+  },
   artifacts = [{ id: 9, name: "blacksmith-usage", expired: false }],
   archive,
 } = {}) => ({
@@ -125,10 +130,29 @@ function route({
 const none = { blacksmith_linux: "", blacksmith_android: "", blacksmith_windows: "" };
 const all = { blacksmith_linux: linux, blacksmith_android: android, blacksmith_windows: windows };
 
-// Reservations: linux 8 vCPU is 60 * 4 = 240, android 16 vCPU is 60 * 8 = 480,
-// windows 8 vCPU is 60 * 4 * 2 = 480. Each fits while used + 600 + reservation <= 2400.
+// Reservations are timeout-minutes * factor: linux 8 vCPU is 60 * 4 = 240, android
+// 16 vCPU is 90 * 8 = 720, windows 8 vCPU is 60 * 4 * 2 = 480. They add up in the
+// order linux, android, windows while used + 600 + reserved <= 2400.
 const table = [
   ["nothing used", {}, all, "used 0 of 2400"],
+  [
+    "all three kinds exactly at the budget",
+    { fixtures: routes({ tally: usage({ used: 360 }) }) },
+    all,
+    "used 360",
+  ],
+  [
+    "all three kinds one minute over leaves windows out",
+    { fixtures: routes({ tally: usage({ used: 361 }) }) },
+    { ...none, blacksmith_linux: linux, blacksmith_android: android },
+    "60 minutes of blacksmith-8vcpu-windows-2025 on top of the kinds before it would pass",
+  ],
+  [
+    "android does not fit after linux, but windows still does",
+    { fixtures: routes({ tally: usage({ used: 1080 }) }) },
+    { ...none, blacksmith_linux: linux, blacksmith_windows: windows },
+    "90 minutes of blacksmith-16vcpu-ubuntu-2404 on top of the kinds before it would pass",
+  ],
   [
     "linux exactly at the budget",
     { fixtures: routes({ tally: usage({ used: 1560 }) }) },
@@ -139,19 +163,19 @@ const table = [
     "linux one minute over",
     { fixtures: routes({ tally: usage({ used: 1561 }) }) },
     none,
-    "one more hour of blacksmith-8vcpu-ubuntu-2404 would pass",
+    "60 minutes of blacksmith-8vcpu-ubuntu-2404 on top of the kinds before it would pass",
   ],
   [
-    "the larger reservations exactly at the budget",
-    { fixtures: routes({ tally: usage({ used: 1320 }) }) },
-    all,
-    "used 1320",
+    "android alone exactly at the budget",
+    { labels: { android }, fixtures: routes({ tally: usage({ used: 1080 }) }) },
+    { ...none, blacksmith_android: android },
+    "used 1080",
   ],
   [
-    "the larger reservations one minute over",
-    { fixtures: routes({ tally: usage({ used: 1321 }) }) },
-    { ...none, blacksmith_linux: linux },
-    "one more hour of blacksmith-16vcpu-ubuntu-2404 would pass",
+    "android alone one minute over",
+    { labels: { android }, fixtures: routes({ tally: usage({ used: 1081 }) }) },
+    none,
+    "would pass the budget",
   ],
   ["untrusted event, such as a fork pull request", { trusted: "false" }, none, "untrusted event"],
   ["BLACKSMITH_ROUTING=off", { routing: "off" }, none, "BLACKSMITH_ROUTING is off"],
@@ -170,6 +194,18 @@ const table = [
     "BLACKSMITH_LINUX_LABEL is not a supported label",
   ],
   [
+    "a Linux label for Windows",
+    { labels: { linux, windows: "blacksmith-8vcpu-ubuntu-2404" } },
+    { ...none, blacksmith_linux: linux },
+    "BLACKSMITH_WINDOWS_LABEL is not a supported label",
+  ],
+  [
+    "a Windows label for Linux and Android",
+    { labels: { linux: windows, android: windows, windows } },
+    { ...none, blacksmith_windows: windows },
+    "BLACKSMITH_ANDROID_LABEL is not a supported label",
+  ],
+  [
     "a label that tries to inject JSON",
     { labels: { linux: 'blacksmith-8vcpu-ubuntu-2404","x' } },
     none,
@@ -179,14 +215,14 @@ const table = [
   ["a 0 vCPU label", { labels: { linux: "blacksmith-0vcpu-ubuntu-2404" } }, none, "would pass"],
   ["no GITHUB_TOKEN", { token: "" }, none, "no GITHUB_TOKEN"],
   [
-    "a tally 3 hours and 1 second old",
-    { fixtures: routes({ tally: usage({ computed_at: iso(now - 3 * 3600 - 1) }) }) },
+    "a tally 90 minutes and 1 second old",
+    { fixtures: routes({ tally: usage({ computed_at: iso(now - 90 * 60 - 1) }) }) },
     none,
     "is stale",
   ],
   [
-    "a tally exactly 3 hours old",
-    { fixtures: routes({ tally: usage({ computed_at: iso(now - 3 * 3600) }) }) },
+    "a tally exactly 90 minutes old",
+    { fixtures: routes({ tally: usage({ computed_at: iso(now - 90 * 60) }) }) },
     all,
     "used 0",
   ],
@@ -217,7 +253,46 @@ const table = [
   ["no successful tally run", { fixtures: routes({ run: null }) }, none, "no successful"],
   [
     "a tally run from another branch",
-    { fixtures: routes({ run: { id: 7, head_branch: "pr", event: "workflow_dispatch" } }) },
+    {
+      fixtures: routes({
+        run: {
+          id: 7,
+          head_branch: "pr",
+          event: "workflow_dispatch",
+          head_repository: { full_name: "issuelt/t3code" },
+        },
+      }),
+    },
+    none,
+    "no successful",
+  ],
+  [
+    "a fork pull request from a branch named main",
+    {
+      fixtures: routes({
+        run: {
+          id: 7,
+          head_branch: "main",
+          event: "pull_request",
+          head_repository: { full_name: "someone/t3code" },
+        },
+      }),
+    },
+    none,
+    "no successful",
+  ],
+  [
+    "a scheduled run from another repository's main",
+    {
+      fixtures: routes({
+        run: {
+          id: 7,
+          head_branch: "main",
+          event: "schedule",
+          head_repository: { full_name: "someone/t3code" },
+        },
+      }),
+    },
     none,
     "no successful",
   ],

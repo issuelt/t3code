@@ -44,6 +44,8 @@ jobs:
     runs-on: >-
       ${{ matrix.platform == 'win' && github.repository == 'issuelt/t3code' && github.ref == 'refs/heads/main'
         && needs.version.outputs.blacksmith_windows || matrix.runner }}
+    # route-blacksmith.sh reserves Windows's 60 minutes; macOS keeps the default.
+    timeout-minutes: ${{ matrix.timeout_minutes || 360 }}
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +60,7 @@ jobs:
             target: nsis
             arch: x64
             runner: windows-2025
+            timeout_minutes: 60
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
     steps:

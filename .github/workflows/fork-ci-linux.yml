@@ -81,6 +81,7 @@ jobs:
           || needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
         )
         || '"ubuntu-24.04"') }}
+    # route-blacksmith.sh reserves this many minutes for the job.
     timeout-minutes: 60
     permissions:
       contents: read

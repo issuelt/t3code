@@ -1,16 +1,12 @@
-// Sums this UTC month's Blacksmith use by this repository in 2-vCPU x64
-// minutes, the unit of Blacksmith's free allowance, and writes it as JSON for
-// route-blacksmith.sh. Each job counts its rounded-up minutes, at least 1,
-// times its label's factor. A job still running counts its time so far.
-//
-// The tally reuses the previous artifact's completed runs, so each hour costs
-// one call to list workflows, one per 100 runs listed, and one per new or
-// re-run run. It stops at MAX_CALLS and writes complete: false, which the
-// router refuses; the next hour continues from the runs it counted.
+// Sums this UTC month's Blacksmith use by this repository in 2-vCPU x64 minutes
+// for route-blacksmith.sh. It reuses the previous tally's completed runs and
+// writes complete: false at MAX_CALLS or past the API's 1,000-run listing
+// limit; the router refuses an incomplete tally.
 const fs = require("node:fs");
 const path = require("node:path");
 
 const MAX_CALLS = 300;
+const MAX_LISTED = 1000;
 const LABEL = /^blacksmith-(\d+)vcpu-(ubuntu|windows|macos)-\d+(-arm(?=$|-))?(?:$|-)/;
 
 // vCPU/2 for Ubuntu x64, times 2 for Windows, times 20 for macOS, times 0.625 for ARM.
@@ -38,6 +34,11 @@ function jobUsage(job, now) {
 
 function monthOf(now) {
   return new Date(now).toISOString().slice(0, 7);
+}
+
+function previousMonthStart(month) {
+  const [year, number] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, number - 2, 1)).toISOString().replace(/\.\d+Z$/, "Z");
 }
 
 // A workflow can use Blacksmith if its file names it or calls a file that does.
@@ -68,7 +69,9 @@ function candidateFiles(dir) {
 
 async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
   const month = monthOf(now);
-  const cached = previous?.month === month ? (previous.runs ?? {}) : {};
+  const sameMonth = previous?.month === month;
+  const cached = sameMonth ? (previous.runs ?? {}) : {};
+  const spent = sameMonth ? (previous.workflows ?? {}) : {};
   let calls = 0;
   const get = async (url) => {
     if (calls >= maxCalls) throw Object.assign(new Error("call budget spent"), { budget: true });
@@ -83,14 +86,17 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
   try {
     const listed = await get("/actions/workflows?per_page=100");
     if ((listed.total_count ?? 0) > 100) throw new Error("more than 100 workflows");
-    const active = listed.workflows.filter((w) => w.state === "active" && files.includes(w.path));
-    const since = `${month}-01T00:00:00Z`;
-    for (const workflow of active) {
+    // Any state: a disabled or deleted workflow, or one that no longer names Blacksmith, already spent this month.
+    const counted = listed.workflows.filter((w) => files.includes(w.path) || spent[w.path] > 0);
+    // A run created last month can be re-run this month, and its jobs count by start time.
+    const since = previousMonthStart(month);
+    for (const workflow of counted) {
       workflows[workflow.path] = 0;
       for (let page = 1; ; page += 1) {
         const body = await get(
           `/actions/workflows/${workflow.id}/runs?created=${encodeURIComponent(`>=${since}`)}&exclude_pull_requests=true&per_page=100&page=${page}`,
         );
+        if ((body.total_count ?? 0) > MAX_LISTED) complete = false;
         for (const run of body.workflow_runs) {
           const key = String(run.id);
           const hit = cached[key];
@@ -103,7 +109,10 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
               const jobs = await get(
                 `/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`,
               );
-              for (const job of jobs.jobs) total += jobUsage(job, now);
+              for (const job of jobs.jobs) {
+                if (job.started_at && monthOf(Date.parse(job.started_at)) === month)
+                  total += jobUsage(job, now);
+              }
               if (jobPage * 100 >= (jobs.total_count ?? 0)) break;
             }
           }
@@ -111,8 +120,14 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
           workflows[workflow.path] += total;
           used += total;
         }
-        if (page * 100 >= (body.total_count ?? 0)) break;
+        if (page * 100 >= Math.min(body.total_count ?? 0, MAX_LISTED)) break;
       }
+    }
+    // A workflow the API no longer lists keeps the usage the previous tally recorded.
+    for (const [file, total] of Object.entries(spent)) {
+      if (file in workflows || !(total > 0)) continue;
+      workflows[file] = total;
+      used += total;
     }
   } catch (error) {
     if (!error.budget) throw error;

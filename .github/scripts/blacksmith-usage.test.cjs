@@ -92,30 +92,34 @@ test("candidate workflows name Blacksmith or call a workflow that does", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// A fake API with two active candidate workflows, one disabled, and one not listed.
-function api({ runs = {}, jobs = {} } = {}) {
+// A fake API with two active candidate workflows, one disabled candidate, and one non-candidate.
+function api({ runs = {}, jobs = {}, totals = {}, workflows: extra = [] } = {}) {
   const calls = [];
   const request = async (url) => {
     calls.push(url);
     if (url === "/actions/workflows?per_page=100") {
       return {
-        total_count: 4,
+        total_count: 4 + extra.length,
         workflows: [
           { id: 1, path: ".github/workflows/fork-ci.yml", state: "active" },
           { id: 2, path: ".github/workflows/fork-release.yml", state: "active" },
           { id: 3, path: ".github/workflows/release.yml", state: "disabled_manually" },
           { id: 4, path: ".github/workflows/pr-size.yml", state: "active" },
+          ...extra,
         ],
       };
     }
     const runsMatch =
-      /^\/actions\/workflows\/(\d+)\/runs\?created=%3E%3D2026-11-01T00%3A00%3A00Z&exclude_pull_requests=true&per_page=100&page=(\d+)$/.exec(
+      /^\/actions\/workflows\/(\d+)\/runs\?created=%3E%3D2026-10-01T00%3A00%3A00Z&exclude_pull_requests=true&per_page=100&page=(\d+)$/.exec(
         url,
       );
     if (runsMatch) {
       const list = runs[runsMatch[1]] ?? [];
       const page = Number(runsMatch[2]);
-      return { total_count: list.length, workflow_runs: list.slice((page - 1) * 100, page * 100) };
+      return {
+        total_count: totals[runsMatch[1]] ?? list.length,
+        workflow_runs: list.slice((page - 1) * 100, page * 100),
+      };
     }
     const jobsMatch = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=(\d+)$/.exec(
       url,
@@ -136,7 +140,7 @@ const files = [
   ".github/workflows/release.yml",
 ];
 
-test("the tally sums active candidate workflows and caches completed runs", async () => {
+test("the tally sums candidate workflows in any state and caches completed runs", async () => {
   const fake = api({
     runs: {
       1: [
@@ -165,9 +169,10 @@ test("the tally sums active candidate workflows and caches completed runs", asyn
   assert.deepEqual(result.workflows, {
     ".github/workflows/fork-ci.yml": 24,
     ".github/workflows/fork-release.yml": 40,
+    ".github/workflows/release.yml": 0,
   });
   assert.deepEqual(result.runs, { 10: { attempt: 1, used: 20 }, 20: { attempt: 2, used: 40 } });
-  assert.equal(result.calls, 6);
+  assert.equal(result.calls, 7);
 
   // The next hour reuses runs 10 and 20, and fetches run 11 again because it was still running.
   const next = api({
@@ -239,8 +244,8 @@ test("runs and jobs past 100 read the next page", async () => {
   const fake = api({ runs: { 1: many }, jobs });
   const result = await tally({ request: fake.request, files, previous: null, now });
   assert.equal(result.used, 101 * 20);
-  // The workflow list, two pages of runs, 102 jobs pages, and the second workflow's empty runs page.
-  assert.equal(result.calls, 1 + 2 + 102 + 1);
+  // The workflow list, two pages of runs, 102 jobs pages, and two other workflows' empty runs pages.
+  assert.equal(result.calls, 1 + 2 + 102 + 2);
 });
 
 test("the call budget stops the tally as incomplete and keeps what it counted", async () => {
@@ -265,7 +270,7 @@ test("the call budget stops the tally as incomplete and keeps what it counted", 
   });
   assert.equal(rest.complete, true);
   assert.equal(rest.used, 10 * 20);
-  assert.equal(rest.calls, 1 + 1 + 6 + 1);
+  assert.equal(rest.calls, 1 + 1 + 6 + 2);
 });
 
 test("a failed call fails the tally", async () => {
@@ -273,4 +278,65 @@ test("a failed call fails the tally", async () => {
   const request = async (url) =>
     url.includes("/jobs") ? Promise.reject(new Error("GET returned 500")) : fake.request(url);
   await assert.rejects(tally({ request, files, previous: null, now }), /500/);
+});
+
+test("a disabled workflow still counts", async () => {
+  const fake = api({
+    runs: { 3: [{ id: 30, status: "completed", run_attempt: 1 }] },
+    jobs: { 30: [job()] },
+  });
+  const result = await tally({ request: fake.request, files, previous: null, now });
+  assert.equal(result.used, 20);
+  assert.equal(result.workflows[".github/workflows/release.yml"], 20);
+});
+
+test("a workflow that stops naming Blacksmith keeps counting after it spent this month", async () => {
+  const previous = {
+    month: "2026-11",
+    workflows: { ".github/workflows/pr-size.yml": 20 },
+    runs: { 40: { attempt: 1, used: 20 } },
+  };
+  const fake = api({ runs: { 4: [{ id: 40, status: "completed", run_attempt: 1 }] } });
+  const result = await tally({ request: fake.request, files, previous, now });
+  assert.equal(result.used, 20);
+  assert.equal(result.workflows[".github/workflows/pr-size.yml"], 20);
+});
+
+test("a workflow the API no longer lists keeps its recorded usage", async () => {
+  const previous = { month: "2026-11", workflows: { ".github/workflows/gone.yml": 12 }, runs: {} };
+  const result = await tally({ request: api().request, files, previous, now });
+  assert.equal(result.used, 12);
+  assert.equal(result.workflows[".github/workflows/gone.yml"], 12);
+});
+
+test("last month's per-workflow usage is not carried over", async () => {
+  const previous = { month: "2026-10", workflows: { ".github/workflows/gone.yml": 12 }, runs: {} };
+  const result = await tally({ request: api().request, files, previous, now });
+  assert.equal(result.used, 0);
+});
+
+test("a run created last month counts only the jobs that started this month", async () => {
+  const fake = api({
+    runs: { 2: [{ id: 20, status: "completed", run_attempt: 2 }] },
+    jobs: {
+      20: [
+        job({ started_at: "2026-10-31T23:00:00Z", completed_at: "2026-10-31T23:10:00Z" }),
+        job({ started_at: "2026-10-31T23:55:00Z", completed_at: "2026-11-01T00:05:00Z" }),
+        job({ started_at: "2026-11-01T00:00:00Z", completed_at: "2026-11-01T00:05:00Z" }),
+      ],
+    },
+  });
+  const result = await tally({ request: fake.request, files, previous: null, now });
+  assert.equal(result.used, 20);
+});
+
+test("a run listing past 1,000 results marks the tally incomplete", async () => {
+  const fake = api({
+    runs: { 1: [{ id: 10, status: "completed", run_attempt: 1 }] },
+    jobs: { 10: [job()] },
+    totals: { 1: 1001 },
+  });
+  const result = await tally({ request: fake.request, files, previous: null, now });
+  assert.equal(result.complete, false);
+  assert.equal(result.used, 20);
 });

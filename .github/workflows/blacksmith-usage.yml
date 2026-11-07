@@ -3,7 +3,7 @@ name: Blacksmith usage
 # Counts this UTC month's Blacksmith minutes for this repository and publishes
 # them as the blacksmith-usage artifact. route-blacksmith.sh reads the newest
 # one from a successful main run and keeps jobs hosted when it is missing,
-# older than 3 hours, incomplete, or from another month.
+# older than 90 minutes, incomplete, or from another month.
 
 on:
   schedule:
@@ -40,11 +40,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          # A fork pull request can come from a branch named main, so the event and repository must match too.
           run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/blacksmith-usage.yml/runs?branch=main&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // empty' 2>/dev/null)" || run=""
+            --jq '.workflow_runs[0] | select(.head_branch == "main" and (.event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == "issuelt/t3code") | .id' 2>/dev/null)" || run=""
           if [[ "$run" =~ ^[0-9]+$ ]]; then echo "run=$run" >> "$GITHUB_OUTPUT"; fi
 
-      # A missing previous tally only costs one jobs call per run this month.
+      # A missing previous tally only costs one jobs call per run since last month began.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         if: steps.previous.outputs.run != ''
         continue-on-error: true
