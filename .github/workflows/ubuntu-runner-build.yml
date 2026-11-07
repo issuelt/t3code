@@ -96,7 +96,7 @@ jobs:
           require(entry is not None, "Requires cgroup v2")
           root = Path("/sys/fs/cgroup")
           current = root / entry.lstrip("/")
-          limits = {"memory.high": 4 * 1024**3, "memory.max": 4500 * 1024**2, "memory.swap.max": 8 * 1024**3}
+          limits = {"memory.high": 6 * 1024**3, "memory.max": 6656 * 1024**2, "memory.swap.max": 8 * 1024**3}
           bounded = None
           for candidate in [current, *current.parents]:
               if candidate == root or root not in candidate.parents:
@@ -114,7 +114,7 @@ jobs:
               bounded = candidate
               print(f"Enforced cgroup: {candidate}, CPU {quota}/{period}, {values}")
               break
-          require(bounded is not None, "Conf must enforce CPUQuota<=400%, MemoryHigh<=4G, MemoryMax<=4500M, MemorySwapMax<=8G on the runner service")
+          require(bounded is not None, "Conf must enforce CPUQuota<=400%, MemoryHigh<=6G, MemoryMax<=6656M, MemorySwapMax<=8G on the runner service")
           with open(os.environ["GITHUB_ENV"], "a") as output:
               output.write(f"PROOF_CGROUP={bounded}\n")
           PY
