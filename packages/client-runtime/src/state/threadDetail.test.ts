@@ -261,6 +261,21 @@ describe("timelineVisibleTurnItemsAtom", () => {
       status: "pending",
       senderThreadId: v2ThreadId,
     });
+    const firstRows = registry.get(timeline);
+    const streamed = {
+      ...withItem({ ...assistant, text: "Hello", updatedAt: later }, later),
+      messages: initial.messages,
+      runs: initial.runs,
+    };
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some(streamed),
+      }),
+    );
+    expect(registry.get(timeline)[1]).toBe(firstRows[1]);
+    expect(registry.get(timeline)).toBe(firstRows);
     const pending = registry.get(timeline)[1];
     if (pending === undefined) throw new Error("Missing pending agent row");
     registry.set(
