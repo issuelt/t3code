@@ -80,7 +80,8 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
+          cache: ${{ runner.environment == 'github-hosted' }}
           run-install: true
       - id: meta
         run: |
@@ -117,7 +118,8 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
+          cache: ${{ runner.environment == 'github-hosted' }}
           run-install: false
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -131,13 +133,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
 
-      # Limits from ubuntu-runner-build.yml, sized for the first 4.5 GiB job cgroup; the cgroup is now 6.5 GiB.
+      # VM104 runs 8 vCPUs with a 6.5 GiB job cgroup; six Cargo jobs peaked near 5 GB there.
       - name: Bound build parallelism
         if: runner.environment != 'github-hosted'
         run: |
           {
-            echo "CARGO_BUILD_JOBS=2"
-            echo "XZ_OPT=-T1"
+            echo "CARGO_BUILD_JOBS=6"
+            echo "XZ_OPT=-T0"
             echo "NODE_OPTIONS=--max-old-space-size=3072"
           } >> "$GITHUB_ENV"
 
@@ -228,7 +230,8 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
+          cache: ${{ runner.environment == 'github-hosted' }}
           run-install: false
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -385,7 +388,8 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
+          cache: ${{ runner.environment == 'github-hosted' }}
           run-install: false
 
       - name: Install dependencies
