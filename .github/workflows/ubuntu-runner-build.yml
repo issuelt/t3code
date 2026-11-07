@@ -197,16 +197,17 @@ jobs:
           Path(sys.argv[1]).write_text(json.dumps(data, indent=2) + "\n")
           PYTHON
 
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+      # actions/checkout without persisted credentials runs `git submodule foreach` in the step,
+      # and the gitlinks under .repos/ have no .gitmodules entries, so it exits 128.
+      - name: Checkout
         timeout-minutes: 5
-        with:
-          repository: issuelt/t3code
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/issuelt/t3code.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
       - name: Provision pinned hosted tools
         id: hosted_setup
