@@ -1,9 +1,10 @@
 import * as NodeModule from "node:module";
-import { describe, expect, it } from "vite-plus/test";
+import type { NavigationState } from "@react-navigation/native";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
-} from "../features/workspace/android-workspace-tabs";
+} from "../features/layout/workspace/android-workspace-tabs";
 import {
   linkedThreadStep,
   parentThreadIsBelow,
@@ -12,18 +13,75 @@ import {
 } from "./android-workspace-navigation";
 import type { RootStackResetAction } from "./root-stack-reset";
 
-const require = NodeModule.createRequire(import.meta.url);
-const nativePackage = require.resolve("@react-navigation/native/package.json");
-const requireFromNative = NodeModule.createRequire(nativePackage);
-const corePackage = requireFromNative.resolve("@react-navigation/core/package.json");
-const requireFromCore = NodeModule.createRequire(corePackage);
-const { CommonActions, StackActions, StackRouter } = requireFromCore(
-  "@react-navigation/routers",
-) as {
-  readonly CommonActions: typeof import("@react-navigation/native").CommonActions;
-  readonly StackActions: typeof import("@react-navigation/native").StackActions;
-  readonly StackRouter: typeof import("@react-navigation/native").StackRouter;
-};
+function loadRouters() {
+  const require = NodeModule.createRequire(import.meta.url);
+  const nativePackage = require.resolve("@react-navigation/native/package.json");
+  const corePackage = NodeModule.createRequire(nativePackage).resolve(
+    "@react-navigation/core/package.json",
+  );
+  return NodeModule.createRequire(corePackage)("@react-navigation/routers") as {
+    readonly CommonActions: typeof import("@react-navigation/native").CommonActions;
+    readonly StackActions: typeof import("@react-navigation/native").StackActions;
+    readonly StackRouter: typeof import("@react-navigation/native").StackRouter;
+  };
+}
+
+vi.mock("@react-navigation/native", () => ({
+  ...loadRouters(),
+  useNavigation: () => navigation,
+  useRoute: () => current.routes[current.index],
+  useFocusEffect: (callback: () => unknown) => callback(),
+}));
+vi.mock("react", () => ({ useCallback: (callback: unknown) => callback }));
+vi.mock("react-native", () => ({
+  Platform: { OS: "android" },
+  Keyboard: { isVisible: () => false },
+  BackHandler: {
+    addEventListener: (_event: string, callback: () => boolean) => {
+      hardwareBack = callback;
+      return { remove: () => {} };
+    },
+  },
+}));
+vi.mock("../features/layout/workspace/WorkspaceTabsContext", () => ({
+  useWorkspaceTabs: () => ({ dispatch: selectTab }),
+}));
+vi.mock("../state/entities", () => ({
+  useThreadShell: () => ({ projectId: "project-a" }),
+  useProjects: () => [],
+}));
+vi.mock("../features/layout/workspace/useSelectWorkspaceDetail", () => ({
+  useSelectWorkspaceDetail: () => (detail: typeof pullRequest) => {
+    current = apply(
+      current,
+      CommonActions.reset({
+        stale: true,
+        index: 1,
+        routes: [{ name: "Home", key: current.routes[0]?.key }, detail],
+      }),
+    );
+  },
+}));
+vi.mock("../state/atom-registry", () => ({ appAtomRegistry: { get: () => new Map() } }));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/use-thread-pr", () => ({
+  withKnownPullRequestSummary: <T>(destination: T) => destination,
+}));
+vi.mock("./pullRequestNavigation", () => ({
+  nativePullRequestDestination: (_url: string, context: object) => ({
+    ...pullRequest.params,
+    ...context,
+  }),
+}));
+vi.mock("./openExternalUrl", () => ({ tryOpenExternalUrl: vi.fn() }));
+
+import { useOpenPullRequest } from "../native/useOpenPullRequest";
+import {
+  useAndroidWorkspaceBack,
+  useWorkspaceListNavigation,
+} from "../features/layout/workspace/useAndroidWorkspaceNavigation";
+
+const { CommonActions, StackActions, StackRouter } = loadRouters();
 const router = StackRouter({});
 const options = {
   routeNames: [
@@ -83,6 +141,31 @@ function legacyHistory() {
 function names(state: ReturnType<typeof router.getInitialState>) {
   return state.routes.map((route) => route.name);
 }
+
+let current = router.getInitialState(options);
+let hardwareBack: (() => boolean) | undefined;
+const selectTab = vi.fn();
+type RouterAction = Parameters<typeof router.getStateForAction>[1];
+const navigation = {
+  getState: () => current,
+  getParent: () => undefined,
+  canGoBack: () => router.getStateForAction(current, CommonActions.goBack(), options) !== null,
+  goBack: () => {
+    current = apply(current, CommonActions.goBack());
+  },
+  navigate: (name: string, params: object) => {
+    current = apply(current, CommonActions.navigate(name, params));
+  },
+  dispatch: (action: RouterAction | ((state: NavigationState) => RouterAction)) => {
+    current = apply(current, typeof action === "function" ? action(current) : action);
+  },
+};
+
+beforeEach(() => {
+  current = router.getInitialState(options);
+  hardwareBack = undefined;
+  selectTab.mockClear();
+});
 
 describe("Android workspace navigation", () => {
   it("returns to a distinct previous thread, otherwise to the workspace list", () => {
@@ -256,4 +339,79 @@ describe("Android Settings tab", () => {
     expect(names(list)).toEqual(["Home"]);
     expect(list.routes[0]?.key).toBe(previous.routes[0]?.key);
   });
+});
+
+describe("Android contextual navigation", () => {
+  it.each([false, true])(
+    "restores the original chat history after a PR link (replace sheet: %s)",
+    async (replace) => {
+      current = apply(
+        current,
+        StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
+      );
+      current = apply(current, StackActions.push(thread.name, thread.params));
+      const previous = current.routes;
+      if (replace) current = apply(current, StackActions.push("GitOverview", thread.params));
+      await useOpenPullRequest({ replace })("https://github.com/owner/repository/pull/42");
+      expect(current.routes.slice(0, -1)).toEqual(previous);
+      expect(current.routes.at(-1)).toMatchObject(pullRequest);
+      const back = useAndroidWorkspaceBack("pullRequests");
+      if (replace) {
+        if (!hardwareBack?.()) navigation.goBack();
+      } else back();
+      expect(current.routes).toEqual(previous);
+      expect(selectTab).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns through detail history on Back but clears it on an explicit list switch", () => {
+    const previous = legacyHistory();
+    current = apply(
+      previous,
+      StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
+    );
+    useAndroidWorkspaceBack("threads")();
+    expect(current.routes).toEqual(previous.routes);
+    expect(selectTab).not.toHaveBeenCalled();
+    useWorkspaceListNavigation("threads")();
+    expect(current.routes).toEqual([previous.routes[0]]);
+    expect(selectTab).toHaveBeenLastCalledWith({ type: "select", tab: "threads" });
+    expect(navigation.canGoBack()).toBe(false);
+  });
+});
+
+it.each([false, true])(
+  "returns to the PR diff after opening a thread (first send: %s)",
+  (draft) => {
+    current = legacyHistory();
+    current = apply(
+      current,
+      StackActions.push("PullRequestFile", { ...pullRequest.params, path: "file.ts" }),
+    );
+    const previous = current.routes;
+    current = apply(
+      current,
+      StackActions.push("Thread", draft ? { draft: { draftId: "pr-draft" } } : thread.params),
+    );
+    if (draft)
+      current = apply(current, CommonActions.setParams({ draft: undefined, ...thread.params }));
+    const back = useAndroidWorkspaceBack("threads");
+    if (draft) hardwareBack?.();
+    else back();
+    expect(current.routes).toEqual(previous);
+    expect(selectTab).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps chat history when a PR links to itself", async () => {
+  current = withThread();
+  const chat = current.routes;
+  await useOpenPullRequest()("https://github.com/owner/repository/pull/42");
+  const previous = current.routes;
+  await useOpenPullRequest()("https://github.com/owner/repository/pull/42");
+  useAndroidWorkspaceBack("pullRequests")();
+  expect(current.routes).toEqual(previous);
+  useAndroidWorkspaceBack("pullRequests")();
+  expect(current.routes).toEqual(chat);
+  expect(selectTab).not.toHaveBeenCalled();
 });

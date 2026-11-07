@@ -412,7 +412,7 @@ describe("V2 session presentation", () => {
     });
   });
 
-  it("files agent messages and watch reports to Home in the work log, and keeps the user's own as a message", () => {
+  it("files agent messages in every thread and Home watch reports in the work log, and keeps human prompts", () => {
     const now = DateTime.makeUnsafe("2026-10-30T00:00:00.000Z");
     const message = (threadId: ThreadId, id: string, sender?: ThreadId, text = "Merged #17.") =>
       ({
@@ -461,7 +461,7 @@ describe("V2 session presentation", () => {
       })),
       optimisticMessages: [],
     });
-    expect(entries.map((entry) => entry.kind)).toEqual(["work", "message", "message", "work"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["work", "message", "work", "work"]);
     expect(entries[0]).toMatchObject({
       kind: "work",
       entry: { itemType: "user_message", detail: "Merged #17." },
@@ -474,6 +474,37 @@ describe("V2 session presentation", () => {
       "Completed · OS exam study guide app",
       "Asks a question · b",
     ]);
+    for (const inputIntent of [
+      "queued_turn",
+      "turn_start",
+      "steer",
+      "promoted_queued_to_steer",
+    ] as const) {
+      const item = {
+        ...message(ThreadId.make("worker"), "agent-history", pm),
+        inputIntent,
+        status: "pending" as const,
+      };
+      expect(
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [
+            {
+              position: 0,
+              visibility: "inherited",
+              sourceThreadId: item.threadId,
+              sourceItemId: item.id,
+              item,
+            },
+          ],
+          optimisticMessages: [],
+        }),
+      ).toMatchObject([
+        {
+          kind: "work",
+          entry: { detail: "Merged #17.", projectedItem: { item: { senderThreadId: pm } } },
+        },
+      ]);
+    }
     expect(watchReportSummaryLines("from-pm", "Merged #17.")).toBeNull();
     expect(watchReportMarkdown("home-report:1", report)).toBe(
       "Completed · [OS exam study guide app](t3://v2/env/a)\n\nAsks a question · [b](t3://v2/env/b)",

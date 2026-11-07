@@ -1,4 +1,5 @@
 import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
+import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -6,7 +7,7 @@ import { BackgroundThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
-  runtimeModeOptions as runtimeModes,
+  resolveRuntimeModeOptions,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -72,6 +73,7 @@ import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
   composerRequiresModifier,
+  composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -136,8 +138,13 @@ import {
   useAttachmentUploadStore,
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
+import { useDictationShortcut } from "../../speech/useDictationShortcut";
+import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
+import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -209,7 +216,6 @@ import {
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveShortcutCommand } from "../../keybindings";
-import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { ComposerDictationControl } from "./ComposerDictationControl";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
@@ -265,7 +271,7 @@ import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
@@ -297,8 +303,6 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   deadline.current = 0;
   return armed;
 }
-
-const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
 export interface ChatComposerHandle {
   handleMenuNavigationKey: (event: KeyboardEvent) => boolean;
@@ -361,6 +365,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  getShortcutContext: (target: EventTarget | null) => Partial<ShortcutMatchContext>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -403,6 +408,8 @@ export interface ChatComposerProps {
   onUsageLimitsCommand?: (() => void) | undefined;
   sideChatAvailable?: boolean;
   sideChatDisabledReason?: string | null;
+  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
+  onFreshSession?: (() => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -445,6 +452,7 @@ export interface ChatComposerProps {
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
+  projectName?: string | undefined;
 
   contextWindowEntries: Parameters<typeof deriveLatestContextWindowSnapshot>[0];
   contextWindowLiveUsage: Parameters<typeof deriveLatestContextWindowSnapshot>[1];
@@ -572,6 +580,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     reportedModelSelection,
     activeProjectId,
+    projectName,
     contextWindowEntries,
     contextWindowLiveUsage,
     contextWindowProviderThread,
@@ -746,6 +755,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerContextActions = {
     environmentId,
     cwd: gitCwd ?? undefined,
+    projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
       const preview = buildExpandedImagePreview(composerImages, imageId);
       if (preview) onExpandImage(preview);
@@ -938,12 +948,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const managedPolicy = useManagedPolicy(environmentId);
-  const compatibleRuntimeModeOptions = runtimeModeOptions
-    .filter((option) => compatibleRuntimeModes.includes(option.mode))
-    .map((option) => {
-      const disabledReason = managedRuntimeModeDenial(managedPolicy, option.mode);
-      return disabledReason === undefined ? option : { ...option, disabledReason };
-    });
+  const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
+    compatibleRuntimeModes,
+    managedPolicy,
+  );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = managedRuntimeModeDenial(managedPolicy, compatibleRuntimeMode);
   const runtimeModeCeilingFallback =
@@ -984,11 +992,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         start: inserted.start,
         end: inserted.end + (closed.cursor - selection.start),
       };
-      const previous = promptRef.current;
-      applyPromptReplacement(0, previous.length, closed.text, {
-        expandedCursorAfterReplace: closed.cursor,
-        focusEditorAfterReplace: false,
-      });
+      onPromptChange(
+        closed.text,
+        collapseExpandedComposerCursor(closed.text, closed.cursor, isLiteralPendingAnswer),
+        closed.cursor,
+        isLiteralPendingAnswer,
+        isLiteralPendingAnswer ? [] : collectInlineContextIds(closed.text),
+      );
     },
     onCommitted: () => {
       composerEditorRef.current?.focusAt(composerCursor);
@@ -1222,6 +1232,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     sideChatAvailable: props.sideChatAvailable === true,
     sideChatDisabledReason: props.sideChatDisabledReason ?? null,
+    freshSessionAvailable: props.onFreshSession !== undefined,
     compactSlashCommandAvailable,
     selectedProvider,
     selectedProviderSkills,
@@ -1266,10 +1277,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   /** The editor refuses text for these reasons; dictation also freezes it while active. */
   const composerTextUnavailable =
-    isComposerApprovalState ||
-    projectSelectionRequired ||
-    isChoiceOnlyPendingQuestion ||
-    activePendingIsResponding;
+    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
@@ -1919,6 +1927,54 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const readComposerSnapshotStable = useStableCallback(readComposerSnapshot);
 
+  const dictationDisabled =
+    !canOperateThread ||
+    environmentUnavailable !== null ||
+    projectSelectionRequired ||
+    isComposerApprovalState ||
+    activePendingIsResponding ||
+    activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const speechInput = useEnvironmentSpeechInput({
+    environmentId,
+    projectId: activeProjectId,
+    projectName,
+    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
+    draftText: prompt,
+    disabled: dictationDisabled,
+    readDraft: () => {
+      const snapshot = readComposerSnapshot();
+      return {
+        text: snapshot.value,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: snapshot.expandedCursor,
+          end: snapshot.expandedCursor,
+        },
+      };
+    },
+    commitDraft: (text, selection) => {
+      const snapshot = readComposerSnapshot();
+      const applied = applyPromptReplacement(0, snapshot.value.length, text, {
+        expectedText: snapshot.value,
+        focusEditorAfterReplace: false,
+      });
+      if (!applied) return;
+      const cursor = collapseExpandedComposerCursor(text, selection.start, isLiteralPendingAnswer);
+      setComposerCursor(cursor);
+      window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
+    },
+  });
+  const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
+  const voiceSendDisabledReason =
+    sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
+  const dictationShortcutLabel = useDictationShortcut({
+    keybindings,
+    speech: speechInput,
+    disabled: dictationDisabled,
+    terminalOpen,
+    modelPickerOpen: isComposerModelPickerOpen,
+    ...(backgroundThread ? { targetRef: composerFormRef } : {}),
+  });
+
   const resolveActiveComposerTrigger = (): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -1966,6 +2022,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
           setIsComposerModelPickerOpen(true);
+        }
+        return;
+      }
+      if (item.command === "clear") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          props.onFreshSession?.();
         }
         return;
       }
@@ -2150,11 +2216,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
   };
 
+  const submitComposerRef = useRef<
+    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+  >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
+    if (voiceInputActive) {
+      event?.preventDefault();
+      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      return;
+    }
     if (
       noProviderAvailable ||
       isSendDisabled ||
@@ -2212,6 +2286,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
+  useLayoutEffect(() => {
+    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
+  }, [submitComposerStable]);
+  useDictationSubmissionShortcut({
+    enabled: voiceInputActive && !speechInput.preparing,
+    formRef: composerFormRef,
+    onKeyDown: (event) => {
+      const intent = composerSubmissionIntentForKey({
+        event,
+        keybindings,
+        isSoftwareKeyboardOpen,
+        isDraftThread: routeKind === "draft",
+        isRunning: phase === "running",
+        sendShortcut: settings.sendShortcut,
+        prompt: promptRef.current,
+      });
+      if (!intent) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      submitComposer(
+        undefined,
+        resolveComposerDispatchMode({
+          running: phase === "running",
+          alternateModifier: intent === "alternate",
+          canSteer: !isCompacting,
+          activeTurnDefault: followUpBehavior,
+        }),
+        intent,
+      );
+    },
+  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -2592,12 +2698,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     enabled: !composerTextUnavailable,
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
+      (backgroundThread
+        ? event.target instanceof Node && composerFormRef.current?.contains(event.target) === true
+        : !isInSideChatPane(event.target)) &&
       resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: getTerminalFocusOwner() !== null,
-          terminalOpen,
-          modelPickerOpen: isComposerModelPickerOpen,
-        },
+        context: props.getShortcutContext(event.target),
       }) === "composer.dictate",
   });
 
@@ -3534,7 +3639,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 : (promptSuggestion?.text ?? DEFAULT_COMPOSER_PLACEHOLDER)
                     }
                     placeholderHint={promptSuggestion !== null ? <Kbd>→</Kbd> : undefined}
-                    disabled={composerTextUnavailable || dictation.active}
+                    disabled={
+                      composerTextUnavailable || dictation.active || speechInput.freezesEditor
+                    }
                   />
                 </ComposerContextActionsContext>
                 {showMobilePendingAnswerActions ? (
@@ -3551,7 +3658,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={voiceSendDisabledReason}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
                         noProviderAvailable ||
@@ -3573,13 +3680,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
-            {isComposerCollapsedMobile ? null : (
+            {speechInput.preview ? (
+              <div
+                aria-label="Live transcription"
+                className="mx-3 mb-3 max-h-32 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
+              >
+                <span>{speechInput.preview.committed}</span>
+                <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
+              </div>
+            ) : null}
+
+            {isComposerCollapsedMobile && speechInput.state.phase === "idle" ? null : (
               <div
                 data-chat-composer-footer="true"
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
-                  showMobilePendingAnswerActions && "hidden sm:flex",
+                  showMobilePendingAnswerActions &&
+                    speechInput.state.phase === "idle" &&
+                    "hidden sm:flex",
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
@@ -3635,16 +3754,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
-                    promptHasText={prompt.trim().length > 0}
+                    promptHasText={prompt.trim().length > 0 || voiceInputActive}
+                    voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={voiceSendDisabledReason}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||
                       projectSelectionRequired
                     }
                     isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
+                    hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     isEditingQueuedMessage={isEditingQueuedMessage}
@@ -3661,7 +3781,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {...(compactCommandAvailable
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
-                  />
+                  >
+                    {speechInput.available ? (
+                      <>
+                        <ComposerSpeechRecordingPill
+                          state={speechInput.state}
+                          progress={null}
+                          finishShortcutLabel={dictationShortcutLabel}
+                          cancelShortcutLabel="Esc"
+                          level={speechInput.level}
+                          disabled={dictationDisabled}
+                          onStart={() => void speechInput.start()}
+                          onStop={() => void speechInput.stop()}
+                          onCancel={() => speechInput.cancel()}
+                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                        />
+                        <ComposerSpeechButton
+                          state={speechInput.state}
+                          progress={null}
+                          shortcutLabel={dictationShortcutLabel}
+                          disabled={dictationDisabled}
+                          onStart={() => void speechInput.start()}
+                          onCancel={() => speechInput.cancel()}
+                        />
+                      </>
+                    ) : null}
+                    <VoiceInputSetup
+                      environmentId={speechInput.transcriptionEnvironmentId}
+                      open={speechInput.setup.open}
+                      step={speechInput.setup.step}
+                      status={speechInput.status}
+                      model={speechInput.setup.model}
+                      downloading={speechInput.setup.downloading}
+                      error={speechInput.setup.error}
+                      onOpenChange={speechInput.setup.setOpen}
+                      onDownload={() => void speechInput.setup.download()}
+                      onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                      onStartRecording={() => void speechInput.setup.startRecording()}
+                    />
+                  </ComposerFooterPrimaryActions>
                 </div>
               </div>
             )}

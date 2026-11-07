@@ -19,6 +19,7 @@ import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { fxClient } from "@t3tools/provider-fx/client";
 import { grokClient } from "@t3tools/provider-grok/client";
+import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
@@ -45,6 +46,7 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
   cursorClient,
   grokClient,
   fxClient,
+  kiroClient,
   museClient,
   openCodeClient,
   piClient,
@@ -74,6 +76,10 @@ const KNOWN_DRIVERS: ReadonlyMap<ProviderDriverKind, KnownDriver> = new Map([
     known(client.driverKind, client.label, client.settingsSchema, client.hasDefaultInstance),
   ),
 ]);
+
+/** Each driver a policy may name, with the label users see. */
+export const knownDriverLabels = () =>
+  Array.from(KNOWN_DRIVERS, ([driver, { label }]) => ({ driver, label }));
 
 const PINNED_CONFIG_FIELDS = ["binaryPath", "launchArgs"] as const;
 type PinnedConfigField = (typeof PINNED_CONFIG_FIELDS)[number];
@@ -156,13 +162,29 @@ export const providerHostEnvironment = (
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
   if (summary === undefined) return environment;
-  const next = { ...environment };
-  for (const name of Object.keys(next)) {
-    if (LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase())) {
-      delete next[name];
-    }
-  }
-  return next;
+  const allowed = (name: string | symbol) =>
+    typeof name !== "string" ||
+    !LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase());
+  return new Proxy(
+    {},
+    {
+      get: (_, name) => (allowed(name) ? Reflect.get(environment, name) : undefined),
+      has: (_, name) => allowed(name) && Reflect.has(environment, name),
+      ownKeys: () => Reflect.ownKeys(environment).filter(allowed),
+      getOwnPropertyDescriptor: (_, name) =>
+        allowed(name) && Reflect.has(environment, name)
+          ? {
+              configurable: true,
+              enumerable: true,
+              value: Reflect.get(environment, name),
+              writable: false,
+            }
+          : undefined,
+      set: () => false,
+      deleteProperty: () => false,
+      defineProperty: () => false,
+    },
+  );
 };
 
 /** Each driver's home variable, and the settings that rewrite it at launch. */
@@ -200,7 +222,8 @@ const sameVariable = (
   left === right ||
   (left !== undefined &&
     right !== undefined &&
-    left.value === right.value &&
+    // A secret reference is an object, and a decoded copy is never the stored one.
+    sameValue(left.value, right.value) &&
     left.sensitive === right.sensitive);
 
 const pinnedFields = (pin: ManagedProviderInstance): ReadonlyArray<PinnedConfigField> =>

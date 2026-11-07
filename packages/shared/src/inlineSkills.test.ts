@@ -20,11 +20,16 @@ describe("replaceSpokenSkills", () => {
     expect([...matchInlineSkills(text, skills)].map((match) => match.skill.name)).toEqual([
       "review",
     ]);
+    const sentences = replaceSpokenSkills("Use the review skill. Then run tests.", skills);
+    expect(sentences).toBe("Use $review. Then run tests.");
+    expect([...matchInlineSkills(sentences, skills)].map((match) => match.skill.name)).toEqual([
+      "review",
+    ]);
   });
 
   it("matches multi-word names, split words, and small recognition slips", () => {
     expect(replaceSpokenSkills("potato mode skill, fix the bug", skills)).toBe(
-      "$poteto-mode fix the bug",
+      "$poteto-mode, fix the bug",
     );
     expect(replaceSpokenSkills("run skill post plan read on it", skills)).toBe(
       "run $postplan-read on it",
@@ -77,5 +82,29 @@ describe("formatProviderSkillDisplayName", () => {
     expect(formatProviderSkillDisplayName({ name: "gh-fix-ci", displayName: " Fix CI " })).toBe(
       "Fix CI",
     );
+  });
+});
+
+describe("matchInlineSkills", () => {
+  it("preserves offsets, skill identity, first-name precedence, and unknown tokens", () => {
+    const first = { name: "design", displayName: "Design" };
+    const duplicate = { name: "design", displayName: "Other design" };
+    const namespaced = { name: "pdf:pdf" };
+    const matches = [
+      ...matchInlineSkills("Use $design then $missing and $pdf:pdf, $pdf:pdf $design", [
+        first,
+        duplicate,
+        namespaced,
+      ]),
+    ];
+    expect(matches).toEqual([
+      { start: 4, end: 11, skill: first, rawText: "$design" },
+      { start: 30, end: 38, skill: namespaced, rawText: "$pdf:pdf" },
+      { start: 40, end: 48, skill: namespaced, rawText: "$pdf:pdf" },
+      { start: 49, end: 56, skill: first, rawText: "$design" },
+    ]);
+    expect(matches[0]?.skill).toBe(first);
+    expect(matches[1]?.skill).toBe(namespaced);
+    expect(matches[3]?.skill).toBe(first);
   });
 });

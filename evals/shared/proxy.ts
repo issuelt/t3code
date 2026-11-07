@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 const decodeProxyConfig = Schema.decodeUnknownSync(
   Schema.Struct({ url: Schema.String, headers: Schema.Record(Schema.String, Schema.String) }),
 );
-/** Reads the `vibeproxy` CLIProxyAPI provider from `~/.codex/config.toml`. */
+/** Reads a Codex provider, defaulting to `vibeproxy` in `~/.codex/config.toml`. */
 export const proxyConfig = () =>
   decodeProxyConfig(
     JSON.parse(
@@ -17,8 +17,10 @@ export const proxyConfig = () =>
           "-c",
           `
 import json, os, pathlib, tomllib
-home = pathlib.Path.home() / '.codex'
-p = tomllib.loads((home / 'config.toml').read_text())['model_providers']['vibeproxy']
+config = pathlib.Path(os.environ.get('EVAL_CODEX_CONFIG', str(pathlib.Path.home() / '.codex' / 'config.toml'))).expanduser()
+home = config.parent
+provider = os.environ.get('EVAL_CODEX_PROVIDER', 'vibeproxy')
+p = tomllib.loads(config.read_text())['model_providers'][provider]
 h = p.get('http_headers', {}).copy()
 h.update({k: os.environ[v] for k,v in p.get('env_http_headers', {}).items()})
 key = os.environ[p['env_key']] if p.get('env_key') else p.get('experimental_bearer_token')

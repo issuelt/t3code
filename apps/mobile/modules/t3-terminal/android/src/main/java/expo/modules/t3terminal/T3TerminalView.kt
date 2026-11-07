@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -21,11 +22,19 @@ import kotlin.math.max
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
+  private val sentText = TerminalSentText()
 
   // Newer Android can request autofill even with importantForAutofill=no.
   // Reporting no autofill type keeps terminal input out of credential autofill.
   private val inputView = object : EditText(context) {
     override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+      super.onCreateInputConnection(outAttrs)?.let { connection ->
+        TerminalInputConnection(connection, sentText, { !readOnly }) { count ->
+          if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
+        }
+      }
   }
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
@@ -278,14 +287,23 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+      val controlByte = when (keyCode) {
+        in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> keyCode - KeyEvent.KEYCODE_A + 1
+        KeyEvent.KEYCODE_LEFT_BRACKET -> 0x1B
+        KeyEvent.KEYCODE_BACKSLASH -> 0x1C
+        KeyEvent.KEYCODE_RIGHT_BRACKET -> 0x1D
+        else -> null
+      }
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
+          sentText.removeCodePoints(1)
           onInput(mapOf("data" to "\u007F"))
           true
         }
-        event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
+        // The terminal owns control chords before the app's navigation shortcuts.
+        event.isCtrlPressed && controlByte != null -> {
           onInput(
-            mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
+            mapOf("data" to controlByte.toChar().toString()),
           )
           true
         }
@@ -302,6 +320,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           val end = (start + count).coerceAtMost(s.length)
           if (start < end) {
             val insertedText = s.subSequence(start, end).toString()
+            sentText.append(insertedText)
             onInput(mapOf("data" to insertedText))
           }
         }

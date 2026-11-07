@@ -15,7 +15,7 @@ import {
   type ToolActivitySource,
   type ThreadId,
   type TurnItemId,
-  isHomeDeliveredMessage,
+  isAgentDeliveredMessage,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -68,6 +68,7 @@ export type WorkLogToolLifecycleStatus =
   | "stopped";
 
 export interface WorkLogEntry {
+  readonly attachments?: ReadonlyArray<ChatAttachment>;
   readonly questionAnswer?: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
   readonly id: string;
   readonly createdAt: string;
@@ -612,7 +613,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&
-      item.status === "pending"
+      item.status === "pending" &&
+      !isAgentDeliveredMessage(item.threadId, item)
     )
       continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
@@ -638,9 +640,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       });
       continue;
     }
-    // Home acts for the user, so a message an agent or T3 Code sent there is a report in the
-    // work log, not a turn of the conversation.
-    if (item.type === "user_message" && isHomeDeliveredMessage(item.threadId, item)) {
+    // Agent deliveries belong to the work log even while waiting for a turn.
+    if (item.type === "user_message" && isAgentDeliveredMessage(item.threadId, item)) {
       entries.push({
         id: item.id,
         kind: "work",
@@ -649,8 +650,12 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           id: item.id,
           createdAt,
           runId: item.runId,
-          label: item.senderThreadId ?? item.messageId,
+          label: "Agent",
           detail: item.text,
+          attachments: item.attachments.map((attachment) => {
+            const previewUrl = input.attachmentUrlById?.get(attachment.id);
+            return previewUrl ? { ...attachment, previewUrl } : attachment;
+          }),
           tone: "info",
           itemType: item.type,
           structuredPayload: item,

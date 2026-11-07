@@ -109,7 +109,9 @@ function compactText(text: string, maxLength = 240): string {
   if (compacted.length <= maxLength) {
     return compacted;
   }
-  return `${compacted.slice(0, maxLength - 3)}...`;
+  const end = maxLength - 3;
+  const last = compacted.charCodeAt(end - 1);
+  return `${compacted.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end)}...`;
 }
 
 export function visibleDeltaRunOrdinals(
@@ -128,7 +130,7 @@ export function visibleDeltaRunOrdinals(
   return from === Infinity ? { from: 1, to: 1 } : { from, to };
 }
 
-/** Drops rolled-back runs and cancelled queued messages, which are not part of the conversation. */
+/** Only delivered conversation items belong in provider context. */
 export function visibleConversationItems(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts">,
   items: ReadonlyArray<OrchestrationV2TurnItem>,
@@ -138,7 +140,15 @@ export function visibleConversationItems(
     attempts: projection.attempts,
     items,
   });
-  return items.filter(visible);
+  return items.filter(
+    (item) =>
+      visible(item) &&
+      !(
+        item.type === "user_message" &&
+        item.inputIntent === "queued_turn" &&
+        item.status === "pending"
+      ),
+  );
 }
 
 type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "attempts">;
@@ -211,7 +221,7 @@ function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":
-      return `- File change: ${item.fileName}`;
+      return `- File change: ${compactText(item.changes?.map((change) => change.path).join(", ") ?? item.fileName)}`;
     case "checkpoint":
       return `- Checkpoint: ${item.files.length} files`;
     case "handoff":

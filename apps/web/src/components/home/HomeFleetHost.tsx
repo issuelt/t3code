@@ -29,10 +29,8 @@ const WATCH_REPORT_RETRY_MS = 5_000;
 const WATCH_REPORT_ATTEMPTS = 12;
 
 /**
- * Desktop-only host for Home, which runs on the desktop's own server. While
- * Home is on, this renderer relays Home's calls to the user's other
- * environments over the connections it already holds, reports watched thread
- * changes back to Home, and keeps itself alive when the window closes.
+ * Relays agent calls over the desktop's existing connections. Home additionally
+ * watches thread changes and keeps the desktop alive when its window closes.
  */
 export function HomeFleetHost() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -44,17 +42,16 @@ function HomeHub({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const home = settings?.home ?? DEFAULT_HOME_SETTINGS;
   const on = home.threadId !== null;
-  // oxlint-disable-next-line t3code/react-effect-budget -- keeps the desktop shell alive while this relay is mounted
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the desktop shell alive while this relay is mounted
   useEffect(() => {
     void window.desktopBridge?.setKeepAliveOnClose?.(on);
     // Without a relay running, closing the window should quit as usual.
     return () => void window.desktopBridge?.setKeepAliveOnClose?.(false);
   }, [on]);
-  if (!on) return null;
   return (
     <>
       <HomeRelays homeEnvironmentId={environmentId} />
-      <HomeWatchReporter environmentId={environmentId} home={home} />
+      {on && <HomeWatchReporter environmentId={environmentId} home={home} />}
     </>
   );
 }
@@ -129,7 +126,11 @@ function HomeRelay({
         connected: environment.connection.phase === "connected",
       })),
   );
-  const registration: FleetHostRegistration = { clientId, environments: JSON.parse(reachKey) };
+  const registration: FleetHostRegistration = {
+    clientId,
+    mcpRelay: environmentId === homeEnvironmentId,
+    environments: JSON.parse(reachKey),
+  };
   const requestsAtom = homeEnvironment.relayRequests({ environmentId, input: registration });
   const invoke = useAtomCommand(homeEnvironment.invoke, { reportFailure: false });
   const respond = useAtomCommand(homeEnvironment.relayRespond, { reportFailure: false });
@@ -157,7 +158,7 @@ function HomeRelay({
   // The consumer outlives renders, so it reads the latest handler from an atom.
   const [handlerAtom] = useState(() => Atom.make({ handle }));
   const setHandler = useAtomSet(handlerAtom);
-  // oxlint-disable-next-line t3code/react-effect-budget -- the long-lived consumer reads the latest handler, which must not be written during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the long-lived consumer reads the latest handler, which must not be written during render
   useEffect(() => {
     setHandler({ handle });
   }, [handle, setHandler]);
@@ -202,7 +203,7 @@ function HomeWatchReporter({
   const sending = useRef(false);
   const stopped = useRef(false);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- reports watched-thread changes to the server, a side effect of new shells
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports watched-thread changes to the server, a side effect of new shells
   useEffect(() => {
     const { next, events } = diffWatchedThreads({
       previous: previous.current,
@@ -240,7 +241,7 @@ function HomeWatchReporter({
     timer.current = setTimeout(() => void send(), WATCH_REPORT_DELAY_MS);
   }, [environmentId, home, knownWatchKeys, labels, liveEnvironmentIds, report, shells]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- cancels the pending report timer on unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending report timer on unmount
   useEffect(() => {
     stopped.current = false;
     return () => {

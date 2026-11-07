@@ -14,7 +14,12 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
-import { createEnvironmentThreadDetailAtoms, sameThreadStructure } from "./threadDetail.ts";
+import type { ThreadStructureVisibleTurnItem } from "./models.ts";
+import {
+  createEnvironmentThreadDetailAtoms,
+  deriveWorkspaceMutationId,
+  sameThreadStructure,
+} from "./threadDetail.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threadState.ts";
 
@@ -200,6 +205,102 @@ describe("quietThreadAtom", () => {
 describe("timelineVisibleTurnItemsAtom", () => {
   const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
 
+  it("shows historical queued agent messages until a persisted item replaces them", () => {
+    const message = {
+      id: MessageId.make("queued-agent"),
+      threadId: v2ThreadId,
+      runId: RunId.make("queued-run"),
+      nodeId: null,
+      role: "user" as const,
+      text: "Review ready",
+      attachments: [],
+      streaming: false,
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+      senderThreadId: v2ThreadId,
+      createdAt: v2Now,
+      updatedAt: v2Now,
+    };
+    const run = {
+      id: RunId.make("queued-run"),
+      threadId: v2ThreadId,
+      ordinal: 2,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: message.id,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "queued" as const,
+      queueHeld: true,
+      requestedAt: v2Now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const initial = { ...withItem(assistant), messages: [message], runs: [run] };
+    const state = Atom.make(
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some<OrchestrationV2ThreadProjection>(initial),
+      }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    const timeline = details.timelineVisibleTurnItemsAtom(ref);
+    const quiet = details.quietVisibleTurnItemsAtom(ref);
+    registry.mount(timeline);
+    registry.mount(quiet);
+    expect(registry.get(timeline)).toHaveLength(2);
+    expect(registry.get(quiet)).toHaveLength(2);
+    expect(registry.get(timeline)[1]?.item).toMatchObject({
+      type: "user_message",
+      text: message.text,
+      status: "pending",
+      senderThreadId: v2ThreadId,
+    });
+    const firstRows = registry.get(timeline);
+    const streamed = {
+      ...withItem({ ...assistant, text: "Hello", updatedAt: later }, later),
+      messages: initial.messages,
+      runs: initial.runs,
+    };
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some(streamed),
+      }),
+    );
+    expect(registry.get(timeline)[1]).toBe(firstRows[1]);
+    expect(registry.get(timeline)).toBe(firstRows);
+    const pending = registry.get(timeline)[1];
+    if (pending === undefined) throw new Error("Missing pending agent row");
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some({
+          ...initial,
+          turnItems: [...initial.turnItems, pending.item],
+          visibleTurnItems: [...initial.visibleTurnItems, pending],
+        }),
+      }),
+    );
+    expect(registry.get(timeline)).toHaveLength(2);
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some({ ...initial, runs: [{ ...run, status: "cancelled" as const }] }),
+      }),
+    );
+    expect(registry.get(timeline)).toHaveLength(1);
+    expect(registry.get(quiet)).toHaveLength(1);
+  });
+
   it("holds through streamed assistant text while the message reads its own text", () => {
     const stateAtom = Atom.make(
       AsyncResult.success({
@@ -348,4 +449,36 @@ it("matches full structure comparisons across streamed, batched, and reordered u
     [reasoning.id, 0],
     [assistant.id, 1],
   ]);
+});
+
+describe("deriveWorkspaceMutationId", () => {
+  const item = (id: string, type: string, status: string) =>
+    ({
+      item: { id: TurnItemId.make(id), type, status },
+    }) as unknown as ThreadStructureVisibleTurnItem;
+
+  it("keys on the latest finished command or file change and the latest checkpoint", () => {
+    expect(
+      deriveWorkspaceMutationId(
+        [
+          item("edit", "file_change", "completed"),
+          item("reply", "assistant_message", "completed"),
+          item("command", "command_execution", "running"),
+        ],
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toBe(JSON.stringify(["edit", "2026-01-01T00:00:00.000Z"]));
+    expect(
+      deriveWorkspaceMutationId(
+        [item("edit", "file_change", "completed"), item("mcp", "dynamic_tool", "completed")],
+        null,
+      ),
+    ).toBe(JSON.stringify(["mcp", null]));
+  });
+
+  it("is null before anything could have touched the workspace", () => {
+    expect(deriveWorkspaceMutationId([item("reply", "assistant_message", "completed")], null)).toBe(
+      null,
+    );
+  });
 });

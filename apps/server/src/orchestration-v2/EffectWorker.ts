@@ -32,6 +32,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { CoordinationResultDeferred } from "./CoordinationDelivery.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
+const isCoordinationResultDeferred = Schema.is(CoordinationResultDeferred);
+
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
   {
@@ -322,6 +324,10 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // Notifications must be queued messages.
+                    const queued =
+                      message.delegatedCompletion !== undefined ||
+                      message.notification !== undefined;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -336,10 +342,7 @@ export const layerExecutor: Layer.Layer<
                           ? {}
                           : { modelSelection: run.modelSelection }),
                         dispatchMode: {
-                          type:
-                            message.delegatedCompletion === undefined
-                              ? "start_immediately"
-                              : "queue_after_active",
+                          type: queued ? "queue_after_active" : "start_immediately",
                         },
                         createdBy: message.createdBy,
                         creationSource: message.creationSource,
@@ -868,7 +871,7 @@ export const layerWithOptions = (
             Option.isSome(failure) &&
             ((isMcpFailure(failure.value.cause) &&
               failure.value.cause.code === "environment_unavailable") ||
-              failure.value.cause instanceof CoordinationResultDeferred);
+              isCoordinationResultDeferred(failure.value.cause));
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })

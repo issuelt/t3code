@@ -17,6 +17,7 @@ import {
   type EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isImageAttachment, type ChatAttachment } from "../../types";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
@@ -32,10 +33,13 @@ import {
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
+  selectMessageImageResources,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
+import { MessageAttachments } from "./MessageAttachments";
+import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import {
@@ -162,10 +166,34 @@ type WorkEntryRowProps = {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 };
 
-/**
- * A report to Home: folded, its sender's title, or each watched event and thread title of a
- * watch report; expanded, its text.
- */
+function AgentMessageAttachments({ attachments }: { attachments: ReadonlyArray<ChatAttachment> }) {
+  const ctx = use(TimelineRowCtx);
+  const resources = selectMessageImageResources(attachments);
+  const urls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
+  const urlsById = new Map(
+    resources.map((resource, index) => [resource.attachmentId, urls[index] ?? undefined]),
+  );
+  const imageUrl = (attachment: ChatAttachment) =>
+    ("previewUrl" in attachment ? attachment.previewUrl : undefined) ?? urlsById.get(attachment.id);
+  return (
+    <MessageAttachments
+      attachments={attachments}
+      imageUrl={imageUrl}
+      onOpenImage={(attachment) => {
+        const preview = buildExpandedImagePreview(
+          attachments.filter(isImageAttachment).flatMap((image) => {
+            const previewUrl = imageUrl(image);
+            return previewUrl === undefined ? [] : [{ ...image, previewUrl }];
+          }),
+          attachment.id,
+        );
+        if (preview !== null) ctx.onImageExpand(preview);
+      }}
+      onOpenFile={ctx.onFileOpen}
+    />
+  );
+}
+
 function AgentMessageWorkRow({
   workEntry,
   onToggleEntry,
@@ -179,7 +207,13 @@ function AgentMessageWorkRow({
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   const item = workEntry.projectedItem?.item;
-  const senderThreadId = item?.type === "user_message" ? item.senderThreadId : undefined;
+  const attachments =
+    workEntry.attachments ?? (item?.type === "user_message" ? item.attachments : []);
+  const senderThreadId =
+    item?.type === "user_message"
+      ? (item.senderThreadId ??
+        (item.coordination?.kind === "request" ? item.coordination.requester.threadId : undefined))
+      : undefined;
   const localSender = useQuietThreadShell(
     senderThreadId === undefined
       ? null
@@ -273,9 +307,10 @@ function AgentMessageWorkRow({
     >
       {/* Find reads the DOM, so a folded report stays mounted but hidden while find is open. */}
       {expanded || ctx.findActive ? (
-        <div ref={revealRef} hidden={!expanded}>
+        <div ref={revealRef} hidden={!expanded} onClick={stopRowToggle} onKeyDown={stopRowToggle}>
           <WorkLogDetails>
             <div className="border-s ps-3">
+              <AgentMessageAttachments attachments={attachments} />
               <ChatMarkdown
                 text={reportMarkdown ?? workEntry.detail ?? ""}
                 cwd={ctx.markdownCwd}
@@ -352,7 +387,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
     const resetAt = failureItem.failure.resetAt;
-    const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
+    // The reset time is the viewer's local time; naming the zone keeps it
+    // unambiguous. Both read the zone now, since the device's can change.
+    const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const resetTime = resetAt
+      ? `${formatUpcomingTimestamp(resetAt, timestampFormat, undefined, timeZone)} (${timeZone})`
+      : null;
     const label = warning
       ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : workEntry.label;

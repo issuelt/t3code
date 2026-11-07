@@ -44,7 +44,7 @@ import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
-import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
+import { MessageAttachments } from "../chat/MessageAttachments";
 import { HostImageUrlContext } from "../chat/hostImageUrl";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
@@ -606,7 +606,7 @@ function UnplacedGuestMessage({
           message.status === "dismissed" ? "text-muted-foreground" : "text-message-foreground",
         )}
       >
-        <GuestMessageAttachments
+        <MessageAttachments
           attachments={message.attachments ?? []}
           imageUrl={(attachment) => (served ? url(attachment) : undefined)}
           onOpenImage={(attachment) => openInNewTab(url(attachment))}

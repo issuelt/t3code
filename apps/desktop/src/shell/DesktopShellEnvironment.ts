@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -75,7 +76,8 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // Desktop owns discovery, including on cache misses; the backend receives updates over fd4.
+    // Yields true only when a cached environment was applied; on a miss the backend hydrates
+    // PATH itself until desktop discovery arrives over fd4.
     readonly installIntoProcess: Effect.Effect<boolean>;
     readonly awaitDiscovery: Effect.Effect<boolean>;
     readonly updates: Stream.Stream<DesktopShellEnvironmentSnapshot>;
@@ -259,7 +261,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly shell?: boolean;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* Effect.scoped(
+  const fiber = yield* Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
         ChildProcess.make(input.command, input.args, {
@@ -302,7 +304,12 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       DesktopShellEnvironmentCommandError: (error) =>
         logShellEnvironmentCommandError(error).pipe(Effect.as("")),
     }),
+    Effect.forkDetach,
+  );
+  const output = yield* Fiber.join(fiber).pipe(
     Effect.timeoutOption(input.timeout),
+    // Interrupting awaits the child's exit, which a shell stuck in the kernel never reaches.
+    Effect.ensuring(Fiber.interrupt(fiber).pipe(Effect.forkDetach)),
   );
   if (Option.isSome(output)) {
     return output.value;
@@ -622,7 +629,8 @@ export const make = Effect.gen(function* () {
       const cache = yield* fileSystem
         .readFileString(cachePath)
         .pipe(Effect.flatMap(decodeCache), Effect.option);
-      if (Option.isSome(cache) && cache.value.key === key) {
+      const hit = Option.isSome(cache) && cache.value.key === key;
+      if (hit) {
         const cached = Object.fromEntries(
           CACHED_ENV_NAMES.flatMap((name) => {
             const value = cache.value.environment[name];
@@ -648,7 +656,7 @@ export const make = Effect.gen(function* () {
         );
       }
       yield* Effect.forkIn(refresh, scope);
-      return true;
+      return hit;
     }).pipe(Effect.withSpan("desktop.shellEnvironment.installIntoProcess")),
   );
   const updates = Stream.unwrap(

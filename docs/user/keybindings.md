@@ -5,6 +5,11 @@ also lists the command IDs and defaults available in your version.
 
 ## Composer controls
 
+`mod+shift+d` starts dictation in the focused editor, or the composer, and finishes it on the next press;
+`Esc` discards the recording. Change the chord under **Composer: Start or Finish
+Dictation**, and the hold or toggle behavior in **Settings → Voice**. See
+[Voice input](./voice-input.md).
+
 In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
@@ -76,8 +81,10 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+sends using the alternate follow-up behavior (queue or steer). To make Return insert
+a new line instead, change the Return key behavior in Settings → Keyboard. With that
+setting, `Cmd+Return` sends and `Cmd+Shift+Return` uses the alternate behavior.
+Soft keyboards always insert a new line.
 
 On Android, use `Ctrl` in place of `Cmd`. Thread shortcuts and the command palette
 need a tablet-sized screen; on a phone, `Ctrl+K` opens search.
@@ -116,8 +123,10 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`,
-`turnRunning`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
+`previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
+`draftThreadRoute`, `turnRunning`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
+`rightPanelOpen` applies only to `rightPanel.new` and is true while the right panel is
+open; the default `mod+t` uses it to open the panel's new-tab menu.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the

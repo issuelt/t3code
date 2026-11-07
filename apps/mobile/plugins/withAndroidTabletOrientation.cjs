@@ -22,65 +22,56 @@ const ORIENTATION_METHODS = `
   }
 `;
 
-const ORIENTATION_ON_CREATE_CALL = `applyTabletOrientation()
-    `;
+const ORIENTATION_ON_CREATE_CALL = `
+    applyTabletOrientation()`;
 
-function findAnchor(contents, anchor, description) {
+function insertAfter(contents, anchor, insertion, description) {
   const index = contents.indexOf(anchor);
   if (index === -1) {
     throw new Error(
       `withAndroidTabletOrientation: could not find ${description} in MainActivity — the Expo template changed; update the plugin anchors.`,
     );
   }
-  return index;
-}
-
-function insertBefore(contents, anchor, insertion, description) {
-  const index = findAnchor(contents, anchor, description);
-  return contents.slice(0, index) + insertion + contents.slice(index);
-}
-
-function insertAfter(contents, anchor, insertion, description) {
-  const end = findAnchor(contents, anchor, description) + anchor.length;
+  const end = index + anchor.length;
   return contents.slice(0, end) + insertion + contents.slice(end);
 }
 
-function withUnlockedManifestOrientation(config) {
-  return withAndroidManifest(config, (nextConfig) => {
+module.exports = function withAndroidTabletOrientation(config) {
+  config = withAndroidManifest(config, (nextConfig) => {
     const mainActivity = AndroidConfig.Manifest.getMainActivityOrThrow(nextConfig.modResults);
     delete mainActivity.$["android:screenOrientation"];
     return nextConfig;
   });
-}
-
-module.exports = function withAndroidTabletOrientation(config) {
-  config = withUnlockedManifestOrientation(config);
   return withMainActivity(config, (nextConfig) => {
     let contents = nextConfig.modResults.contents;
     if (nextConfig.modResults.language !== "kt") {
       throw new Error("withAndroidTabletOrientation: MainActivity must be Kotlin.");
     }
-    if (contents.includes("SCREEN_ORIENTATION_FULL_USER")) {
-      return nextConfig;
+    if (!contents.includes("SCREEN_ORIENTATION_FULL_USER")) {
+      contents = insertAfter(
+        contents,
+        "import android.os.Bundle",
+        "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
+        "the android.os.Bundle import",
+      );
+      contents = insertAfter(
+        contents,
+        "class MainActivity : ReactActivity() {",
+        ORIENTATION_METHODS,
+        "the MainActivity class declaration",
+      );
     }
 
-    contents = insertAfter(
-      contents,
-      "import android.os.Bundle",
-      "\nimport android.content.pm.ActivityInfo\nimport android.content.res.Configuration",
-      "the android.os.Bundle import",
+    // Relocate the call in existing native projects too, before splash setup and React content.
+    contents = contents.replace(
+      /override fun onCreate\(savedInstanceState: Bundle\?\) \{[\s\S]*?\n  \}/,
+      (onCreate) => onCreate.replace(/\n[ \t]*applyTabletOrientation\(\)/g, ""),
     );
     contents = insertAfter(
       contents,
-      "class MainActivity : ReactActivity() {",
-      ORIENTATION_METHODS,
-      "the MainActivity class declaration",
-    );
-    contents = insertBefore(
-      contents,
-      "super.onCreate(null)",
+      "override fun onCreate(savedInstanceState: Bundle?) {",
       ORIENTATION_ON_CREATE_CALL,
-      "the super.onCreate call",
+      "the onCreate declaration",
     );
 
     nextConfig.modResults.contents = contents;

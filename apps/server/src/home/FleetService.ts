@@ -7,7 +7,7 @@ import {
   CommandId,
   type FleetActor,
   type FleetInput,
-  type FleetInvokeInput,
+  type HomeFleetInvokeInput,
   type FleetOperation,
   type FleetResult,
   isHomeLaunchedThreadId,
@@ -24,7 +24,7 @@ import {
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,7 +66,9 @@ export class FleetService extends Context.Service<
   FleetService,
   {
     /** Runs one operation and returns its result, typed by `FleetResults[op]`. */
-    readonly execute: (input: FleetInvokeInput) => Effect.Effect<unknown, OrchestratorMcpFailure>;
+    readonly execute: (
+      input: HomeFleetInvokeInput,
+    ) => Effect.Effect<unknown, OrchestratorMcpFailure>;
   }
 >()("t3/home/FleetService") {}
 
@@ -127,7 +129,7 @@ const make = Effect.gen(function* () {
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const settings = yield* ServerSettings.ServerSettingsService;
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const repositories = yield* Repositories.SourceControlRepositoryService;
   const threadSearch = yield* ThreadSearch.ThreadSearch;
   // Links in results point at this environment, wherever the call came from.
@@ -141,7 +143,7 @@ const make = Effect.gen(function* () {
     target?: { readonly threadId: ThreadId; readonly clientRequestId?: string | undefined },
   ) =>
     (target?.clientRequestId === undefined
-      ? crypto.randomUUIDv4().pipe(Effect.orDie)
+      ? random.uuidV4().pipe(Effect.orDie)
       : Effect.succeed(
           `${actor.environmentId}:${actor.threadId}:${target.threadId}:${target.clientRequestId}`,
         )
@@ -202,14 +204,14 @@ const make = Effect.gen(function* () {
       createProject(input).pipe(
         Effect.provideService(ProjectService.ProjectService, projects),
         Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, folders),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, random),
       ),
     ),
 
     "projects.update": Effect.fn("FleetService.projects.update")((input) =>
       updateProject(input).pipe(
         Effect.provideService(ProjectService.ProjectService, projects),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, random),
       ),
     ),
 
@@ -625,7 +627,7 @@ const make = Effect.gen(function* () {
   };
 
   // Each handler takes its own operation's input; the request union keeps them paired.
-  const run = (request: FleetInvokeInput["request"], actor: FleetActor) =>
+  const run = (request: HomeFleetInvokeInput["request"], actor: FleetActor) =>
     (
       handlers[request.op] as (
         input: never,

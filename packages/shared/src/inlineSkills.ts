@@ -9,15 +9,22 @@ export function formatProviderSkillDisplayName(
 }
 
 const SKILL_TOKEN_REGEX =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|[.,!?;:]|$)/gu;
 
 export function* matchInlineSkills<Skill extends InlineSkill>(
   text: string,
   skills: readonly Skill[],
 ) {
+  const byName = new Map<string, Skill | undefined>();
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const name = match[2] ?? "";
-    const skill = skills.find((candidate) => candidate.name === name);
+    if (!byName.has(name)) {
+      byName.set(
+        name,
+        skills.find((candidate) => candidate.name === name),
+      );
+    }
+    const skill = byName.get(name);
     if (!skill) continue;
     const start = match.index + (match[1]?.length ?? 0);
     yield { start, end: match.index + match[0].length, skill, rawText: `$${name}` };
@@ -122,7 +129,10 @@ export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]
     if (words[first]!.start < consumedUntil) continue;
     replacements.push({
       start: words[first]!.start,
-      end: words[match.last]!.end,
+      end:
+        words[match.last]!.start +
+        text.slice(words[match.last]!.start, words[match.last]!.end).replace(/[^\p{L}\p{N}]+$/u, "")
+          .length,
       token: `$${match.skill.name}`,
     });
     consumedUntil = words[match.last]!.end;

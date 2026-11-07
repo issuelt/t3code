@@ -37,6 +37,7 @@ import {
   OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 import {
+  type OrchestrationV2ConversationMessage,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -124,6 +125,28 @@ export const isHomeDeliveredMessage = (
   message.createdBy !== "user" &&
   message.idleCompaction === undefined &&
   message.scheduledTaskId === undefined;
+
+/** Durable agent provenance, including coordination results created by the server. */
+export const isAgentDeliveredMessage = (
+  threadId: string,
+  message: {
+    readonly createdBy?: string | undefined;
+    readonly creationSource?: string | undefined;
+    readonly senderThreadId?: string | undefined;
+    readonly coordination?: OrchestrationV2ConversationMessage["coordination"] | undefined;
+    readonly idleCompaction?: unknown;
+    readonly scheduledTaskId?: unknown;
+    readonly context?: { readonly guest?: unknown } | undefined;
+  },
+): boolean =>
+  message.idleCompaction === undefined &&
+  message.scheduledTaskId === undefined &&
+  message.context?.guest === undefined &&
+  (message.senderThreadId !== undefined ||
+    message.coordination !== undefined ||
+    (message.createdBy === "agent" &&
+      (message.creationSource === "mcp" || message.creationSource === "provider")) ||
+    (isHomeThreadId(threadId) && message.createdBy !== undefined && message.createdBy !== "user"));
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;
@@ -416,7 +439,23 @@ export type FleetResult<Op extends FleetOperation> = (typeof FleetResults)[Op]["
 export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: Op }>["input"];
 
 /** Runs one fleet operation on the environment that receives it. */
-export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
+export const HomeFleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
+export type HomeFleetInvokeInput = typeof HomeFleetInvokeInput.Type;
+
+/** A desktop connection runs an ordinary MCP call with per-request caller limits. */
+export const DesktopMcpInvokeInput = Schema.Struct({
+  mcp: Schema.Struct({
+    tool: TrimmedNonEmptyString,
+    arguments: Schema.Record(Schema.String, Schema.Unknown),
+    namespace: TrimmedNonEmptyString,
+    readOnly: Schema.Boolean,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+});
+export type DesktopMcpInvokeInput = typeof DesktopMcpInvokeInput.Type;
+
+export const FleetInvokeInput = Schema.Union([HomeFleetInvokeInput, DesktopMcpInvokeInput]);
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
 
 // Hub <-> desktop renderer relay.
@@ -431,6 +470,7 @@ export type FleetEnvironment = typeof FleetEnvironment.Type;
 /** A desktop renderer offering to relay Home's calls to its connections. */
 export const FleetHostRegistration = Schema.Struct({
   clientId: TrimmedNonEmptyString,
+  mcpRelay: Schema.optional(Schema.Boolean),
   environments: Schema.Array(FleetEnvironment),
 });
 export type FleetHostRegistration = typeof FleetHostRegistration.Type;

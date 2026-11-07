@@ -3,7 +3,7 @@
   "prs": [
     {
       "number": 15030,
-      "takenSha": "a2d855c9f602d50da63fea6c07d3ca6c7db36655",
+      "takenSha": "10a559eb78969c6b4338baa550a8383506ffb0a2",
       "reason": "iOS race fixes and Android keyboard parity"
     },
     {
@@ -25,31 +25,35 @@
     },
     {
       "number": 17890,
-      "takenSha": "0a5d3e0083e43946b180dc4cc89568af111c645c",
+      "takenSha": "8f5b0434d7404ca8d1cfa0f60c62b79a7b719b1a",
       "reason": "Android subscription usage widgets",
+      "note": "8f5b0434d7 only merges upstream main into the PR; the fork resolved the same merge itself.",
       "closedUpstream": true
     },
     {
       "number": 18634,
-      "takenSha": "6485555d5d7c365849dd6def5a335c8171238ccf",
+      "takenSha": "dc6f194db92178418f6aa34ceeb2bc4577ab0b17",
       "reason": "Android tablets launched in landscape open full screen"
     },
     {
       "number": 18839,
-      "takenSha": "457acb425c5fa5d5248bc0ed646b5ccb68f8f256",
+      "takenSha": "9d3aac8a0ee60a1883f067185ca1a9705e385360",
       "reason": "Android PR viewer keeps the chat back stack"
     },
     {
       "number": 19273,
-      "takenSha": "c983c522ad9c2e3ffd5735cdbfca6c073f9cde95",
+      "takenSha": "b8d5c37cf59f7989edaf14dea2822f28ae841fdb",
       "reason": "Local-model composer dictation"
     },
     {
-      "number": 19424,
-      "takenSha": "9e5e520f786566b3004a004efc9e21817ad49e9c",
-      "reason": "Android foldables use the sidebar header",
-      "note": "Took only the first two commits. Upstream superseded it with merged #21071, #20812 and #20813.",
-      "closedUpstream": true
+      "number": 28719,
+      "takenSha": "8dc3e6ff446dc1f1a714288091249ee86c91735b",
+      "reason": "Desktop cache miss lets the server hydrate PATH before provider checks"
+    },
+    {
+      "number": 31169,
+      "takenSha": "afede16a7a38b21be21ee696a1c3027f6f6b73e7",
+      "reason": "Providers re-check when a shell PATH arrives after startup; fork also re-checks failed checks"
     }
   ]
 }

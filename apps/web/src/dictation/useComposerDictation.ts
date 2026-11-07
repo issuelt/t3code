@@ -45,13 +45,7 @@ function createComposerDictationController(input: {
     resolveEnvironmentId: () => latest.current.environmentId,
     interrupt: (message) => void controller?.interruptRecording(message),
     rewriteTranscript: (text) => latest.current.rewriteTranscript(text),
-    finishedAtLimit: (uri) =>
-      void controller?.handleRecorderStatus({
-        isFinished: true,
-        hasError: false,
-        error: null,
-        url: uri,
-      }),
+    finishedAtLimit: () => void controller?.stop(),
   });
   const created = new VoiceInputController({
     ...streaming.dependencies,
@@ -119,30 +113,30 @@ export function useComposerDictation(input: {
     }),
   );
   const { controller, level, capturedAudio } = dictation;
-  // oxlint-disable-next-line t3code/react-effect-budget -- the controller outlives renders and reads the latest input, which must not be written during render
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the controller outlives renders and reads the latest input, which must not be written during render
   useLayoutEffect(() => {
     dictation.setLatest({ ...input, environmentId, modelLoaded });
   });
 
   const ownerKey = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/react-effect-budget -- switching drafts or questions abandons the controller's in-flight recording
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- switching drafts or questions abandons the controller's in-flight recording
   useEffect(() => {
     if (ownerKey.current === input.ownerKey) return;
     ownerKey.current = input.ownerKey;
     controller.ownerChanged();
   }, [controller, input.ownerKey]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- releases the microphone and worker when the composer unmounts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the microphone and worker when the composer unmounts
   useEffect(() => () => controller.dispose(), [controller]);
 
   // The editor is enabled again by the time this parent effect runs.
-  // oxlint-disable-next-line t3code/react-effect-budget -- focusing the editor needs it enabled, which happens only after this commit
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focusing the editor needs it enabled, which happens only after this commit
   useEffect(() => {
     if (state.phase !== "idle" || !dictation.takeCommitted()) return;
     dictation.latest().onCommitted();
   }, [dictation, state.phase]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- errors arrive from the async controller, not from a handler here
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- errors arrive from the async controller, not from a handler here
   useEffect(() => {
     if (state.phase !== "error" || state.error === null) return;
     toastManager.add({ type: "error", title: state.error });

@@ -53,6 +53,7 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
@@ -273,7 +274,41 @@ const decodeFleetInvoke = Schema.decodeUnknownSync(FleetInvokeInput);
 
 /** A relayed operation needs the scopes its own RPC would. */
 const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvironmentScope> => {
-  const { request } = decodeFleetInvoke(payload);
+  const invoke = decodeFleetInvoke(payload);
+  if ("mcp" in invoke) {
+    const { tool, arguments: input } = invoke.mcp;
+    if (tool === "t3_project_clone")
+      return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
+    if (
+      (tool === "t3_project_create" || tool === "t3_project_update") &&
+      input.scripts !== undefined
+    ) {
+      return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
+    }
+    switch (tool) {
+      case "orchestrator_capabilities":
+      case "list_scheduled_tasks":
+      case "t3_project_list":
+      case "t3_project_read":
+      case "t3_thread_search":
+      case "t3_thread_list":
+      case "t3_thread_read":
+      case "t3_thread_wait":
+        return [AuthOrchestrationReadScope];
+      case "t3_pending_request":
+      case "t3_queue":
+        if (input.action === "list" || input.action === "read") return [AuthOrchestrationReadScope];
+        break;
+      case "t3_thread_configure":
+        if (input.modelSelection === undefined) return [AuthOrchestrationReadScope];
+        break;
+      case "t3_thread_transfer":
+        if (input.action === "status") return [AuthOrchestrationReadScope];
+        break;
+    }
+    return [AuthOrchestrationOperateScope];
+  }
+  const { request } = invoke;
   if (request.op === "projects.clone") {
     return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   }

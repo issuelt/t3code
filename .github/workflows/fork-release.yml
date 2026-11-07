@@ -4,6 +4,8 @@ name: Fork Release
 # repository, which installed fork builds poll through electron-updater.
 # Upstream's release.yml needs Blacksmith runners and org secrets, so it stays
 # disabled here.
+# Pull requests only build Linux as a packaging canary; main builds every
+# platform before it publishes.
 
 on:
   push:
@@ -26,7 +28,27 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       name: ${{ steps.meta.outputs.name }}
+      desktop_matrix: ${{ steps.desktop.outputs.matrix }}
     steps:
+      # A matrix `exclude` cannot drop `include` entries, so the PR filter happens here.
+      - id: desktop
+        env:
+          LINUX_ONLY: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          matrix="$(jq -c --argjson linux_only "$LINUX_ONLY" \
+            '{include: map(select(($linux_only | not) or .platform == "linux"))}' <<'EOF'
+          [
+            {"platform": "mac", "target": "dmg", "arch": "arm64", "runner": "macos-15",
+             "rust_target": "aarch64-apple-darwin", "resource_key": "darwin-arm64"},
+            {"platform": "linux", "target": "AppImage", "arch": "x64", "runner": "ubuntu-24.04",
+             "rust_target": "x86_64-unknown-linux-gnu", "resource_key": "linux-x64"},
+            {"platform": "win", "target": "nsis", "arch": "x64", "runner": "windows-2025",
+             "rust_target": "x86_64-pc-windows-msvc", "resource_key": "win32-x64"}
+          ]
+          EOF
+          )"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
           sparse-checkout: |
@@ -52,26 +74,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: mac
-            target: dmg
-            arch: arm64
-            runner: macos-15
-            rust_target: aarch64-apple-darwin
-            resource_key: darwin-arm64
-          - platform: linux
-            target: AppImage
-            arch: x64
-            runner: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-gnu
-            resource_key: linux-x64
-          - platform: win
-            target: nsis
-            arch: x64
-            runner: windows-2025
-            rust_target: x86_64-pc-windows-msvc
-            resource_key: win32-x64
+      matrix: ${{ fromJSON(needs.version.outputs.desktop_matrix) }}
     steps:
       - name: Checkout
         shell: bash
@@ -211,6 +214,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: github.event_name != 'pull_request'
     needs: version
     runs-on: ubuntu-24.04
     env:
@@ -244,12 +248,14 @@ jobs:
       - name: Install dependencies
         run: vp install
 
+      # Current Android phones are arm64; each extra ABI recompiles every native library.
       - name: Build APK
         working-directory: apps/mobile
         run: |
           node_modules/.bin/expo prebuild --clean --platform android
           cd android
-          ./gradlew assembleRelease "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
+            "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
 
       # Android installs an update only when it is signed with the installed
       # app's key, so every release APK is re-signed with the fork release key.

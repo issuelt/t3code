@@ -11,7 +11,12 @@ import {
   type VoiceRecorder,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
-import type { DictationSessionId, EnvironmentId } from "@t3tools/contracts";
+import {
+  DICTATION_MAX_SECONDS,
+  DICTATION_SAMPLE_RATE,
+  type DictationSessionId,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Base64 from "effect/encoding/Base64";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -40,7 +45,12 @@ type DictationSession = {
 function rejectOnAbort(signal: AbortSignal): Promise<never> {
   return new Promise((_resolve, reject) => {
     const abort = () =>
-      reject(new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled."));
+      reject(
+        new VoiceTranscriptionError({
+          code: "cancelled",
+          message: "Voice transcription was cancelled.",
+        }),
+      );
     if (signal.aborted) abort();
     else signal.addEventListener("abort", abort, { once: true });
   });
@@ -82,6 +92,7 @@ export function createStreamingDictation(input: {
   const capture = new PcmCapture();
   const level = createDictationLevel();
   let session: DictationSession | null = null;
+  let captureStartedAt = 0;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
 
   const run = <W, A, E>(command: AtomCommand<W, A, E>, value: W) =>
@@ -159,15 +170,22 @@ export function createStreamingDictation(input: {
     prepare: async ({ signal }) => {
       const current = session;
       if (current === null) {
-        throw new VoiceTranscriptionError("unavailable", "No environment can transcribe.");
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message: "No environment can transcribe.",
+        });
       }
       // A start that never answers must not hold dictation open after a cancel.
-      const failure = await Promise.race([current.ready, rejectOnAbort(signal)]);
-      if (failure !== null) throw new VoiceTranscriptionError("preparation-failed", failure);
+      const failure = await Promise.race([current.ready, current.lost, rejectOnAbort(signal)]);
+      if (failure !== null)
+        throw new VoiceTranscriptionError({ code: "preparation-failed", message: failure });
       const sessionId = current.sessionId;
       if (signal.aborted || sessionId === null) close(current);
       if (sessionId === null) {
-        throw new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled.");
+        throw new VoiceTranscriptionError({
+          code: "cancelled",
+          message: "Voice transcription was cancelled.",
+        });
       }
       throwIfVoiceTranscriptionAborted(signal);
       signal.addEventListener("abort", () => close(current), { once: true });
@@ -183,12 +201,15 @@ export function createStreamingDictation(input: {
               input: { sessionId, chunkCount: current.chunks },
             }),
             current.lost.then((message) => {
-              throw new VoiceTranscriptionError("transcription-failed", message);
+              throw new VoiceTranscriptionError({ code: "transcription-failed", message });
             }),
             rejectOnAbort(options.signal),
           ]);
           if (finished._tag === "Failure") {
-            throw new VoiceTranscriptionError("transcription-failed", failureMessage(finished));
+            throw new VoiceTranscriptionError({
+              code: "transcription-failed",
+              message: failureMessage(finished),
+            });
           }
           current.open = false;
           return { ...finished.value, text: input.rewriteTranscript(finished.value.text) };
@@ -207,10 +228,13 @@ export function createStreamingDictation(input: {
       const current = session;
       if (current === null) throw new Error("No dictation session is open.");
       clearLimit();
-      limitTimer = setTimeout(() => {
-        limitTimer = null;
-        void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
-      }, forDuration * 1_000);
+      limitTimer = setTimeout(
+        () => {
+          limitTimer = null;
+          void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
+        },
+        Math.max(0, forDuration * 1_000 - (Date.now() - captureStartedAt)),
+      );
     },
     stop: async () => {
       clearLimit();
@@ -223,21 +247,31 @@ export function createStreamingDictation(input: {
     dependencies: {
       recorder,
       getTranscriber: () => (input.resolveEnvironmentId() === null ? null : transcriber),
-      // Opening the microphone is the browser's permission prompt. The session
-      // request goes out first so the network round trip overlaps it, and
-      // capture starts the moment the microphone is live.
+      // Permission prompts can outlive server sessions, so request a session only after consent.
       requestPermission: async () => {
         const environmentId = input.resolveEnvironmentId();
         close(session);
-        session = environmentId === null ? null : begin(environmentId);
+        session = null;
         const access = await capture.open();
         if (!access.granted) {
           return { granted: false, canAskAgain: true, message: access.message };
         }
+        session = environmentId === null ? null : begin(environmentId);
         await capture.prepare();
         const current = session;
+        captureStartedAt = Date.now();
+        let capturedBytes = 0;
+        const maxBytes = DICTATION_MAX_SECONDS * DICTATION_SAMPLE_RATE * 2;
         capture.start((frame) => {
-          if (current !== null) sendChunk(current, frame);
+          const remaining = maxBytes - capturedBytes;
+          if (current === null || remaining <= 0) return;
+          const chunk = frame.byteLength > remaining ? frame.slice(0, remaining) : frame;
+          capturedBytes += chunk.byteLength;
+          sendChunk(current, chunk);
+          if (capturedBytes === maxBytes) {
+            clearLimit();
+            void capture.stop().then(() => input.finishedAtLimit(sessionUri(current)));
+          }
         }, level.set);
         return { granted: true, canAskAgain: true };
       },

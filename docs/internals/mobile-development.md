@@ -30,8 +30,9 @@ the delegates, so a delegate that registers during delivery still receives it. P
 replay removes only handled responses from its snapshot, preserving unhandled responses and
 responses received during callbacks. The [expo-modules-core patch](../../patches/expo-modules-core@58.0.22.patch) locks
 the permission requester registry for the same reason. Both packages must stay in Expo's
-`buildFromSource` list or their precompiled frameworks bypass the patched source. Changes to these
-native patches require reinstalling dependencies and rebuilding the iOS app. pnpm keys each patch
+`buildFromSource` list or their precompiled frameworks bypass the patched source.
+Building ExpoModulesCore from source also forces its dependent Expo pods to build from source.
+Changes to these native patches require reinstalling dependencies and rebuilding the iOS app. pnpm keys each patch
 to one exact version, so an Expo upgrade must port it and update `patchedDependencies`, or the fix
 silently drops.
 The native modules under `apps/mobile/modules/` are `file:` dependencies, and pnpm

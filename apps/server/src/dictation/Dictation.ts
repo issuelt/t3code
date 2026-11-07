@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import {
   DICTATION_MAX_SECONDS,
   DICTATION_SAMPLE_RATE,
@@ -84,7 +84,7 @@ export class Dictation extends Context.Service<
 >()("t3/dictation/Dictation") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const settings = yield* ServerSettings.ServerSettingsService;
   const artifacts = yield* DictationArtifacts.DictationArtifacts;
@@ -447,7 +447,7 @@ const make = Effect.gen(function* () {
       });
     const model = yield* ensureLoaded(current);
     const id = DictationSessionId.make(
-      yield* crypto.randomUUIDv4().pipe(
+      yield* random.uuidV4().pipe(
         Effect.mapError(
           (cause) =>
             new DictationError({

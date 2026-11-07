@@ -9,7 +9,6 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 
-// Android's tablet breakpoint. Large screens get the iPad-only commands.
 private const val LARGE_SCREEN_MIN_WIDTH_DP = 600
 
 class T3KeyboardCommandsModule : Module() {
@@ -33,9 +32,7 @@ class T3KeyboardCommandsView(
   var enabledCommands = emptySet<String>()
 
   init {
-    // A key reaches dispatchKeyEvent only while focus is inside this view. With nothing focused,
-    // Android offers it to unhandled-key listeners instead. That listener needs API 28, so on
-    // API 24-27 shortcuts work only while something inside this view has focus.
+    // Without a focused descendant, shortcuts reach only the API 28+ unhandled-key listener.
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
       addOnUnhandledKeyEventListener { _, event ->
         val command = enabledCommandFor(event)
@@ -82,11 +79,6 @@ private val CTRL_SHIFT_COMMANDS = mapOf(
   KeyEvent.KEYCODE_H to "cycleHost",
 )
 
-/**
- * The command for a hardware-keyboard chord. Matches the iOS module with Ctrl in place of
- * Command. Like iPad, large screens get the command palette and thread jumps; on phones Ctrl-K
- * focuses search.
- */
 private fun hardwareKeyboardCommand(event: KeyEvent, largeScreen: Boolean): String? {
   val keyCode = event.keyCode
   return when {
