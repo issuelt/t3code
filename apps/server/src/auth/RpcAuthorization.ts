@@ -285,6 +285,26 @@ const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvir
     ) {
       return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
     }
+    switch (tool) {
+      case "orchestrator_capabilities":
+      case "t3_project_list":
+      case "t3_project_read":
+      case "t3_thread_search":
+      case "t3_thread_list":
+      case "t3_thread_read":
+      case "t3_thread_wait":
+        return [AuthOrchestrationReadScope];
+      case "t3_pending_request":
+      case "t3_queue":
+        if (input.action === "list" || input.action === "read") return [AuthOrchestrationReadScope];
+        break;
+      case "t3_thread_configure":
+        if (input.modelSelection === undefined) return [AuthOrchestrationReadScope];
+        break;
+      case "t3_thread_transfer":
+        if (input.action === "status") return [AuthOrchestrationReadScope];
+        break;
+    }
     return [AuthOrchestrationOperateScope];
   }
   const { request } = invoke;
