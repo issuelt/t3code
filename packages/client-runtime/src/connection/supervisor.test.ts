@@ -24,6 +24,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { fetchEnvironmentSessionState } from "../state/session.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
 import { BearerConnectionProfile } from "./catalog.ts";
 import {
@@ -1361,6 +1362,11 @@ describe("EnvironmentSupervisor", () => {
               get: () => Ref.get(token),
               put: (value) => Ref.set(token, Option.some(value)),
               remove: () => Ref.set(token, Option.none()),
+            }),
+            Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, {
+              get: () => Effect.succeedNone,
+              put: () => Effect.void,
+              remove: () => Effect.void,
             }),
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },

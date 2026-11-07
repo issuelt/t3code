@@ -1,5 +1,6 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,21 +9,31 @@ import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
 
-import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
-import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
+import {
+  bootstrapRemoteBearerSession,
+  exchangeRemoteDpopAccessToken,
+  fetchRemoteAuthDescriptor,
+} from "../authorization/remote.ts";
+import {
+  deriveWsBaseUrl,
+  environmentEndpointUrl,
+  normalizeHttpBaseUrl,
+} from "../environment/endpoint.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
   type ConnectionCatalogEntry,
   type ConnectionCredential,
+  DpopConnectionCredential,
   SshConnectionProfile,
   SshConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import { mapRemoteEnvironmentError } from "./errors.ts";
+import { mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -138,17 +149,53 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
-  const access = yield* bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
-    credential: target.credential,
-    clientMetadata: presentation.metadata,
-  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const auth = yield* fetchRemoteAuthDescriptor({ httpBaseUrl: target.httpBaseUrl }).pipe(
+    Effect.mapError(mapRemoteEnvironmentError),
+  );
+  const credential: ConnectionCredential =
+    auth.dpopRenewal === true
+      ? yield* redeemPairingWithDpop(target.httpBaseUrl, target.credential)
+      : new BearerConnectionCredential({
+          token: (yield* bootstrapRemoteBearerSession({
+            httpBaseUrl: target.httpBaseUrl,
+            credential: target.credential,
+            clientMetadata: presentation.metadata,
+          }).pipe(Effect.mapError(mapRemoteEnvironmentError))).access_token,
+        });
 
-  return new BearerConnectionRegistration({
-    ...route,
-    credential: new BearerConnectionCredential({
-      token: access.access_token,
-    }),
+  return new BearerConnectionRegistration({ ...route, credential });
+});
+
+/** Binds the paired session to the device's DPoP key, the one T3 Connect uses, so it can renew. */
+const redeemPairingWithDpop = Effect.fn(
+  "clientRuntime.connection.onboarding.redeemPairingWithDpop",
+)(function* (httpBaseUrl: string, pairingCredential: string) {
+  const presentation = yield* ClientCapabilities.ClientPresentation;
+  const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
+  const keyError = () =>
+    new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Could not create the environment authorization proof.",
+      hop: "device",
+    });
+  const thumbprint = yield* signer.thumbprint.pipe(Effect.mapError(keyError));
+  const dpopProof = yield* signer
+    .createProof({ method: "POST", url: environmentEndpointUrl(httpBaseUrl, "/oauth/token") })
+    .pipe(Effect.mapError(keyError));
+  const access = yield* exchangeRemoteDpopAccessToken({
+    httpBaseUrl,
+    credential: pairingCredential,
+    dpopProof,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")));
+  if (access.token_type !== "DPoP") {
+    return new BearerConnectionCredential({ token: access.access_token });
+  }
+  const issuedAt = yield* Clock.currentTimeMillis;
+  return new DpopConnectionCredential({
+    accessToken: access.access_token,
+    expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
+    dpopThumbprint: thumbprint,
   });
 });
 
@@ -168,7 +215,6 @@ const registerPairingConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
-const isBearerCredential = Schema.is(BearerConnectionCredential);
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 
 const updateBearerConnection = Effect.fn(
@@ -218,7 +264,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
   }
 
   const credential = options.credential;
-  if (Option.isNone(credential) || !isBearerCredential(credential.value)) {
+  if (Option.isNone(credential)) {
     return yield* new ConnectionBlockedError({
       reason: "authentication",
       detail: "The saved bearer credential is unavailable.",
@@ -304,6 +350,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -314,6 +361,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(ManagedRelay.ManagedRelayDpopSigner, signer),
     ),
     registerSsh: Effect.fnUntraced(
       function* (input) {

@@ -9,6 +9,9 @@ import {
   decodeOrDiscardOrchestrationCache,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
+  catalogCredential,
+  putCatalogCredential,
+  removeCatalogCredential,
   removeCatalogValue,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
@@ -790,28 +793,13 @@ export const layer = Layer.effectContext(
       get: (connectionId) =>
         catalog.read.pipe(
           Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.credentials.find((entry) => entry.connectionId === connectionId)?.credential,
-            ),
+            Option.fromUndefinedOr(catalogCredential(document, connectionId)),
           ),
         ),
       put: (connectionId, credential) =>
-        catalog.update((document) => ({
-          ...document,
-          credentials: replaceCatalogValue(document.credentials, (value) => value.connectionId, {
-            connectionId,
-            credential,
-          }),
-        })),
+        catalog.update((document) => putCatalogCredential(document, connectionId, credential)),
       remove: (connectionId) =>
-        catalog.update((document) => ({
-          ...document,
-          credentials: removeCatalogValue(
-            document.credentials,
-            (value) => value.connectionId,
-            connectionId,
-          ),
-        })),
+        catalog.update((document) => removeCatalogCredential(document, connectionId)),
     });
     const remoteTokenStore = TokenStore.make({
       get: (environmentId) =>

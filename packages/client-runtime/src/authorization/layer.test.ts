@@ -1,4 +1,5 @@
 import {
+  AuthAccessTokenType,
   AuthStandardClientScopes,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -19,7 +20,12 @@ import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "../connection/catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionCredential,
+  DpopConnectionCredential,
+} from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
@@ -91,6 +97,23 @@ const authInvalid = () =>
     { status: 401 },
   );
 
+const sessionState = (dpopRenewal: boolean) =>
+  Response.json({
+    authenticated: false,
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: ["one-time-token"],
+      sessionMethods: ["bearer-access-token", "dpop-access-token"],
+      sessionCookieName: "t3_session",
+      ...(dpopRenewal ? { dpopRenewal: true } : {}),
+    },
+  });
+
+const PAIRED_CREDENTIAL_ID = `bearer:${ENVIRONMENT_ID}:${ENDPOINT.httpBaseUrl}`;
+
+const directCredential = (accessToken: string, expiresAtEpochMs: number) =>
+  new DpopConnectionCredential({ accessToken, expiresAtEpochMs, dpopThumbprint: "thumbprint-1" });
+
 const persistedToken = (
   input: {
     readonly environmentId?: EnvironmentId;
@@ -116,7 +139,33 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
+  readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
 }) {
+  const credentials = yield* Ref.make(
+    new Map<string, ConnectionCredential>(
+      input.credentials ?? [
+        ["direct-1", new BearerConnectionCredential({ token: "bearer-token" })],
+      ],
+    ),
+  );
+  const credentialPuts = yield* Queue.unbounded<ConnectionCredential>();
+  const credentialStore = ConnectionCredentialStore.ConnectionCredentialStore.of({
+    get: (connectionId) =>
+      Ref.get(credentials).pipe(
+        Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
+      ),
+    put: (connectionId, credential) =>
+      Ref.update(credentials, (current) => new Map(current).set(connectionId, credential)).pipe(
+        Effect.andThen(Queue.offer(credentialPuts, credential)),
+        Effect.asVoid,
+      ),
+    remove: (connectionId) =>
+      Ref.update(credentials, (current) => {
+        const next = new Map(current);
+        next.delete(connectionId);
+        return next;
+      }),
+  });
   const tokens = yield* Ref.make(
     new Map(
       input.initialToken === undefined
@@ -211,6 +260,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
           deviceId: Effect.succeedSome("device-1"),
         }),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
+        Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
         Layer.succeed(
           ClientCapabilities.ClientPresentation,
           ClientCapabilities.ClientPresentation.of({
@@ -234,17 +284,37 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     session,
     thumbprint,
     tokenReads,
+    credentials,
+    credentialPuts,
   };
 });
+
+const tokenRequests = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
+  harness.fetch.calls
+    .filter(([url]) => String(url).endsWith("/oauth/token"))
+    .map(([, init]) => {
+      const body = new URLSearchParams(
+        init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : String(init.body),
+      );
+      return {
+        subjectToken: body.get("subject_token"),
+        subjectTokenType: body.get("subject_token_type"),
+        dpop: new Headers(init.headers).get("dpop"),
+      };
+    });
+
+const requestPaths = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
+  harness.fetch.calls.map(([url]) => new URL(String(url)).pathname);
 
 const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBearer")(function* (
   harness: Effect.Success<ReturnType<typeof makeHarness>>,
   times: number,
+  connectionId = "direct-1",
 ) {
   const target = new BearerConnectionTarget({
     environmentId: ENVIRONMENT_ID,
     label: DESCRIPTOR.label,
-    connectionId: "direct-1",
+    connectionId,
   });
   const entry = {
     target,
@@ -266,11 +336,6 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
         harness.layer,
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, {
           get: unused,
-          put: unused,
-          remove: unused,
-        }),
-        Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, {
-          get: () => Effect.succeedSome(new BearerConnectionCredential({ token: "bearer-token" })),
           put: unused,
           remove: unused,
         }),
@@ -652,6 +717,187 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* Queue.take(puts);
         expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
+  it.effect(
+    "renews a direct DPoP credential with the environment before expiry and after sleep",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          credentials: [["direct-1", directCredential("direct-1", 3_600_000)]],
+          responses: [
+            accessToken("direct-2"),
+            Response.json({
+              ...DESCRIPTOR,
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+            }),
+            accessToken("direct-3"),
+            websocketTicket("after-sleep"),
+          ],
+        });
+
+        yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          const renewal = yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              expiresAtEpochMs: 3_600_000,
+              direct: {
+                credentialId: "direct-1",
+                httpBaseUrl: ENDPOINT.httpBaseUrl,
+                label: DESCRIPTOR.label,
+              },
+            })
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(3_540_000 - 1);
+          expect(harness.fetch.calls).toHaveLength(0);
+          yield* TestClock.adjust(1);
+          expect(yield* Queue.take(harness.credentialPuts)).toEqual(
+            directCredential("direct-2", 3_540_000 + 3_600_000),
+          );
+          // The device sleeps past the renewed token's expiry with the socket gone.
+          yield* Fiber.interrupt(renewal);
+          yield* TestClock.adjust(2 * 3_600_000);
+
+          const [prepared] = yield* prepareDirectBearer(harness, 1);
+
+          expect(prepared).toMatchObject({
+            _tag: "Success",
+            success: {
+              httpAuthorization: {
+                _tag: "Dpop",
+                accessToken: "direct-3",
+                credentialId: "direct-1",
+              },
+              socketUrl: expect.stringContaining("dpop="),
+            },
+          });
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+        expect((yield* Ref.get(harness.credentials)).get("direct-1")).toEqual(
+          directCredential("direct-3", 10_740_000 + 3_600_000),
+        );
+        expect(tokenRequests(harness)).toEqual([
+          {
+            subjectToken: "direct-1",
+            subjectTokenType: AuthAccessTokenType,
+            dpop: `proof:${ENDPOINT.httpBaseUrl}/oauth/token`,
+          },
+          {
+            subjectToken: "direct-2",
+            subjectTokenType: AuthAccessTokenType,
+            dpop: `proof:${ENDPOINT.httpBaseUrl}/oauth/token`,
+          },
+        ]);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      }),
+  );
+
+  it.effect("blocks for pairing again when the environment refuses a direct renewal", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [["direct-1", directCredential("direct-1", 30_000)]],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          authInvalid(),
+        ],
+      });
+
+      const [prepared] = yield* prepareDirectBearer(harness, 1);
+
+      expect(prepared).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ConnectionBlockedError", reason: "authentication" },
+      });
+      expect(requestPaths(harness)).toEqual(["/.well-known/t3/environment", "/oauth/token"]);
+    }),
+  );
+
+  it.effect("converts a paired bearer to DPoP once the environment can renew it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [
+          [PAIRED_CREDENTIAL_ID, new BearerConnectionCredential({ token: "bearer-token" })],
+        ],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          accessToken("converted"),
+          websocketTicket("converted-ticket"),
+        ],
+      });
+
+      const [prepared] = yield* prepareDirectBearer(harness, 1, PAIRED_CREDENTIAL_ID);
+
+      expect(prepared).toMatchObject({
+        _tag: "Success",
+        success: { httpAuthorization: { _tag: "Dpop", accessToken: "converted" } },
+      });
+      expect((yield* Ref.get(harness.credentials)).get(PAIRED_CREDENTIAL_ID)).toEqual(
+        directCredential("converted", 3_600_000),
+      );
+      expect(tokenRequests(harness)).toEqual([
+        {
+          subjectToken: "bearer-token",
+          subjectTokenType: AuthAccessTokenType,
+          dpop: `proof:${ENDPOINT.httpBaseUrl}/oauth/token`,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("keeps a bearer the environment refuses to convert and does not ask again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [
+          [PAIRED_CREDENTIAL_ID, new BearerConnectionCredential({ token: "bearer-token" })],
+        ],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          authInvalid(),
+          websocketTicket("first-ticket"),
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          websocketTicket("second-ticket"),
+        ],
+      });
+
+      const prepared = yield* prepareDirectBearer(harness, 2, PAIRED_CREDENTIAL_ID);
+
+      expect(prepared).toMatchObject([
+        {
+          _tag: "Success",
+          success: { httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+        },
+        {
+          _tag: "Success",
+          success: { httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+        },
+      ]);
+      expect((yield* Ref.get(harness.credentials)).get(PAIRED_CREDENTIAL_ID)).toEqual(
+        new BearerConnectionCredential({ token: "bearer-token" }),
+      );
+      expect(requestPaths(harness)).toEqual([
+        "/.well-known/t3/environment",
+        "/api/auth/session",
+        "/oauth/token",
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
+        "/api/auth/websocket-ticket/rpc",
+      ]);
     }),
   );
 

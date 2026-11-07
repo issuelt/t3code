@@ -145,6 +145,8 @@ export type PreparedHttpAuthorization =
       readonly _tag: "Dpop";
       readonly accessToken: string;
       readonly expiresAtEpochMs: number;
+      /** Set for a paired DPoP credential, which renews with the environment instead of T3 Connect. */
+      readonly credentialId?: string;
     };
 
 export interface PreparedConnection {

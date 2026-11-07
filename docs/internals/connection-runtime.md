@@ -56,6 +56,19 @@ DPoP key, subject, and scopes
 ([`SessionStore.awaitInvalidation`](../../apps/server/src/auth/SessionStore.ts)).
 If renewal fails, the socket closes at expiry and the supervisor reconnects.
 
+A server that advertises `auth.dpopRenewal` pairs with the device's T3 Connect
+DPoP key, and its one-hour sessions renew through `/oauth/token` with the
+current access token as the subject, even after the token expired. A
+reconnect after sleep renews first. Each successor is saved before use, so a
+restart starts from it. A refused renewal blocks with an authentication
+failure, which offers Pair again. On such a server, a bearer from a pairing
+link converts once through the same grant, and the server revokes the bearer.
+The client cannot tell which pairing produced a bearer, so a refusal keeps the
+bearer and the client does not ask again until the app restarts. Paired DPoP
+credentials live in the catalog's `dpopCredentials`, apart from `credentials`,
+because older builds decode that list as bearer only and discard a catalog
+they cannot decode.
+
 Session listings must retain unrevoked connected sessions after credential expiry
 so an open connection does not disappear from connection management. This does
 not extend the credential's lifetime. New HTTP requests and socket upgrades still

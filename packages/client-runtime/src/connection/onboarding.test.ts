@@ -11,7 +11,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -20,6 +22,7 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  DpopConnectionCredential,
   PrimaryConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -60,6 +63,7 @@ function layerPairingHttp(
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
+    readonly dpopRenewal?: boolean;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
   },
 ) {
@@ -127,7 +131,7 @@ function layerPairingHttp(
       const granted = Response.json({
         access_token: "bearer-token",
         issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-        token_type: "Bearer",
+        token_type: new Headers(init.headers).has("dpop") ? "DPoP" : "Bearer",
         expires_in: 3600,
         scope: sessionScopes.join(" "),
       });
@@ -146,6 +150,7 @@ function layerPairingHttp(
             bootstrapMethods: ["one-time-token"],
             sessionMethods: ["bearer-access-token"],
             sessionCookieName: "t3_session",
+            ...(options?.dpopRenewal === true ? { dpopRenewal: true } : {}),
           },
           scopes: sessionScopes,
           sessionMethod: "bearer-access-token",
@@ -181,6 +186,10 @@ function layerPairingOnboarding(
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
+    Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, {
+      thumbprint: Effect.succeed("thumbprint-1"),
+      createProof: (proof) => Effect.succeed(`proof:${proof.method}:${proof.url}`),
+    }),
     Layer.succeed(
       Connectivity.Connectivity,
       Connectivity.Connectivity.of({ status: Effect.succeed("online"), changes: Stream.never }),
@@ -263,10 +272,13 @@ describe("connection onboarding", () => {
       });
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
+        "https://remote.example.test/api/auth/session",
         "https://remote.example.test/oauth/token",
       ]);
 
       const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
+      // A server that predates DPoP renewal keeps the bearer pairing.
+      expect(new Headers(tokenRequest?.init.headers).has("dpop")).toBe(false);
       const tokenBody =
         tokenRequest?.init.body instanceof Uint8Array
           ? new TextDecoder().decode(tokenRequest.init.body)
@@ -278,6 +290,27 @@ describe("connection onboarding", () => {
       expect(tokenParams.get("client_device_type")).toBe("desktop");
       expect(tokenParams.get("client_os")).toBe("Test OS");
     }),
+  );
+
+  it.effect("pairs with the device's DPoP key when the server can renew DPoP sessions", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration(PAIRING_INPUT).pipe(
+        Effect.provide(layerPairingOnboarding({ dpopRenewal: true }, calls)),
+      );
+
+      expect(registration.credential).toEqual(
+        new DpopConnectionCredential({
+          accessToken: "bearer-token",
+          expiresAtEpochMs: 3_600_000,
+          dpopThumbprint: "thumbprint-1",
+        }),
+      );
+      const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
+      expect(new Headers(tokenRequest?.init.headers).get("dpop")).toBe(
+        "proof:POST:https://remote.example.test/oauth/token",
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("turns a switched-off environment back on when it is paired again", () =>
@@ -512,7 +545,10 @@ describe("connection onboarding", () => {
 
       const session = yield* fetchRemoteSessionState({
         httpBaseUrl: registration.profile.httpBaseUrl,
-        bearerToken: registration.credential.token,
+        bearerToken:
+          registration.credential._tag === "BearerConnectionCredential"
+            ? registration.credential.token
+            : "",
       });
 
       expect(session.authenticated).toBe(true);
