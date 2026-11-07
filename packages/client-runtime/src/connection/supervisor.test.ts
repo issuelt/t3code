@@ -1762,6 +1762,32 @@ describe("EnvironmentSupervisor routes", () => {
       }),
   );
 
+  it.effect(
+    "keeps retrying T3 Connect when it timed out and a direct route refused this device",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.fail(transient("T3 Connect timed out."))
+              : Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "T3 Code did not accept this device.",
+                    via: "direct",
+                  }),
+                ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "backoff");
+        expect(state.lastFailure?._tag).toBe("ConnectionTransientError");
+      }),
+  );
+
   it.effect("moves back to the LAN route when the network changes and it answers again", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);
