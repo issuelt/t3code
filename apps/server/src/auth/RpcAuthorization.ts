@@ -287,6 +287,7 @@ const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvir
     }
     switch (tool) {
       case "orchestrator_capabilities":
+      case "list_scheduled_tasks":
       case "t3_project_list":
       case "t3_project_read":
       case "t3_thread_search":

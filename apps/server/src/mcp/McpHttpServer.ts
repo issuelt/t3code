@@ -1302,6 +1302,7 @@ const makeDesktopRelay = Effect.gen(function* () {
             sessionId,
             label: "Desktop connection",
             access: mcp.readOnly ? "read-only" : "full-access",
+            linked: true,
             narrowedTo: { runtimeMode: mcp.runtimeMode, interactionMode: mcp.interactionMode },
           },
           linkedEnvironments: false,
