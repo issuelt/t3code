@@ -37,6 +37,7 @@ export const AuthSessionRecord = Schema.Struct({
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -50,10 +51,21 @@ export const CreateAuthSessionInput = Schema.Struct({
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
   client: AuthSessionClientMetadataRecord,
+  /** Set for DPoP sessions. Rows sharing it and the subject form one renewal family. */
+  proofKeyThumbprint: Schema.optionalKey(Schema.String),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
+
+export const CreateSuccessorAuthSessionInput = Schema.Struct({
+  session: CreateAuthSessionInput,
+  predecessorSessionId: AuthSessionId,
+  /** Revokes the predecessor in the same transaction, for a one-time conversion. */
+  revokePredecessor: Schema.Boolean,
+  now: Schema.DateTimeUtcFromString,
+});
+export type CreateSuccessorAuthSessionInput = typeof CreateSuccessorAuthSessionInput.Type;
 
 export const CreateReplacingActiveAuthSessionInput = Schema.Struct({
   session: CreateAuthSessionInput,
@@ -104,15 +116,23 @@ export class AuthSessionRepository extends Context.Service<
     readonly createIfAbsent: (
       input: CreateAuthSessionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    /**
+     * Inserts `session` only while the predecessor is unrevoked and no row in its
+     * DPoP family was revoked after the predecessor was issued. Returns whether it did.
+     */
+    readonly createSuccessor: (
+      input: CreateSuccessorAuthSessionInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly getById: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
     readonly listActive: (
       input: ListActiveAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionRecord>, AuthSessionRepositoryError>;
+    /** Revokes the session and, for a DPoP session, every row in its family. */
     readonly revoke: (
       input: RevokeAuthSessionInput,
-    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
@@ -133,6 +153,7 @@ const AuthSessionDbRow = Schema.Struct({
   clientDeviceType: Schema.Literals(["desktop", "mobile", "tablet", "bot", "unknown"]),
   clientOs: Schema.NullOr(Schema.String),
   clientBrowser: Schema.NullOr(Schema.String),
+  proofKeyThumbprint: Schema.NullOr(Schema.String),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -150,6 +171,7 @@ const AuthSessionRawDbRow = Schema.Struct({
   clientDeviceType: Schema.Unknown,
   clientOs: Schema.Unknown,
   clientBrowser: Schema.Unknown,
+  proofKeyThumbprint: Schema.Unknown,
   issuedAt: Schema.Unknown,
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
@@ -172,6 +194,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
       os: row.clientOs,
       browser: row.clientBrowser,
     },
+    proofKeyThumbprint: row.proofKeyThumbprint,
     issuedAt: row.issuedAt,
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
@@ -214,6 +237,7 @@ export const make = Effect.gen(function* () {
           client_device_type,
           client_os,
           client_browser,
+          proof_key_thumbprint,
           issued_at,
           expires_at,
           revoked_at
@@ -229,6 +253,7 @@ export const make = Effect.gen(function* () {
           ${input.client.deviceType},
           ${input.client.os},
           ${input.client.browser},
+          ${input.proofKeyThumbprint ?? null},
           ${input.issuedAt},
           ${input.expiresAt},
           NULL
@@ -255,6 +280,7 @@ export const make = Effect.gen(function* () {
           client_device_type AS "clientDeviceType",
           client_os AS "clientOs",
           client_browser AS "clientBrowser",
+          proof_key_thumbprint AS "proofKeyThumbprint",
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
@@ -283,6 +309,26 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const findRenewablePredecessor = SqlSchema.findOneOption({
+    Request: CreateSuccessorAuthSessionInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ predecessorSessionId }) =>
+      sql`
+        SELECT predecessor.session_id AS "sessionId"
+        FROM auth_sessions AS predecessor
+        WHERE predecessor.session_id = ${predecessorSessionId}
+          AND predecessor.revoked_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM auth_sessions AS family
+            WHERE predecessor.proof_key_thumbprint IS NOT NULL
+              AND family.proof_key_thumbprint = predecessor.proof_key_thumbprint
+              AND family.subject = predecessor.subject
+              AND family.revoked_at IS NOT NULL
+              AND family.revoked_at > predecessor.issued_at
+          )
+      `,
+  });
+
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
@@ -299,6 +345,7 @@ export const make = Effect.gen(function* () {
           client_device_type AS "clientDeviceType",
           client_os AS "clientOs",
           client_browser AS "clientBrowser",
+          proof_key_thumbprint AS "proofKeyThumbprint",
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
@@ -328,9 +375,29 @@ export const make = Effect.gen(function* () {
       sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
+        WHERE revoked_at IS NULL
+          AND (
+            session_id = ${sessionId}
+            OR EXISTS (
+              SELECT 1 FROM auth_sessions AS target
+              WHERE target.session_id = ${sessionId}
+                AND target.proof_key_thumbprint IS NOT NULL
+                AND target.proof_key_thumbprint = auth_sessions.proof_key_thumbprint
+                AND target.subject = auth_sessions.subject
+            )
+          )
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokeSessionById = SqlSchema.void({
+    Request: RevokeAuthSessionInput,
+    execute: ({ sessionId, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
-        RETURNING session_id AS "sessionId"
       `,
   });
 
@@ -343,6 +410,13 @@ export const make = Effect.gen(function* () {
         SET revoked_at = ${revokedAt}
         WHERE session_id <> ${currentSessionId}
           AND revoked_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM auth_sessions AS kept
+            WHERE kept.session_id = ${currentSessionId}
+              AND kept.proof_key_thumbprint IS NOT NULL
+              AND kept.proof_key_thumbprint = auth_sessions.proof_key_thumbprint
+              AND kept.subject = auth_sessions.subject
+          )
         RETURNING session_id AS "sessionId"
       `,
   });
@@ -376,6 +450,32 @@ export const make = Effect.gen(function* () {
           toPersistenceSqlOrDecodeError(
             "AuthSessionRepository.createReplacingActive:query",
             "AuthSessionRepository.createReplacingActive:encodeRequest",
+            { sessionId: input.session.sessionId },
+          ),
+        ),
+      );
+
+  const createSuccessor: AuthSessionRepository["Service"]["createSuccessor"] = (input) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const predecessor = yield* findRenewablePredecessor(input);
+          if (Option.isNone(predecessor)) return false;
+          if (input.revokePredecessor) {
+            yield* revokeSessionById({
+              sessionId: input.predecessorSessionId,
+              revokedAt: input.now,
+            });
+          }
+          yield* createSessionRow(input.session);
+          return true;
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.createSuccessor:query",
+            "AuthSessionRepository.createSuccessor:encodeRequest",
             { sessionId: input.session.sessionId },
           ),
         ),
@@ -454,7 +554,7 @@ export const make = Effect.gen(function* () {
           { sessionId: input.sessionId },
         ),
       ),
-      Effect.map((rows) => rows.length > 0),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
   const revokeAllExcept: AuthSessionRepository["Service"]["revokeAllExcept"] = (input) =>
@@ -484,6 +584,7 @@ export const make = Effect.gen(function* () {
     create,
     createReplacingActive,
     createIfAbsent,
+    createSuccessor,
     getById,
     listActive,
     revoke,

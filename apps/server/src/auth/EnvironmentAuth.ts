@@ -75,6 +75,10 @@ export interface IssuedBearerSession {
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
+const ONE_TIME_TOKEN_SUBJECT = "one-time-token";
+const DPOP_SESSION_TTL = Duration.hours(1);
+/** How long after its token expires a DPoP link may still renew. Idle longer, it pairs again. */
+const DPOP_RENEWAL_WINDOW = Duration.days(30);
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
@@ -472,6 +476,21 @@ export class EnvironmentAuth extends Context.Service<
     >;
     readonly exchangeBootstrapCredentialForAccessToken: (
       credential: string,
+      requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
+      requestMetadata: AuthClientMetadata,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<
+      AuthAccessTokenResult,
+      ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
+    >;
+    /**
+     * Renews a DPoP session, or converts a one-time-token bearer session once, into a
+     * DPoP session bound to the request's proof key. Copies the subject and never widens scopes.
+     */
+    readonly exchangeAccessTokenForDpopSession: (
+      accessToken: string,
       requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
       requestMetadata: AuthClientMetadata,
       input?: {
@@ -976,7 +995,7 @@ export const make = Effect.gen(function* () {
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      ttl: DPOP_SESSION_TTL,
                     }
                   : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
@@ -1014,6 +1033,112 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
       );
     };
+
+  const refuseDpopExchange = (diagnostic: string, cause?: unknown) =>
+    Effect.logWarning("Refused a DPoP session exchange.", { diagnostic }).pipe(
+      Effect.andThen(
+        Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic,
+            ...(cause === undefined ? {} : { cause }),
+          }),
+        ),
+      ),
+    );
+
+  const exchangeAccessTokenForDpopSession: EnvironmentAuth["Service"]["exchangeAccessTokenForDpopSession"] =
+    Effect.fn("EnvironmentAuth.exchangeAccessTokenForDpopSession")(
+      function* (accessToken, requestedScopes, requestMetadata, input) {
+        const proofKeyThumbprint = input?.proofKeyThumbprint;
+        if (proofKeyThumbprint === undefined) {
+          return yield* refuseDpopExchange("An access-token exchange requires a DPoP proof.");
+        }
+        const presented = yield* sessions
+          .verify(accessToken, { acceptExpiredFor: DPOP_RENEWAL_WINDOW })
+          .pipe(
+            mapSessionVerificationErrors,
+            Effect.tapError((error) =>
+              error._tag === "ServerAuthInvalidCredentialError"
+                ? Effect.logWarning("Refused a DPoP session exchange.", {
+                    diagnostic: "The presented access token is not renewable.",
+                    cause: error.cause,
+                  })
+                : Effect.void,
+            ),
+          );
+        const renewal = presented.method === "dpop-access-token";
+        if (renewal) {
+          if (presented.proofKeyThumbprint !== proofKeyThumbprint) {
+            return yield* refuseDpopExchange("The proof key does not match the session's key.");
+          }
+          // MCP and peer-link limits are signed claims this exchange does not carry over.
+          if (
+            presented.subject === MCP_CLIENT_SUBJECT ||
+            presented.runtimeModeCeiling !== undefined ||
+            presented.peerLink === true
+          ) {
+            return yield* refuseDpopExchange("This session cannot renew directly.");
+          }
+        } else {
+          if (
+            presented.method !== "bearer-access-token" ||
+            presented.subject !== ONE_TIME_TOKEN_SUBJECT
+          ) {
+            return yield* refuseDpopExchange("Only pairing-link bearer sessions can convert.");
+          }
+          const now = yield* DateTime.now;
+          if (
+            presented.expiresAt === undefined ||
+            presented.expiresAt.epochMilliseconds <= now.epochMilliseconds
+          ) {
+            return yield* refuseDpopExchange("An expired bearer session cannot convert.");
+          }
+        }
+        const grantedScopes =
+          requestedScopes === undefined
+            ? presented.scopes
+            : [...new Set(requestedScopes)].filter((scope) => presented.scopes.includes(scope));
+        if (grantedScopes.length === 0) {
+          return yield* new ServerAuthScopeNotGrantedError({});
+        }
+        const session = yield* sessions
+          .issueSuccessor({
+            predecessorSessionId: presented.sessionId,
+            revokePredecessor: !renewal,
+            method: "dpop-access-token",
+            subject: presented.subject,
+            scopes: grantedScopes,
+            proofKeyThumbprint,
+            ttl: DPOP_SESSION_TTL,
+            client: {
+              ...requestMetadata,
+              ...(presented.client.label ? { label: presented.client.label } : {}),
+            },
+          })
+          .pipe(
+            Effect.catchTags({
+              SessionTokenRevokedError: (cause) =>
+                refuseDpopExchange("The session or its family was revoked.", cause),
+            }),
+            Effect.mapError((cause) =>
+              cause._tag === "ServerAuthInvalidCredentialError"
+                ? cause
+                : new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
+            ),
+          );
+        const now = yield* DateTime.now;
+        return {
+          access_token: session.token,
+          issued_token_type: AuthAccessTokenType,
+          token_type: "DPoP",
+          expires_in: Math.max(
+            0,
+            Math.floor((session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000),
+          ),
+          scope: encodeOAuthScope(session.scopes),
+        } satisfies AuthAccessTokenResult;
+      },
+    );
 
   const toPairingCredential = (issued: IssuedPairingLink): AuthPairingCredentialResult => ({
     id: issued.id,
@@ -1388,6 +1513,7 @@ export const make = Effect.gen(function* () {
     getSessionState,
     createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
+    exchangeAccessTokenForDpopSession,
     createPairingLink,
     issuePairingCredential,
     issueStartupPairingCredential,

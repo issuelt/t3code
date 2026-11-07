@@ -27,6 +27,17 @@ model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
+A DPoP session lasts an hour. A direct client renews it at `/oauth/token` by
+presenting the access token with a proof from the same key. The server accepts
+a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link in use
+never expires and an idle one pairs again. Renewal copies the subject and never
+widens scopes. Sessions with MCP or peer-link claims cannot renew this way. The
+rows that share a key and a subject form one family. Revoking any row revokes the
+whole family, and Sharing & access lists only its newest row. A row revoked
+alone would leave its predecessors able to renew. A bearer session from a pairing
+link converts to DPoP once. The conversion revokes the bearer in the same
+transaction, and expired bearers cannot convert.
+
 ### Guest links are not sessions
 
 A [guest link](../user/guest-links.md) gives one browser read access to one
