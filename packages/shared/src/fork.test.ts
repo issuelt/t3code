@@ -34,7 +34,9 @@ describe("fork release source", () => {
     "points install commands and release links at the fork in %s",
     (path) => {
       const source = repoFile(path);
-      expect(source).not.toMatch(/t3\.codes\/install|pingdotgg\/t3code\/releases/);
+      expect(source).not.toMatch(
+        /t3\.codes\/(?:install|download)|\(https:\/\/t3\.codes\)|pingdotgg\/t3code\/releases/,
+      );
       expect(source).toContain(`raw.githubusercontent.com/${FORK_REPOSITORY}/main/scripts/install`);
     },
   );
