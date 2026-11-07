@@ -7,13 +7,11 @@ import {
   type FleetHostRequest,
   type HomeSettings,
   type HomeWatchEvent,
-  OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
-import { relayFleetRequest } from "./homeRelay";
+import { relayFailure, relayFleetRequest } from "./homeRelay";
 import { isElectron } from "../../env";
 import { useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -69,20 +67,10 @@ function HomeRelays({ homeEnvironmentId }: { readonly homeEnvironmentId: Environ
     ));
 }
 
-const isRelayFailure = Schema.is(OrchestratorMcpFailure);
 function createRelayClientId(): string {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
   return `home-relay-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
-
-const relayFailure = (error: unknown) =>
-  isRelayFailure(error)
-    ? error
-    : new OrchestratorMcpFailure({
-        code: "environment_unavailable",
-        message:
-          error instanceof Error ? error.message : "The other environment could not be reached.",
-      });
 
 function createRelayConsumer(
   requestsAtom: ReturnType<typeof homeEnvironment.relayRequests>,
