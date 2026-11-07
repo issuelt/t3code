@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/reactivity";
+import { toastManager } from "../ui/toast";
 import {
   watchReportHeading,
   watchReportMarkdown,
@@ -15,12 +17,15 @@ import {
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type EnvironmentId,
+  type RunId,
+  type ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import { isImageAttachment, type ChatAttachment } from "../../types";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
+import { getDiscardableAgentRunIds } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   resolveViewedImageAsset,
   toolGroupAction,
@@ -52,7 +57,14 @@ import {
 } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
-import { useQuietThreadShell, useQuietThreadShellById, useThreadShell } from "../../state/entities";
+import {
+  useQuietThreadShell,
+  useQuietThreadShellById,
+  useThreadProjection,
+  useThreadShell,
+} from "../../state/entities";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -194,6 +206,46 @@ function AgentMessageAttachments({ attachments }: { attachments: ReadonlyArray<C
   );
 }
 
+/** A queued agent message can be dropped before delivery; a delivered or steered one cannot. */
+function DiscardAgentMessageButton({
+  threadRef,
+  runId,
+}: {
+  threadRef: ScopedThreadRef;
+  runId: RunId;
+}) {
+  const projection = useThreadProjection(threadRef)?.projection;
+  const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const [busy, setBusy] = useState(false);
+  if (!projection || !getDiscardableAgentRunIds(projection).has(runId)) return null;
+  return (
+    <InlineButton
+      tone="destructive"
+      aria-label="Discard queued agent message"
+      disabled={busy}
+      onClick={async (event) => {
+        event.stopPropagation();
+        setBusy(true);
+        const result = await cancel({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, runId },
+        });
+        setBusy(false);
+        if (AsyncResult.isFailure(result)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not discard the message",
+            description: "It is still queued and will reach the agent. Try again.",
+          });
+        }
+      }}
+      onKeyDown={stopRowToggle}
+    >
+      Discard
+    </InlineButton>
+  );
+}
+
 function AgentMessageWorkRow({
   workEntry,
   onToggleEntry,
@@ -231,6 +283,10 @@ function AgentMessageWorkRow({
   const reportMarkdown =
     item?.type === "user_message"
       ? watchReportMarkdown(item.messageId, workEntry.detail ?? "")
+      : null;
+  const pendingRunId =
+    item?.type === "user_message" && item.inputIntent === "queued_turn" && item.status === "pending"
+      ? item.runId
       : null;
   const toggle = () => {
     const next = !expanded;
@@ -291,6 +347,9 @@ function AgentMessageWorkRow({
       }
       trailing={
         <>
+          {pendingRunId !== null && ctx.canOperateThread && ctx.threadRef ? (
+            <DiscardAgentMessageButton threadRef={ctx.threadRef} runId={pendingRunId} />
+          ) : null}
           <TimelineRowTimestamp
             createdAt={workEntry.createdAt}
             timestampFormat={ctx.timestampFormat}

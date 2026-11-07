@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   isCompactionCommandMessage,
   isAgentDeliveredMessage,
+  isHomeThreadId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -40,6 +41,8 @@ export interface ThreadQueueWorkflowState {
   /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
   readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
+  /** Queued agent messages folded into the timeline, which the user may discard before delivery. */
+  readonly discardableAgentRunIds: ReadonlySet<Run["id"]>;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -132,6 +135,28 @@ export function getUserQueuedThreadRuns(
   );
 }
 
+/** Queued agent messages the user may discard before delivery. Home steers its reports in. */
+export function getDiscardableAgentRunIds(
+  projection: Pick<Projection, "thread" | "runs" | "messages">,
+): ReadonlySet<Run["id"]> {
+  if (isHomeThreadId(projection.thread.id)) return new Set();
+  const agentMessageIds = new Set(
+    projection.messages
+      .filter(
+        (message) =>
+          message.delegatedCompletion === undefined &&
+          message.notification === undefined &&
+          isAgentDeliveredMessage(projection.thread.id, message),
+      )
+      .map((message) => message.id),
+  );
+  return new Set(
+    projection.runs
+      .filter((run) => run.status === "queued" && agentMessageIds.has(run.userMessageId))
+      .map((run) => run.id),
+  );
+}
+
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
@@ -179,6 +204,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
         (capabilities?.supportsActiveSteering === true ||
           capabilities?.supportsSteeringByInterruptRestart === true)),
     promoteSkipsCompaction,
+    discardableAgentRunIds: getDiscardableAgentRunIds(projection),
   };
 }
 
