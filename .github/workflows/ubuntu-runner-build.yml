@@ -245,7 +245,8 @@ jobs:
             # Raw archives lack the package metadata Gradle uses to find android-37.0, so install
             # the pinned packages with the image's sdkmanager, which writes it.
             sdk=/usr/local/lib/android/sdk
-            yes | sudo "$sdk/cmdline-tools/latest/bin/sdkmanager" --install \
+            # yes ends with SIGPIPE once sdkmanager exits, which pipefail would report.
+            (yes || :) | sudo "$sdk/cmdline-tools/latest/bin/sdkmanager" --install \
               'platforms;android-37.0' 'build-tools;36.0.0' 'build-tools;37.0.0' \
               'ndk;27.1.12297006' 'cmake;3.22.1' | tee "$PROOF_ROOT/tools/sdkmanager.log" > /dev/null
             for package in platforms/android-37.0 build-tools/36.0.0 build-tools/37.0.0 ndk/27.1.12297006 cmake/3.22.1; do
