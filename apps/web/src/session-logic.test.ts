@@ -412,7 +412,7 @@ describe("V2 session presentation", () => {
     });
   });
 
-  it("files agent messages and watch reports to Home in the work log, and keeps the user's own as a message", () => {
+  it("files agent messages in every thread and Home watch reports in the work log, and keeps human prompts", () => {
     const now = DateTime.makeUnsafe("2026-10-30T00:00:00.000Z");
     const message = (threadId: ThreadId, id: string, sender?: ThreadId, text = "Merged #17.") =>
       ({
@@ -461,7 +461,7 @@ describe("V2 session presentation", () => {
       })),
       optimisticMessages: [],
     });
-    expect(entries.map((entry) => entry.kind)).toEqual(["work", "message", "message", "work"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["work", "message", "work", "work"]);
     expect(entries[0]).toMatchObject({
       kind: "work",
       entry: { itemType: "user_message", detail: "Merged #17." },
