@@ -1,9 +1,11 @@
 import {
+  EnvironmentAuthorizationError,
   type EnvironmentId,
   type FleetHostRequest,
   type FleetHostResponse,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 export async function relayFleetRequest(input: {
   readonly sourceEnvironmentId: EnvironmentId;
@@ -27,3 +29,21 @@ export async function relayFleetRequest(input: {
   }
   return input.forward();
 }
+
+const isRelayFailure = Schema.is(OrchestratorMcpFailure);
+const isScopeDenial = Schema.is(EnvironmentAuthorizationError);
+
+/**
+ * Turns a failed forward into the failure the calling agent sees. A missing scope
+ * is a permission denial, so agents do not try to repair a healthy connection.
+ */
+export const relayFailure = (error: unknown) =>
+  isRelayFailure(error)
+    ? error
+    : isScopeDenial(error)
+      ? new OrchestratorMcpFailure({ code: "capability_denied", message: error.message })
+      : new OrchestratorMcpFailure({
+          code: "environment_unavailable",
+          message:
+            error instanceof Error ? error.message : "The other environment could not be reached.",
+        });

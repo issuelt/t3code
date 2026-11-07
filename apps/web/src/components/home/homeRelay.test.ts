@@ -1,4 +1,5 @@
 import {
+  EnvironmentAuthorizationError,
   EnvironmentId,
   MessageId,
   ThreadId,
@@ -7,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-import { relayFleetRequest } from "./homeRelay";
+import { relayFailure, relayFleetRequest } from "./homeRelay";
 
 const home = EnvironmentId.make("home");
 const remote = EnvironmentId.make("remote");
@@ -109,4 +110,26 @@ it("relays ordinary MCP only from the desktop's own server", async () => {
   });
   expect(accepted).toEqual({ requestId: "ordinary", result: {} });
   expect(forward).toHaveBeenCalledTimes(1);
+});
+
+it("reports a destination scope denial as a permission failure with the server's message", () => {
+  const failure = relayFailure(
+    new EnvironmentAuthorizationError({
+      message: "The authenticated token is missing required scope: source-control:write.",
+      requiredScope: "orchestration:operate",
+      requiredPermission: "source-control:write",
+    }),
+  );
+
+  expect(failure).toMatchObject({
+    code: "capability_denied",
+    message: "The authenticated token is missing required scope: source-control:write.",
+  });
+});
+
+it("reports transport failures as an unavailable environment", () => {
+  expect(relayFailure(new Error("socket closed"))).toMatchObject({
+    code: "environment_unavailable",
+    message: "socket closed",
+  });
 });
