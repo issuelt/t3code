@@ -38,9 +38,11 @@ jobs:
               "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$1"
           }
           tree="$(api "commits/$GITHUB_SHA" | jq -r .commit.tree.sha)" || exit 0
+          [[ "$tree" =~ ^[0-9a-f]{40}$ ]] || exit 0
           heads="$(api "commits/$GITHUB_SHA/pulls" | jq -r '.[] | select(.merged_at != null) | .head.sha')" || exit 0
           for head in $heads; do
-            [[ "$(api "commits/$head" | jq -r .commit.tree.sha)" == "$tree" ]] || continue
+            head_tree="$(api "commits/$head" | jq -r .commit.tree.sha)" || continue
+            [[ "$head_tree" =~ ^[0-9a-f]{40}$ && "$head_tree" == "$tree" ]] || continue
             passed="$(api "actions/workflows/fork-ci.yml/runs?event=pull_request&status=success&head_sha=$head" | jq -r .total_count)" || continue
             if [[ "$passed" =~ ^[1-9] ]]; then
               echo "Tree $tree already passed Fork CI at pull request head $head."
