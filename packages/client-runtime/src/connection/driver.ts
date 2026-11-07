@@ -82,6 +82,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let relayTransient = false;
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const routeScope = yield* Scope.fork(attemptScope);
@@ -91,8 +92,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       Effect.result,
     );
     if (result._tag === "Failure") {
-      if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
-      else blocked ??= result.failure;
+      if (result.failure._tag === "ConnectionTransientError") {
+        transient ??= result.failure;
+        if (route.target._tag === "RelayConnectionTarget") relayTransient = true;
+      } else blocked ??= result.failure;
     }
     return result;
   });
@@ -128,8 +131,16 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
+  // A direct route that refused this device's pairing refuses it on every direct
+  // route, so it outranks their timeouts and lets the client offer Pair again.
+  // T3 Connect has its own credential, so its timeout keeps the retries going.
+  const refusedDirect =
+    !relayTransient && blocked?.reason === "authentication" && blocked.via === "direct"
+      ? blocked
+      : undefined;
   return yield* (
-    transient ??
+    refusedDirect ??
+      transient ??
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",
