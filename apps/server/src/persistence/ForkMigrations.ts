@@ -6,8 +6,7 @@ import { migrationManifest } from "./Migrations.ts";
 import ForkMigration0001 from "./ForkMigrations/001_TaskGraphs.ts";
 import ForkMigration0002 from "./ForkMigrations/002_PeerLinkOrigin.ts";
 import ForkMigration0003 from "./ForkMigrations/003_CoordinationRequests.ts";
-import ForkMigration0004 from "./ForkMigrations/004_AuthSessionProofKeyThumbprint.ts";
-import ForkMigration0005 from "./ForkMigrations/005_AuthSessionPredecessor.ts";
+import ForkMigration0004 from "./ForkMigrations/004_AuthSessionDpopRenewal.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 
@@ -20,8 +19,7 @@ const forkMigrationEntries = [
   [1, "TaskGraphs", ForkMigration0001],
   [2, "PeerLinkOrigin", ForkMigration0002],
   [3, "CoordinationRequests", ForkMigration0003],
-  [4, "AuthSessionProofKeyThumbprint", ForkMigration0004],
-  [5, "AuthSessionPredecessor", ForkMigration0005],
+  [4, "AuthSessionDpopRenewal", ForkMigration0004],
 ] as const;
 
 const FORK_MIGRATIONS_TABLE = "fork_sql_migrations";
