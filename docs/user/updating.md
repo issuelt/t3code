@@ -38,6 +38,9 @@ below.
 
 ## Switch between Stable and Nightly
 
+This fork publishes only Nightly, so its desktop app has no **Update track**
+setting. The rest of this section applies to upstream T3 Code.
+
 In the desktop app, change **Settings → About → Update track**. T3 Code shows each
 connected machine it will move and each one it skips, then moves them in one
 step. Remote servers install the latest release on the new track. Remote desktop

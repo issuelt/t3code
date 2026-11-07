@@ -1,7 +1,9 @@
 # Installs the T3 Code CLI from a GitHub Release archive on Windows. Needs
 # only PowerShell 5.1+; no Node, npm, or compiler.
 #
-#   irm https://t3.codes/install.ps1 | iex
+#   $env:T3CODE_CHANNEL = "nightly"; irm https://raw.githubusercontent.com/issuelt/t3code/main/scripts/install.ps1 | iex
+#
+# The fork publishes only nightly releases, so the default stable channel finds nothing.
 #
 # Environment:
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
@@ -177,7 +179,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     } catch {
       $status = $_.Exception.Response.StatusCode.value__
       if ($status -eq 404) {
-        Fail "t3 $version has no release archive for win32-$arch; releases before the self-contained CLI can only be installed with 'npm install -g t3@$version'"
+        Fail "t3 $version has no release archive for win32-$arch"
       }
       throw
     }

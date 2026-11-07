@@ -272,12 +272,18 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeFleetInvoke = Schema.decodeUnknownSync(FleetInvokeInput);
 
+const createsWorktree = (workspaceStrategy: unknown) =>
+  (workspaceStrategy as { readonly type?: unknown } | null | undefined)?.type === "worktree";
+
 /** A relayed operation needs the scopes its own RPC would. */
 const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvironmentScope> => {
   const invoke = decodeFleetInvoke(payload);
   if ("mcp" in invoke) {
     const { tool, arguments: input } = invoke.mcp;
-    if (tool === "t3_project_clone")
+    if (
+      tool === "t3_project_clone" ||
+      (tool === "t3_thread_launch" && createsWorktree(input.workspaceStrategy))
+    )
       return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
     if (
       (tool === "t3_project_create" || tool === "t3_project_update") &&
@@ -309,7 +315,10 @@ const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvir
     return [AuthOrchestrationOperateScope];
   }
   const { request } = invoke;
-  if (request.op === "projects.clone") {
+  if (
+    request.op === "projects.clone" ||
+    (request.op === "threads.launch" && createsWorktree(request.input.workspaceStrategy))
+  ) {
     return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   }
   if (

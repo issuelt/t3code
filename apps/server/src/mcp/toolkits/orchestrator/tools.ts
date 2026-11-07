@@ -317,7 +317,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List peer links and live desktop connections. Reuse `environmentId` without pairing. Desktop limits may be unknown. Expired peer: `t3_environment_link`. Tools take `environmentId`; `delegate_task` takes `target.environmentId`.",
+    "List peer links and desktop connections. An offline desktop shows `unreachable`. Reuse `environmentId` without pairing. Desktop limits may be unknown. Expired peer: `t3_environment_link`. Tools take `environmentId`; `delegate_task` takes `target.environmentId`.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
