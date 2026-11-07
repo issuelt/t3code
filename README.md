@@ -1,6 +1,6 @@
 # T3 Code
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://github.com/issuelt/t3code/releases).
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, and fx. If they're set up on your computer, T3 Code can control them.
 
@@ -25,23 +25,25 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 
 ### Command line
 
+This fork publishes only nightly builds, so the commands below select the nightly train.
+
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/issuelt/t3code/main/scripts/install.sh | T3CODE_CHANNEL=nightly sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://t3.codes/install.ps1 | iex
+$env:T3CODE_CHANNEL = "nightly"; irm https://raw.githubusercontent.com/issuelt/t3code/main/scripts/install.ps1 | iex
 ```
 
 Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
 
-To try it once without installing, run `npx t3@latest` instead.
+`npx t3` runs upstream T3 Code from npm, not this fork. Where the docs say `npx t3`, run `t3` instead.
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/issuelt/t3code/releases). The package registries below ship upstream T3 Code, not this fork:
 
 #### Windows (`winget`)
 
@@ -63,7 +65,7 @@ brew install --cask t3-code
 
 #### Debian, Ubuntu (`.deb`)
 
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+Download the `.deb` from [GitHub Releases](https://github.com/issuelt/t3code/releases), then:
 
 ```bash
 sudo apt install ./T3-Code-*.deb

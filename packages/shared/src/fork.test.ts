@@ -30,6 +30,17 @@ describe("fork release source", () => {
     expect(repoLiteral.exec(repoFile(path))?.[1]).toBe(FORK_REPOSITORY);
   });
 
+  it.each(["README.md", "docs/user/install.md", "scripts/install.sh", "scripts/install.ps1"])(
+    "points install commands and release links at the fork in %s",
+    (path) => {
+      const source = repoFile(path);
+      expect(source).not.toMatch(
+        /t3\.codes\/(?:install|download)|\(https:\/\/t3\.codes\)|pingdotgg\/t3code\/releases/,
+      );
+      expect(source).toContain(`raw.githubusercontent.com/${FORK_REPOSITORY}/main/scripts/install`);
+    },
+  );
+
   it.each([
     "apps/desktop/src/app/DesktopStartupRecovery.ts",
     "apps/web/src/components/desktopUpdate.logic.ts",

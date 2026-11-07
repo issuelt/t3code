@@ -24,6 +24,7 @@ import {
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { FORK_HAS_UPDATE_TRACKS } from "@t3tools/shared/fork";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import * as Equal from "effect/Equal";
@@ -321,7 +322,7 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      {hasDesktopBridge ? (
+      {hasDesktopBridge && FORK_HAS_UPDATE_TRACKS ? (
         <SettingsRow
           {...searchableSetting("update-track")}
           description={
@@ -384,7 +385,7 @@ function AboutVersionSection() {
             </Select>
           }
         />
-      ) : selectedHostedAppChannel ? (
+      ) : !hasDesktopBridge && selectedHostedAppChannel ? (
         <SettingsRow
           {...searchableSetting("update-track")}
           description="Switches the hosted app release channel."
