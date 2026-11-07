@@ -20,6 +20,10 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 
 Each eval's README lists its models, flags, and cost. Start with one case and one sample to check the setup.
 
+Codex proxy requests default to `model_providers.vibeproxy` in `~/.codex/config.toml`.
+Set `EVAL_CODEX_CONFIG` to another Codex config file and `EVAL_CODEX_PROVIDER` to its provider name to override them independently.
+The helper reads any required `auth.json` beside the selected config and keeps credentials in memory.
+
 Evals call paid models, so CI does not run them. CI typechecks this package and runs the graders' unit tests.
 
 ## The shape of an eval
