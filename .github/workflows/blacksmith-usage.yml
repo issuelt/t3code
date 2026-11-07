@@ -1,0 +1,69 @@
+name: Blacksmith usage
+
+# Counts this UTC month's Blacksmith minutes for this repository and publishes
+# them as the blacksmith-usage artifact. route-blacksmith.sh reads the newest
+# one from a successful main run and keeps jobs hosted when it is missing,
+# older than 3 hours, incomplete, or from another month.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: blacksmith-usage
+  cancel-in-progress: false
+
+jobs:
+  tally:
+    if: github.repository == 'issuelt/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # The workflow list decides which workflows can use Blacksmith, so it comes from main.
+      - name: Check out the scripts and workflows from main
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/' '/.github/workflows/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
+
+      - name: Find the previous tally
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/blacksmith-usage.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty' 2>/dev/null)" || run=""
+          if [[ "$run" =~ ^[0-9]+$ ]]; then echo "run=$run" >> "$GITHUB_OUTPUT"; fi
+
+      # A missing previous tally only costs one jobs call per run this month.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: steps.previous.outputs.run != ''
+        continue-on-error: true
+        with:
+          name: blacksmith-usage
+          path: previous
+          run-id: ${{ steps.previous.outputs.run }}
+          github-token: ${{ github.token }}
+
+      - name: Count Blacksmith minutes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p tally
+          node .github/scripts/blacksmith-usage.cjs .github/workflows previous/blacksmith-usage.json tally/blacksmith-usage.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: blacksmith-usage
+          path: tally/blacksmith-usage.json
+          if-no-files-found: error
+          retention-days: 2

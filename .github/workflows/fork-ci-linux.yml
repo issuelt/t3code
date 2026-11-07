@@ -15,8 +15,9 @@ permissions:
 
 jobs:
   # Picks VM104 only when it is idle and nothing waits for it, so a busy or
-  # offline VM104 never queues a job. An untrusted event, such as a fork pull
-  # request, skips every step, so vm104 stays empty and the job runs hosted.
+  # offline VM104 never queues a job. Separately, it picks the Blacksmith label
+  # while this month's tally leaves room. An untrusted event, such as a fork
+  # pull request, skips every step, so both stay empty and the job runs hosted.
   route:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -25,6 +26,7 @@ jobs:
       actions: read
     outputs:
       vm104: ${{ steps.decide.outputs.vm104 }}
+      blacksmith_linux: ${{ steps.blacksmith.outputs.blacksmith_linux }}
     env:
       TRUSTED: >-
         ${{ github.repository == 'issuelt/t3code' && (
@@ -53,6 +55,15 @@ jobs:
           APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-vm104.sh
+      - name: Decide Blacksmith
+        id: blacksmith
+        if: env.TRUSTED == 'true'
+        continue-on-error: true
+        env:
+          BLACKSMITH_ROUTING: ${{ vars.BLACKSMITH_ROUTING }}
+          BLACKSMITH_LINUX_LABEL: ${{ vars.BLACKSMITH_LINUX_LABEL }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/route-blacksmith.sh
 
   check:
     needs: route
@@ -65,8 +76,10 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
-        && needs.route.outputs.vm104 == 'true'
-        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        && (
+          needs.route.outputs.vm104 == 'true' && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+          || needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
+        )
         || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     permissions:
@@ -107,13 +120,13 @@ jobs:
         with:
           node-version-file: package.json
           # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' }}
+          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
           run-install: true
-      # The self-hosted runner has no sudo, and its image carries the browser libraries.
+      # VM104 has no sudo, and its image carries the browser libraries. Blacksmith has sudo.
       - name: Install test browsers
         if: steps.gate.outputs.skip != 'true'
         env:
-          WITH_DEPS: ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }}
+          WITH_DEPS: ${{ (runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-')) && '--with-deps' || '' }}
         run: |
           # shellcheck disable=SC2086
           node apps/web/node_modules/playwright/cli.js install $WITH_DEPS --only-shell chromium
