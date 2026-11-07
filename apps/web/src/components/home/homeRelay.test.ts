@@ -1,11 +1,19 @@
-import { EnvironmentId, MessageId, ThreadId, type FleetHostRequest } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  type HomeFleetInvokeInput,
+  type FleetHostRequest,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { relayFleetRequest } from "./homeRelay";
 
 const home = EnvironmentId.make("home");
 const remote = EnvironmentId.make("remote");
-const request = (op: "threads.launch" | "threads.deliver-result"): FleetHostRequest => ({
+const request = (
+  op: "threads.launch" | "threads.deliver-result",
+): FleetHostRequest & { readonly invoke: HomeFleetInvokeInput } => ({
   requestId: "return",
   environmentId: home,
   invoke: {
@@ -67,5 +75,38 @@ it("preserves Home's intentional fleet operations", async () => {
     request: request("threads.launch"),
     forward,
   });
+  expect(forward).toHaveBeenCalledTimes(1);
+});
+
+it("relays ordinary MCP only from the desktop's own server", async () => {
+  const forward = vi.fn(async () => ({ requestId: "ordinary", result: {} }));
+  const ordinary: FleetHostRequest = {
+    requestId: "ordinary",
+    environmentId: remote,
+    invoke: {
+      mcp: {
+        tool: "t3_project_list",
+        arguments: {},
+        namespace: "caller",
+        readOnly: true,
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      },
+    },
+  };
+  const denied = await relayFleetRequest({
+    sourceEnvironmentId: remote,
+    homeEnvironmentId: home,
+    request: ordinary,
+    forward,
+  });
+  expect(denied).toMatchObject({ failure: { code: "capability_denied" } });
+  const accepted = await relayFleetRequest({
+    sourceEnvironmentId: home,
+    homeEnvironmentId: home,
+    request: ordinary,
+    forward,
+  });
+  expect(accepted).toEqual({ requestId: "ordinary", result: {} });
   expect(forward).toHaveBeenCalledTimes(1);
 });

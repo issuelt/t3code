@@ -7,7 +7,7 @@ import {
   CommandId,
   type FleetActor,
   type FleetInput,
-  type FleetInvokeInput,
+  type HomeFleetInvokeInput,
   type FleetOperation,
   type FleetResult,
   isHomeLaunchedThreadId,
@@ -66,7 +66,9 @@ export class FleetService extends Context.Service<
   FleetService,
   {
     /** Runs one operation and returns its result, typed by `FleetResults[op]`. */
-    readonly execute: (input: FleetInvokeInput) => Effect.Effect<unknown, OrchestratorMcpFailure>;
+    readonly execute: (
+      input: HomeFleetInvokeInput,
+    ) => Effect.Effect<unknown, OrchestratorMcpFailure>;
   }
 >()("t3/home/FleetService") {}
 
@@ -625,7 +627,7 @@ const make = Effect.gen(function* () {
   };
 
   // Each handler takes its own operation's input; the request union keeps them paired.
-  const run = (request: FleetInvokeInput["request"], actor: FleetActor) =>
+  const run = (request: HomeFleetInvokeInput["request"], actor: FleetActor) =>
     (
       handlers[request.op] as (
         input: never,

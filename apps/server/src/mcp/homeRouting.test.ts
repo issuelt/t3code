@@ -141,6 +141,9 @@ it.effect("durably registers the remote responder before forwarding a request", 
         requestMessageId: MessageId.make("fleet:send:hub:caller:target:pin"),
       },
     ]);
-    expect(remote[0]?.[1].request).toMatchObject({ input: { clientRequestId: "pin" } });
+    const forwarded = remote[0]?.[1];
+    expect(forwarded !== undefined && "request" in forwarded && forwarded.request).toMatchObject({
+      input: { clientRequestId: "pin" },
+    });
   }).pipe(Effect.provide(layer));
 });

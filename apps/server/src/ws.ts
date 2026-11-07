@@ -196,6 +196,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as FleetBroker from "./home/FleetBroker.ts";
+import * as DesktopMcpRelay from "./mcp/DesktopMcpRelay.ts";
 import * as FleetService from "./home/FleetService.ts";
 import * as HomeService from "./home/HomeService.ts";
 import * as HomeWorkspace from "./home/HomeWorkspace.ts";
@@ -1424,6 +1425,7 @@ export const layerWsRpc = (
       const home = yield* HomeService.HomeService;
       const homeWorkspace = yield* HomeWorkspace.HomeWorkspace;
       const fleet = yield* FleetService.FleetService;
+      const desktopMcp = yield* DesktopMcpRelay.DesktopMcpRelay;
       const fleetBroker = yield* FleetBroker.FleetBroker;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -3246,7 +3248,8 @@ export const layerWsRpc = (
         [WS_METHODS.homeEnable]: (input) => home.enable(input),
         [WS_METHODS.homeDisable]: (_input) => home.disable,
         [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
-        [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
+        [WS_METHODS.fleetInvoke]: (input) =>
+          "mcp" in input ? desktopMcp.invoke(input, currentSession) : fleet.execute(input),
         [WS_METHODS.fleetConnect]: (input) => Stream.unwrap(fleetBroker.connect(input)),
         [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
         [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
@@ -3536,6 +3539,7 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const homeLayer = Layer.mergeAll(
+      Layer.succeed(DesktopMcpRelay.DesktopMcpRelay, yield* DesktopMcpRelay.DesktopMcpRelay),
       Layer.succeed(HomeWorkspace.HomeWorkspace, yield* HomeWorkspace.HomeWorkspace),
       Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
       Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),

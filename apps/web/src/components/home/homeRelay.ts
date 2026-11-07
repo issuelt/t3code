@@ -13,7 +13,8 @@ export async function relayFleetRequest(input: {
 }): Promise<FleetHostResponse> {
   if (
     input.sourceEnvironmentId !== input.homeEnvironmentId &&
-    (input.request.invoke.request.op !== "threads.deliver-result" ||
+    (!("request" in input.request.invoke) ||
+      input.request.invoke.request.op !== "threads.deliver-result" ||
       input.request.invoke.actor.environmentId !== input.sourceEnvironmentId)
   ) {
     return {

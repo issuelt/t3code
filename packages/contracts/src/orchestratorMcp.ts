@@ -629,16 +629,27 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
-export const OrchestratorMcpEnvironmentLink = Schema.Struct({
+const EnvironmentConnectionFields = {
   environmentId: EnvironmentId,
   label: Schema.String,
-  /** Whether it answered just now. An expired link must be linked again there. */
-  status: Schema.Literals(["reachable", "unreachable", "expired"]),
-  /** The most the linked environment lets this one's agents do there. */
-  access: AuthMcpClientAccess,
-  expiresAt: IsoDateTime,
   lastError: Schema.NullOr(Schema.String),
-});
+};
+export const OrchestratorMcpEnvironmentLink = Schema.Union([
+  Schema.Struct({
+    ...EnvironmentConnectionFields,
+    source: Schema.optional(Schema.Literal("peer")),
+    status: Schema.Literals(["reachable", "unreachable", "expired"]),
+    access: AuthMcpClientAccess,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...EnvironmentConnectionFields,
+    source: Schema.Literal("desktop"),
+    status: Schema.Literals(["reachable", "unreachable"]),
+    access: Schema.Null,
+    expiresAt: Schema.Null,
+  }),
+]);
 export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
 
 export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({

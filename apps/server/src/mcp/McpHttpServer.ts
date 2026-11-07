@@ -1,3 +1,5 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as DesktopMcpRelay from "./DesktopMcpRelay.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -14,6 +16,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  AuthOrchestrationOperateScope,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -1249,3 +1252,108 @@ export const layerTools = Layer.mergeAll(
 );
 
 export const layer = layerMcpTransport(layerTools);
+
+const allowed = new Set<string>(
+  Object.values({ ...OrchestratorToolkit.tools, ...ProjectToolkit.tools, ...ThreadToolkit.tools })
+    .filter(McpToolAccess.takesLinkedEnvironment)
+    .map((tool) => tool.name),
+);
+
+const decodeDesktopFailure = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      code: OrchestratorMcpFailure.fields.code,
+      message: Schema.String,
+    }),
+  ),
+);
+const desktopFailure = (text: string) =>
+  decodeDesktopFailure(text).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The desktop MCP call failed.",
+        }),
+    ),
+    Effect.flatMap((error) => Effect.fail(new OrchestratorMcpFailure(error))),
+  );
+
+const makeDesktopRelay = Effect.gen(function* () {
+  const server = yield* McpServer.McpServer;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  return DesktopMcpRelay.DesktopMcpRelay.of({
+    invoke: Effect.fn("DesktopMcpRelay.invoke")(function* ({ mcp }, session) {
+      const { sessionId } = session;
+      if (!allowed.has(mcp.tool) || mcp.arguments.environmentId !== undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "This tool cannot use a desktop connection.",
+        });
+      }
+      const environmentId = yield* environment.getEnvironmentId;
+      const scope = McpInvocationContext.withRuntimeModeCeiling(
+        {
+          environmentId,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 0,
+          requestNamespace: `desktop:${sessionId}:${mcp.namespace}`,
+          thread: undefined,
+          client: {
+            sessionId,
+            label: "Desktop connection",
+            access:
+              mcp.readOnly || !session.scopes.includes(AuthOrchestrationOperateScope)
+                ? "read-only"
+                : "full-access",
+            linked: true,
+            narrowedTo: { runtimeMode: mcp.runtimeMode, interactionMode: mcp.interactionMode },
+          },
+          linkedEnvironments: false,
+        },
+        settings.managedPolicy?.limits?.maxRuntimeMode,
+      );
+      const result = yield* server.callTool({ name: mcp.tool, arguments: mcp.arguments }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(
+          McpSchema.McpServerClient,
+          McpSchema.McpServerClient.of({
+            clientId: 0,
+            protocolVersion: "2025-06-18",
+            clientCapabilities: {},
+            clientInfo: { name: "desktop-relay", version: "1" },
+            initializePayload: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "desktop-relay", version: "1" },
+            },
+            getClient: Effect.die("Desktop relay has no MCP transport client."),
+          }),
+        ),
+        Effect.mapError(
+          () =>
+            new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "The desktop MCP call was refused.",
+            }),
+        ),
+      );
+      if (result.isError) {
+        const text = result.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+        return yield* desktopFailure(text);
+      }
+      return result.structuredContent;
+    }),
+  });
+});
+
+export const layerDesktopRelay = <E, R>(registrations: Layer.Layer<never, E, R>) =>
+  Layer.effect(DesktopMcpRelay.DesktopMcpRelay, makeDesktopRelay).pipe(
+    Layer.provide(registrations.pipe(Layer.provideMerge(layerInProcessMcpServer))),
+    // The relay's registry and request middleware must not share the HTTP MCP server's state.
+    Layer.fresh,
+  );
