@@ -128,8 +128,13 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
+  // A direct route that refused this device's pairing refuses it everywhere,
+  // so it outranks an unrelated timeout and lets the client offer Pair again.
+  const refusedDirect =
+    blocked?.reason === "authentication" && blocked.via === "direct" ? blocked : undefined;
   return yield* (
-    transient ??
+    refusedDirect ??
+      transient ??
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",
