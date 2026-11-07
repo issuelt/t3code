@@ -25,6 +25,7 @@ import {
   BearerConnectionProfile,
   type ConnectionCredential,
   DpopConnectionCredential,
+  sameConnectionCredential,
 } from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget, ConnectionTransientError } from "../connection/model.ts";
@@ -159,7 +160,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
       Ref.get(credentials).pipe(
         Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
       ),
-    put: (connectionId, credential) =>
+    put: (connectionId, credential, replaces) =>
       Effect.gen(function* () {
         const failures = yield* Ref.getAndUpdate(remainingPutFailures, (n) => Math.max(0, n - 1));
         if (failures > 0) {
@@ -167,6 +168,13 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
             reason: "remote-unavailable",
             detail: "Could not save the local connection catalog.",
           });
+        }
+        const current = (yield* Ref.get(credentials)).get(connectionId);
+        if (
+          replaces !== undefined &&
+          (current === undefined || !sameConnectionCredential(current, replaces))
+        ) {
+          return;
         }
         yield* Ref.update(credentials, (current) => new Map(current).set(connectionId, credential));
         yield* Queue.offer(credentialPuts, credential);
@@ -334,6 +342,7 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
   harness: Effect.Success<ReturnType<typeof makeHarness>>,
   times: number,
   connectionId = "direct-1",
+  betweenAttempts: Effect.Effect<void> = Effect.void,
 ) {
   const target = new BearerConnectionTarget({
     environmentId: ENVIRONMENT_ID,
@@ -375,8 +384,10 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
     ),
   );
   const resolver = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layer));
-  return yield* Effect.forEach(Array.from({ length: times }), () =>
-    resolver.prepare(entry).pipe(Effect.result),
+  return yield* Effect.forEach(Array.from({ length: times }), (_, index) =>
+    (index === 0 ? Effect.void : betweenAttempts).pipe(
+      Effect.andThen(resolver.prepare(entry).pipe(Effect.result)),
+    ),
   );
 });
 
@@ -982,6 +993,7 @@ describe("RemoteEnvironmentAuthorization", () => {
           }),
           sessionState(true),
           "network-error",
+          authInvalid(),
           Response.json({
             ...DESCRIPTOR,
             orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
@@ -1010,6 +1022,156 @@ describe("RemoteEnvironmentAuthorization", () => {
         directCredential("converted", 3_600_000),
       );
     }),
+  );
+
+  it.effect("connects with a working bearer when a conversion fails and converts it later", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [
+          [PAIRED_CREDENTIAL_ID, new BearerConnectionCredential({ token: "bearer-token" })],
+        ],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          new Response("Bad Gateway", { status: 502 }),
+          websocketTicket("bearer-ticket"),
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          accessToken("converted"),
+          websocketTicket("converted-ticket"),
+        ],
+      });
+
+      const prepared = yield* prepareDirectBearer(harness, 2, PAIRED_CREDENTIAL_ID);
+
+      expect(prepared).toMatchObject([
+        {
+          _tag: "Success",
+          success: { httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+        },
+        {
+          _tag: "Success",
+          success: { httpAuthorization: { _tag: "Dpop", accessToken: "converted" } },
+        },
+      ]);
+      expect(tokenRequests(harness).map((request) => request.subjectToken)).toEqual([
+        "bearer-token",
+        "bearer-token",
+      ]);
+    }),
+  );
+
+  it.effect("asks again to convert a bearer replaced by pairing again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [
+          [PAIRED_CREDENTIAL_ID, new BearerConnectionCredential({ token: "bearer-token" })],
+        ],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          authInvalid(),
+          websocketTicket("refused-ticket"),
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          sessionState(true),
+          accessToken("converted"),
+          websocketTicket("converted-ticket"),
+        ],
+      });
+
+      const [, prepared] = yield* prepareDirectBearer(
+        harness,
+        2,
+        PAIRED_CREDENTIAL_ID,
+        Ref.update(harness.credentials, (current) =>
+          new Map(current).set(
+            PAIRED_CREDENTIAL_ID,
+            new BearerConnectionCredential({ token: "paired-again" }),
+          ),
+        ),
+      );
+
+      expect(prepared).toMatchObject({
+        _tag: "Success",
+        success: { httpAuthorization: { _tag: "Dpop", accessToken: "converted" } },
+      });
+      expect(tokenRequests(harness).map((request) => request.subjectToken)).toEqual([
+        "bearer-token",
+        "paired-again",
+      ]);
+    }),
+  );
+
+  it.effect.each(["pairs again", "removes the connection"])(
+    "drops an unsaved successor when the user %s",
+    (change) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          credentials: [
+            [PAIRED_CREDENTIAL_ID, new BearerConnectionCredential({ token: "bearer-token" })],
+          ],
+          failedCredentialPuts: 1,
+          responses: [
+            Response.json({
+              ...DESCRIPTOR,
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+            }),
+            sessionState(true),
+            accessToken("converted"),
+            websocketTicket("converted-ticket"),
+            Response.json({
+              ...DESCRIPTOR,
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+            }),
+            sessionState(false),
+            websocketTicket("paired-again-ticket"),
+          ],
+        });
+
+        const [, prepared] = yield* prepareDirectBearer(
+          harness,
+          2,
+          PAIRED_CREDENTIAL_ID,
+          Ref.update(harness.credentials, (current) => {
+            const next = new Map(current);
+            if (change === "pairs again") {
+              next.set(
+                PAIRED_CREDENTIAL_ID,
+                new BearerConnectionCredential({ token: "paired-again" }),
+              );
+            } else {
+              next.delete(PAIRED_CREDENTIAL_ID);
+            }
+            return next;
+          }),
+        );
+
+        if (change === "pairs again") {
+          expect(prepared).toMatchObject({
+            _tag: "Success",
+            success: { httpAuthorization: { _tag: "Bearer", token: "paired-again" } },
+          });
+        } else {
+          expect(prepared).toMatchObject({ _tag: "Failure" });
+        }
+        expect((yield* Ref.get(harness.credentials)).get(PAIRED_CREDENTIAL_ID)).toEqual(
+          change === "pairs again"
+            ? new BearerConnectionCredential({ token: "paired-again" })
+            : undefined,
+        );
+      }),
   );
 
   it.effect("keeps a paired bearer without asking the server when the device has no DPoP key", () =>

@@ -4,9 +4,7 @@ import {
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   setRoutesInCatalog,
-  catalogCredential,
-  putCatalogCredential,
-  removeCatalogCredential,
+  makeCatalogCredentialStore,
   removeCatalogValue,
   replaceCatalogValue,
   Persistence,
@@ -114,18 +112,7 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const credentialStore = CredentialStore.make({
-      get: (connectionId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(catalogCredential(document, connectionId)),
-          ),
-        ),
-      put: (connectionId, credential) =>
-        catalog.update((document) => putCatalogCredential(document, connectionId, credential)),
-      remove: (connectionId) =>
-        catalog.update((document) => removeCatalogCredential(document, connectionId)),
-    });
+    const credentialStore = makeCatalogCredentialStore(catalog);
     const remoteTokenStore = TokenStore.make({
       get: (environmentId) =>
         catalog.read.pipe(

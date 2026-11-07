@@ -936,7 +936,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label" | "proofKeyThumbprint"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -996,17 +996,18 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // A one-hour DPoP session must be renewable: by the authority that bound the key, or directly.
+            const proofKeyThumbprint =
+              grant.proofKeyThumbprint !== undefined ||
+              SessionStore.DIRECT_PAIRING_SUBJECTS.includes(grant.subject)
+                ? input?.proofKeyThumbprint
+                : undefined;
             return yield* sessions
               .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                method: proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: DPOP_SESSION_TTL,
-                    }
-                  : {}),
+                ...(proofKeyThumbprint ? { proofKeyThumbprint, ttl: DPOP_SESSION_TTL } : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -1027,7 +1028,7 @@ export const make = Effect.gen(function* () {
                 ({
                   access_token: session.token,
                   issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
+                  token_type: session.method === "dpop-access-token" ? "DPoP" : "Bearer",
                   expires_in: Math.max(
                     0,
                     Math.floor(

@@ -17,6 +17,7 @@ import {
   BearerConnectionCredential,
   type ConnectionCredential,
   DpopConnectionCredential,
+  sameConnectionCredential,
 } from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import {
@@ -161,8 +162,8 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const tokenLock = yield* Semaphore.make(1);
   const directLocks = new Map<string, Semaphore.Semaphore>();
-  // Bearers already offered for conversion, or found on a server without it, this run.
-  const conversionChecked = new Set<string>();
+  // The bearer token per credential already offered for conversion, or found on a server without it, this run.
+  const conversionChecked = new Map<string, string>();
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
@@ -648,7 +649,7 @@ export const make = Effect.gen(function* () {
     credential: ConnectionCredential,
     replaces: ConnectionCredential,
   ) {
-    const saved = yield* credentials.put(credentialId, credential).pipe(Effect.result);
+    const saved = yield* credentials.put(credentialId, credential, replaces).pipe(Effect.result);
     if (Result.isSuccess(saved)) {
       unsaved.delete(credentialId);
       return;
@@ -665,14 +666,14 @@ export const make = Effect.gen(function* () {
   ) {
     if (
       !input.credentialId.startsWith(PAIRED_CREDENTIAL_PREFIX) ||
-      conversionChecked.has(input.credentialId)
+      conversionChecked.get(input.credentialId) === bearer.token
     ) {
       return bearer;
     }
     // Without WebCrypto, as on an insecure web origin, this device can never hold a DPoP session.
     const key = yield* signer.thumbprint.pipe(Effect.result);
     if (Result.isFailure(key)) {
-      conversionChecked.add(input.credentialId);
+      conversionChecked.set(input.credentialId, bearer.token);
       yield* Effect.logWarning("This device cannot hold a DPoP key; keeping the bearer.", {
         error: key.failure,
       });
@@ -685,7 +686,7 @@ export const make = Effect.gen(function* () {
     // An unreachable descriptor says nothing about the server, so ask again next connect.
     if (Option.isNone(auth)) return bearer;
     if (auth.value.dpopRenewal !== true) {
-      conversionChecked.add(input.credentialId);
+      conversionChecked.set(input.credentialId, bearer.token);
       return bearer;
     }
     const converted = yield* exchangeForDirectDpop(input.httpBaseUrl, bearer.token).pipe(
@@ -693,24 +694,30 @@ export const make = Effect.gen(function* () {
     );
     if (Result.isFailure(converted)) {
       const error = mapDpopSocketError(converted.failure, "direct");
-      // A lost response may have revoked the bearer. The server answers the
-      // same bearer and key again with the same DPoP session, so retry it.
-      if (error._tag === "ConnectionTransientError") return yield* error;
-      conversionChecked.add(input.credentialId);
+      if (error._tag === "ConnectionTransientError") {
+        return { _tag: "UnconvertedBearer", bearer, error } satisfies UnconvertedBearer;
+      }
+      conversionChecked.set(input.credentialId, bearer.token);
       yield* Effect.logWarning("The environment kept the saved bearer credential.", {
         error: converted.failure,
       });
       return bearer;
     }
-    conversionChecked.add(input.credentialId);
+    conversionChecked.set(input.credentialId, bearer.token);
     yield* save(input.credentialId, converted.success, bearer);
     return converted.success;
   });
 
-  const sameCredential = (left: ConnectionCredential, right: ConnectionCredential) =>
-    left._tag === "BearerConnectionCredential"
-      ? right._tag === "BearerConnectionCredential" && left.token === right.token
-      : right._tag === "DpopConnectionCredential" && left.accessToken === right.accessToken;
+  /**
+   * A bearer whose conversion failed transiently. A lost response may already
+   * have revoked it, so the caller tries it and otherwise fails with `error`,
+   * and the retry repeats the conversion with the same bearer and key.
+   */
+  interface UnconvertedBearer {
+    readonly _tag: "UnconvertedBearer";
+    readonly bearer: BearerConnectionCredential;
+    readonly error: ConnectionTransientError;
+  }
 
   /** The newest credential: an unsaved successor while the store still holds what it replaced. */
   const currentCredential = Effect.fn("clientRuntime.connection.remote.currentDirectCredential")(
@@ -718,7 +725,7 @@ export const make = Effect.gen(function* () {
       const stored = yield* credentials.get(credentialId);
       const pending = unsaved.get(credentialId);
       if (pending === undefined) return stored;
-      if (Option.isNone(stored) || !sameCredential(stored.value, pending.replaces)) {
+      if (Option.isNone(stored) || !sameConnectionCredential(stored.value, pending.replaces)) {
         // Pairing again or removing the connection replaced it.
         unsaved.delete(credentialId);
         return stored;
@@ -741,7 +748,10 @@ export const make = Effect.gen(function* () {
     readonly rejectedAccessToken?: string;
   }) {
     return yield* directLock(input.credentialId).withPermits(1)(
-      Effect.gen(function* (): Effect.fn.Return<ConnectionCredential, ConnectionAttemptError> {
+      Effect.gen(function* (): Effect.fn.Return<
+        ConnectionCredential | UnconvertedBearer,
+        ConnectionAttemptError
+      > {
         const stored = yield* currentCredential(input.credentialId);
         if (Option.isNone(stored)) {
           return yield* credentialMissingError(input.credentialId);
@@ -782,13 +792,18 @@ export const make = Effect.gen(function* () {
   ) {
     const descriptor = yield* verifyDirectEndpoint({ ...input, connectionMethod: "direct" });
     const endpoint = { httpBaseUrl: input.httpBaseUrl, wsBaseUrl: input.wsBaseUrl };
-    const bearer = (credential: BearerConnectionCredential) =>
-      bearerSocket(
-        { ...endpoint, bearerToken: credential.token, connectionMethod: "direct" },
-        descriptor,
-      );
+    const bearer = (credential: BearerConnectionCredential | UnconvertedBearer) =>
+      credential._tag === "BearerConnectionCredential"
+        ? bearerSocket(
+            { ...endpoint, bearerToken: credential.token, connectionMethod: "direct" },
+            descriptor,
+          )
+        : bearerSocket(
+            { ...endpoint, bearerToken: credential.bearer.token, connectionMethod: "direct" },
+            descriptor,
+          ).pipe(Effect.mapError(() => credential.error));
     let credential = yield* resolveDirectCredential(input);
-    if (credential._tag === "BearerConnectionCredential") return yield* bearer(credential);
+    if (credential._tag !== "DpopConnectionCredential") return yield* bearer(credential);
     let socket = yield* createDpopSocketUrl(credential.accessToken, endpoint, "direct").pipe(
       Effect.result,
     );
@@ -798,7 +813,7 @@ export const make = Effect.gen(function* () {
         ...input,
         rejectedAccessToken: credential.accessToken,
       });
-      if (renewed._tag === "BearerConnectionCredential") return yield* bearer(renewed);
+      if (renewed._tag !== "DpopConnectionCredential") return yield* bearer(renewed);
       credential = renewed;
       socket = yield* createDpopSocketUrl(credential.accessToken, endpoint, "direct").pipe(
         Effect.result,
@@ -824,6 +839,7 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: direct.httpBaseUrl,
         ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
       });
+      if (credential._tag === "UnconvertedBearer") return yield* credential.error;
       // Pairing again with an older server can replace it with a bearer.
       if (credential._tag !== "DpopConnectionCredential") {
         return yield* credentialMissingError(direct.credentialId);

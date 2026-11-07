@@ -261,7 +261,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         );
         expect(dpop.access_token).not.toBe(token);
         expect(dpop.access_token).not.toBe(exchanged.access_token);
-        expect(dpop.token_type).toBe("DPoP");
+        // The dev token can't renew a DPoP session, so a proof still gets a bearer.
+        expect(dpop.token_type).toBe("Bearer");
         expect(dpop.scope).toBe("orchestration:read");
 
         const secondBearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
@@ -562,6 +563,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("pairs a startup link with a 30-day bearer even when a proof is sent", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairingUrl = yield* serverAuth.issueStartupPairingUrl("http://127.0.0.1:3773");
+        const token = new URLSearchParams(new URL(pairingUrl).hash.slice(1)).get("token") ?? "";
+
+        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          token,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: makeDpopKey().thumbprint },
+        );
+
+        expect(exchanged.token_type).toBe("Bearer");
+        expect(exchanged.expires_in).toBe(Duration.toSeconds(Duration.days(30)));
+        const verified = yield* serverAuth.authenticateHttpRequest(
+          makeBearerRequest(exchanged.access_token),
+        );
+        expect(verified.subject).toBe("administrative-bootstrap");
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
+    );
+
     it.effect(
       "lists pairing links and revokes other sessions while keeping the administrative session",
       () =>
@@ -738,12 +761,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const sessions = yield* SessionStore.SessionStore;
         const key = makeDpopKey();
         const other = makeDpopKey();
-        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-          "desktop-bootstrap-token",
-          ["orchestration:read"],
-          requestMetadata,
-          { proofKeyThumbprint: key.thumbprint },
-        );
+        const exchanged = yield* pairDevice(["orchestration:read"], key.thumbprint);
         const session = yield* sessions.verify(exchanged.access_token);
         const host = "192.168.1.50:3773";
         const socketUrl = `http://${host}/ws`;
@@ -809,13 +827,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
           const key = makeDpopKey();
-          const { access_token: token } =
-            yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              "desktop-bootstrap-token",
-              ["orchestration:read"],
-              requestMetadata,
-              { proofKeyThumbprint: key.thumbprint },
-            );
+          const { access_token: token } = yield* pairDevice(["orchestration:read"], key.thumbprint);
           const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
           const request = {
             method: "GET",
@@ -847,12 +859,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const key = makeDpopKey();
-        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-          "desktop-bootstrap-token",
-          ["orchestration:read"],
-          requestMetadata,
-          { proofKeyThumbprint: key.thumbprint },
-        );
+        const exchanged = yield* pairDevice(["orchestration:read"], key.thumbprint);
         const session = yield* sessions.verify(exchanged.access_token);
         const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
         const request = {

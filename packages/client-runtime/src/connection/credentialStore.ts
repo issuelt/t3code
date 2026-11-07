@@ -11,9 +11,11 @@ export class ConnectionCredentialStore extends Context.Service<
     readonly get: (
       connectionId: string,
     ) => Effect.Effect<Option.Option<ConnectionCredential>, ConnectionAttemptError>;
+    /** With `replaces`, writes only while the stored credential is still that one. */
     readonly put: (
       connectionId: string,
       credential: ConnectionCredential,
+      replaces?: ConnectionCredential,
     ) => Effect.Effect<void, ConnectionAttemptError>;
     readonly remove: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
   }

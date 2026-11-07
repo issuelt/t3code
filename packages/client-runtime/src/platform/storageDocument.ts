@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -8,8 +9,14 @@ import {
   type ConnectionRegistration,
   ConnectionProfile,
   DpopConnectionCredential,
+  sameConnectionCredential,
 } from "../connection/catalog.ts";
-import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import * as CredentialStore from "../connection/credentialStore.ts";
+import {
+  type ConnectionAttemptError,
+  type ConnectionTarget,
+  PersistedConnectionTarget,
+} from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
@@ -77,7 +84,7 @@ export function catalogCredential(
   );
 }
 
-export function removeCatalogCredential(
+function removeCatalogCredential(
   document: ConnectionCatalogDocument,
   connectionId: string,
 ): ConnectionCatalogDocument {
@@ -112,6 +119,31 @@ export function putCatalogCredential(
         dpopCredentials: [...(next.dpopCredentials ?? []), { connectionId, credential }],
       };
   }
+}
+
+/** The credential store over a saved catalog, shared by the web and mobile clients. */
+export function makeCatalogCredentialStore<E extends ConnectionAttemptError>(catalog: {
+  readonly read: Effect.Effect<ConnectionCatalogDocument, E>;
+  readonly update: (
+    transform: (document: ConnectionCatalogDocument) => ConnectionCatalogDocument,
+  ) => Effect.Effect<void, E>;
+}) {
+  return CredentialStore.make({
+    get: (connectionId) =>
+      catalog.read.pipe(
+        Effect.map((document) => Option.fromUndefinedOr(catalogCredential(document, connectionId))),
+      ),
+    put: (connectionId, credential, replaces) =>
+      catalog.update((document) => {
+        const current = catalogCredential(document, connectionId);
+        return replaces !== undefined &&
+          (current === undefined || !sameConnectionCredential(current, replaces))
+          ? document
+          : putCatalogCredential(document, connectionId, credential);
+      }),
+    remove: (connectionId) =>
+      catalog.update((document) => removeCatalogCredential(document, connectionId)),
+  });
 }
 
 function connectionIdOf(target: ConnectionTarget): string | null {

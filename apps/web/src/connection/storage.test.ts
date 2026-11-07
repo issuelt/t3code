@@ -1,4 +1,5 @@
 import {
+  BearerConnectionCredential,
   ConnectionTransientError,
   DpopConnectionCredential,
   PrimaryConnectionTarget,
@@ -7,6 +8,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ConnectionCatalogDocument,
   Persistence,
+  makeCatalogCredentialStore,
   putCatalogCredential,
 } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
@@ -84,6 +86,40 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         { connectionId: "bearer:env", credential: converted },
       ]);
       expect(saved.disabledEnvironmentIds).toEqual(["environment-2"]);
+    }),
+  );
+
+  it.effect("does not restore a credential that another tab removed during a renewal", () =>
+    Effect.gen(function* () {
+      const bearer = new BearerConnectionCredential({ token: "bearer-token" });
+      let stored: string | null = encodeCatalog(
+        putCatalogCredential(emptyCatalog, "bearer:env", bearer),
+      );
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const tabA = makeCatalogCredentialStore(yield* ConnectionStorage.makeCatalogStore(backend));
+      const tabB = makeCatalogCredentialStore(yield* ConnectionStorage.makeCatalogStore(backend));
+      expect(yield* tabB.get("bearer:env")).toEqual(Option.some(bearer));
+
+      yield* tabA.remove("bearer:env");
+      yield* tabB.put(
+        "bearer:env",
+        new DpopConnectionCredential({
+          accessToken: "converted",
+          expiresAtEpochMs: 3_600_000,
+          dpopThumbprint: "thumbprint-1",
+        }),
+        bearer,
+      );
+
+      const saved = decodeCatalog(stored!);
+      expect(saved.credentials).toEqual([]);
+      expect(saved.dpopCredentials).toBeUndefined();
     }),
   );
 

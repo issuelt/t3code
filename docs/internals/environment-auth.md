@@ -31,6 +31,11 @@ A DPoP session lasts an hour. A direct client renews it at `/oauth/token` by
 presenting the access token with a proof from the same key. Only subjects that a
 direct pairing creates may renew there, which today means `one-time-token`
 (`DIRECT_PAIRING_SUBJECTS` in `SessionStore.ts`). The rule is an allowlist.
+A bootstrap exchange issues a DPoP session only to such a subject or to a grant
+bound to the client's key, as T3 Connect's are. Any other grant, such as the
+`t3 serve` startup link, gets a bearer with the normal lifetime even when the
+client sent a proof, because a one-hour session it cannot renew would end the
+link after an hour.
 T3 Connect, dev-token, and desktop sessions renew through the authority that
 issued them, so unlinking or rotating that authority still ends them. The server
 accepts a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link

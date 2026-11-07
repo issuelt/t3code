@@ -152,3 +152,11 @@ export function connectionRegistrationCatalogEntry(
       };
   }
 }
+
+export const sameConnectionCredential = (
+  left: ConnectionCredential,
+  right: ConnectionCredential,
+) =>
+  left._tag === "BearerConnectionCredential"
+    ? right._tag === "BearerConnectionCredential" && left.token === right.token
+    : right._tag === "DpopConnectionCredential" && left.accessToken === right.accessToken;
