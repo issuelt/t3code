@@ -71,6 +71,26 @@ function importedItem(
       };
 }
 
+it("excludes pending queued coordination from context until delivery", () => {
+  const item = importedItem({ role: "user", id: "queued-agent", text: "Later task", ordinal: 1 });
+  assert.equal(item.type, "user_message");
+  if (item.type !== "user_message") return;
+  const pending = {
+    ...item,
+    inputIntent: "queued_turn" as const,
+    status: "pending" as const,
+    senderThreadId: ThreadId.make("coordinator"),
+  };
+  const delivered = { ...pending, status: "completed" as const };
+  assert.deepStrictEqual(
+    ContextHandoffService.visibleConversationItems({ runs: [], attempts: [] }, [
+      pending,
+      delivered,
+    ]),
+    [delivered],
+  );
+});
+
 it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
   it.effect("prepares imported history for the first native v2 turn", () =>
     Effect.gen(function* () {
