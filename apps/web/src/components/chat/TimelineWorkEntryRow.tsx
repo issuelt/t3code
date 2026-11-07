@@ -15,10 +15,9 @@ import {
 import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type EnvironmentId,
-  type ChatAttachment,
   ThreadId,
 } from "@t3tools/contracts";
-import { isImageAttachment } from "../../types";
+import { isImageAttachment, type ChatAttachment } from "../../types";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
@@ -174,14 +173,16 @@ function AgentMessageAttachments({ attachments }: { attachments: ReadonlyArray<C
   const urlsById = new Map(
     resources.map((resource, index) => [resource.attachmentId, urls[index] ?? undefined]),
   );
+  const imageUrl = (attachment: ChatAttachment) =>
+    ("previewUrl" in attachment ? attachment.previewUrl : undefined) ?? urlsById.get(attachment.id);
   return (
     <MessageAttachments
       attachments={attachments}
-      imageUrl={(attachment) => urlsById.get(attachment.id)}
+      imageUrl={imageUrl}
       onOpenImage={(attachment) => {
         const preview = buildExpandedImagePreview(
           attachments.filter(isImageAttachment).flatMap((image) => {
-            const previewUrl = urlsById.get(image.id);
+            const previewUrl = imageUrl(image);
             return previewUrl === undefined ? [] : [{ ...image, previewUrl }];
           }),
           attachment.id,
@@ -206,7 +207,8 @@ function AgentMessageWorkRow({
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   const item = workEntry.projectedItem?.item;
-  const attachments = item?.type === "user_message" ? item.attachments : [];
+  const attachments =
+    workEntry.attachments ?? (item?.type === "user_message" ? item.attachments : []);
   const senderThreadId =
     item?.type === "user_message"
       ? (item.senderThreadId ??

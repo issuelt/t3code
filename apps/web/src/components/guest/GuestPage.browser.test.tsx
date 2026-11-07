@@ -1,5 +1,7 @@
 import {
+  ChatAttachmentId,
   EventId,
+  GUEST_ATTACHMENT_ROUTE,
   GUEST_COMMAND_OUTPUT_ROUTE,
   GUEST_RENDER_ROUTE,
   GuestMessageId,
@@ -221,9 +223,34 @@ describe("GuestPage", () => {
     using _session = vi
       .spyOn(window, "fetch")
       .mockImplementation(async () => new Response(null, { status: 204 }));
-    using _stream = vi
-      .spyOn(window, "EventSource")
-      .mockImplementation(fakeEventSource(opening([run("run-1", 1, "completed")], items)) as never);
+    using _stream = vi.spyOn(window, "EventSource").mockImplementation(
+      fakeEventSource(
+        opening(
+          [run("run-1", 1, "completed")],
+          [
+            ...items,
+            {
+              ...itemBase("agent-image", 4),
+              type: "user_message",
+              createdBy: "agent",
+              creationSource: "mcp",
+              messageId: MessageId.make("agent-image"),
+              inputIntent: "turn_start",
+              text: "Review the attached diagram.",
+              attachments: [
+                {
+                  id: ChatAttachmentId.make("diagram"),
+                  type: "image",
+                  name: "diagram.png",
+                  mimeType: "image/png",
+                  sizeBytes: 100,
+                },
+              ],
+            },
+          ],
+        ),
+      ) as never,
+    );
     using socket = vi.spyOn(window, "WebSocket");
     const container = document.createElement("div");
     container.style.cssText = "height: 900px; width: 900px; display: flex; flex-direction: column;";
@@ -233,6 +260,14 @@ describe("GuestPage", () => {
     // A finished turn folds its work, as it does for the owner; the command is inside.
     await userEvent.click(screen.getByRole("button", { name: /Worked for/ }));
     await expect.element(screen.getByText("vp run check:changed")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Message from Agent" }));
+    const imageUrl = `${GUEST_ATTACHMENT_ROUTE}?share=${SHARE_ID}&id=diagram`;
+    await expect
+      .element(screen.getByRole("img", { name: "diagram.png" }))
+      .toHaveAttribute("src", imageUrl);
+    using openedImage = vi.spyOn(window, "open").mockReturnValue(null);
+    await userEvent.click(screen.getByRole("button", { name: "Preview diagram.png" }));
+    expect(openedImage).toHaveBeenCalledWith(imageUrl, "_blank", "noopener,noreferrer");
     // Expanding the command shows its output, read through the guest route.
     await userEvent.click(screen.getByText("vp run check:changed"));
     await expect.element(screen.getByText("4 files checked")).toBeVisible();

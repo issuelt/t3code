@@ -68,6 +68,7 @@ export type WorkLogToolLifecycleStatus =
   | "stopped";
 
 export interface WorkLogEntry {
+  readonly attachments?: ReadonlyArray<ChatAttachment>;
   readonly questionAnswer?: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
   readonly id: string;
   readonly createdAt: string;
@@ -651,6 +652,10 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           runId: item.runId,
           label: "Agent",
           detail: item.text,
+          attachments: item.attachments.map((attachment) => {
+            const previewUrl = input.attachmentUrlById?.get(attachment.id);
+            return previewUrl ? { ...attachment, previewUrl } : attachment;
+          }),
           tone: "info",
           itemType: item.type,
           structuredPayload: item,
