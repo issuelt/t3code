@@ -22,3 +22,5 @@ jobs:
     permissions:
       contents: read
       actions: read
+    secrets:
+      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
