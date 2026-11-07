@@ -547,11 +547,14 @@ it.effect("requires operation-specific permissions for Home and ordinary desktop
       ["t3_thread_transfer", { action: "fork" }],
       ["unknown_tool", {}],
     ] as const) {
-      expect(
-        yield* readClient[WS_METHODS.fleetInvoke]({
+      const refused = yield* Effect.exit(
+        readClient[WS_METHODS.fleetInvoke]({
           mcp: { ...mcp, readOnly: true, tool, arguments: arguments_ },
-        }).pipe(Effect.flip),
-      ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+        }),
+      );
+      expect(Exit.isFailure(refused) && Cause.squash(refused.cause)).toMatchObject({
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
     }
     expect(handled).toBe(1 + reads.length);
   }).pipe(Effect.scoped),
