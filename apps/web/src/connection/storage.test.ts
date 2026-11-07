@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -80,6 +81,46 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         ...document,
         disabledEnvironmentIds: [EnvironmentId.make("environment-2")],
       }));
+
+      const saved = decodeCatalog(stored!);
+      expect(saved.dpopCredentials).toEqual([
+        { connectionId: "bearer:env", credential: converted },
+      ]);
+      expect(saved.disabledEnvironmentIds).toEqual(["environment-2"]);
+    }),
+  );
+
+  it.effect("serializes concurrent writes from two tabs through the shared lock", () =>
+    Effect.gen(function* () {
+      let stored: string | null = null;
+      const backend = {
+        // The yield lets the other tab read the same document before this one writes.
+        read: Effect.sync(() => stored).pipe(Effect.tap(() => Effect.yieldNow)),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const sharedLock = yield* Semaphore.make(1);
+      const exclusive = sharedLock.withPermits(1);
+      const tabA = yield* ConnectionStorage.makeCatalogStore(backend, { exclusive });
+      const tabB = yield* ConnectionStorage.makeCatalogStore(backend, { exclusive });
+      const converted = new DpopConnectionCredential({
+        accessToken: "converted",
+        expiresAtEpochMs: 3_600_000,
+        dpopThumbprint: "thumbprint-1",
+      });
+
+      yield* Effect.all(
+        [
+          tabA.update((document) => putCatalogCredential(document, "bearer:env", converted)),
+          tabB.update((document) => ({
+            ...document,
+            disabledEnvironmentIds: [EnvironmentId.make("environment-2")],
+          })),
+        ],
+        { concurrency: "unbounded" },
+      );
 
       const saved = decodeCatalog(stored!);
       expect(saved.dpopCredentials).toEqual([

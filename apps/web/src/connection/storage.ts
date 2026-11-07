@@ -537,7 +537,11 @@ interface CatalogStore {
  */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
-  options: { readonly onWrite?: () => void } = {},
+  options: {
+    readonly onWrite?: () => void;
+    /** Serializes read-change-write with other tabs and windows of this origin. */
+    readonly exclusive?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  } = {},
 ) {
   let cached: ConnectionCatalogDocumentType | undefined;
   let generation = 0;
@@ -587,14 +591,17 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const read = lock.withPermits(1)(loadUnlocked());
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
+      const exclusive = options.exclusive ?? ((effect) => effect);
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* readStored());
-          yield* backend.write(yield* encodeCatalog(next));
-          generation++;
-          cached = next;
-          options.onWrite?.();
-        }),
+        exclusive(
+          Effect.gen(function* () {
+            const next = transform(yield* readStored());
+            yield* backend.write(yield* encodeCatalog(next));
+            generation++;
+            cached = next;
+            options.onWrite?.();
+          }),
+        ),
       );
     },
   );
@@ -607,6 +614,28 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 });
 
 const CATALOG_CHANGED_CHANNEL = "t3code:connection-catalog-changed";
+const CATALOG_LOCK = "t3code:connection-catalog";
+
+/** Holds a Web Lock shared by every tab and desktop window of this origin while the effect runs. */
+const withCatalogLock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  typeof navigator === "undefined" || navigator.locks === undefined
+    ? effect
+    : Effect.acquireUseRelease(
+        Effect.promise(
+          (signal) =>
+            new Promise<() => void>((granted, refused) => {
+              navigator.locks
+                .request(
+                  CATALOG_LOCK,
+                  { signal },
+                  () => new Promise<void>((release) => granted(release)),
+                )
+                .catch(refused);
+            }),
+        ),
+        () => effect,
+        (release) => Effect.sync(release),
+      );
 
 /** Tells other tabs and desktop windows of this origin when the catalog changes. */
 const makeCatalogChangeChannel = Effect.acquireRelease(
@@ -746,6 +775,7 @@ export const layer = Layer.effectContext(
     const catalogChanges = yield* makeCatalogChangeChannel;
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database), {
       onWrite: () => catalogChanges?.postMessage(null),
+      exclusive: withCatalogLock,
     });
     if (catalogChanges !== null) catalogChanges.onmessage = catalog.invalidate;
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
