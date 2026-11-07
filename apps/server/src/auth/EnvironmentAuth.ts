@@ -1009,6 +1009,10 @@ export const make = Effect.gen(function* () {
                 scopes: grantedScopes,
                 ...(proofKeyThumbprint ? { proofKeyThumbprint, ttl: DPOP_SESSION_TTL } : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                // Pairing again with the same key ends the device's older chain.
+                replaceProofKeyFamily:
+                  proofKeyThumbprint !== undefined &&
+                  SessionStore.DIRECT_PAIRING_SUBJECTS.includes(grant.subject),
                 client: {
                   ...requestMetadata,
                   ...(grant.label ? { label: grant.label } : {}),

@@ -42,7 +42,9 @@ accepts a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link
 in use never expires and an idle one pairs again. Renewal copies the subject,
 never widens scopes, and stops when the managed policy disallows remote clients.
 The rows that share a key and a subject form one family. Revoking any row revokes
-the whole family. A row revoked alone would leave its predecessors able to
+the whole family. A device that pairs again with the same key starts a new chain,
+and the pairing revokes the older rows at the new row's issue time. The family
+check refuses only revocations after a row was issued, so the new chain renews. A row revoked alone would leave its predecessors able to
 renew. Sharing & access lists a family by its newest row while that row's
 `expires_at` plus the renewal window is still in the future, because the device
 can renew until then. A policy rollout revokes disallowed subjects in SQL with no
@@ -97,7 +99,10 @@ parameters only pick targets; see
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
 T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header
-breaks sign-in.
+breaks sign-in. A DPoP proof may also name the URL rebuilt from the first
+`X-Forwarded-Host`, so a proxy that rewrites Host, as nginx does by default, keeps
+direct DPoP links working. Trusting that header is safe there because `ath` binds
+the proof to a token this server signed and `jti` still blocks replay.
 
 Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
 HTTP so long-lived tokens stay out of socket URLs. A ticket names the route it

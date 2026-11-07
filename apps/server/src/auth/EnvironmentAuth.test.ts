@@ -19,6 +19,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -854,6 +855,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         ),
     );
 
+    it.effect("accepts a DPoP proof for the public URL behind a proxy that rewrites Host", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const key = makeDpopKey();
+        const { access_token: token } = yield* pairDevice(["orchestration:read"], key.thumbprint);
+        const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
+        const authenticate = (proofUrl: string, forwardedHost?: string) =>
+          serverAuth.authenticateHttpRequest(
+            HttpServerRequest.fromWeb(
+              new Request("http://127.0.0.1:3773/api/x", {
+                headers: {
+                  host: "127.0.0.1:3773",
+                  "x-forwarded-proto": "https",
+                  ...(forwardedHost ? { "x-forwarded-host": forwardedHost } : {}),
+                  authorization: `DPoP ${token}`,
+                  dpop: key.sign({ method: "GET", url: proofUrl, token, iat }),
+                },
+              }),
+            ),
+          );
+
+        const forwarded = yield* authenticate("https://public.example/api/x", "public.example");
+        expect(forwarded.sessionId).toBeTypeOf("string");
+        for (const forwardedHost of ["public.example", undefined]) {
+          const other = yield* Effect.flip(
+            authenticate("https://other.example/api/x", forwardedHost),
+          );
+          expect(other._tag).toBe("ServerAuthInvalidCredentialError");
+        }
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("rejects a replayed proof on a bound RPC socket ticket", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -1005,6 +1038,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           );
           expect(renewedAgain.token_type).toBe("DPoP");
         }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("retires the old chain when a device pairs again with the same key", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const renew = (token: string) =>
+          serverAuth.exchangeAccessTokenForDpopSession(token, undefined, requestMetadata, {
+            proofKeyThumbprint: key.thumbprint,
+          });
+        const first = yield* pairDevice(["orchestration:read", "filesystem:read"], key.thumbprint);
+        const firstRenewed = yield* renew(first.access_token);
+        yield* TestClock.adjust(Duration.minutes(5));
+
+        const repaired = yield* pairDevice(["orchestration:read"], key.thumbprint);
+        expect((yield* Effect.flip(renew(firstRenewed.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        yield* TestClock.adjust(Duration.minutes(5));
+        const renewed = yield* renew(repaired.access_token);
+        const renewedSession = yield* sessions.verify(renewed.access_token);
+        const listed = (yield* sessions.listActive()).filter(
+          (session) => session.subject === "one-time-token",
+        );
+        expect(listed.map((session) => [session.sessionId, session.scopes])).toEqual([
+          [renewedSession.sessionId, ["orchestration:read"]],
+        ]);
+
+        yield* serverAuth.revokeSession(renewedSession.sessionId);
+        expect((yield* Effect.flip(renew(renewed.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect((yield* Effect.flip(renew(repaired.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect(yield* sessions.listActive()).toEqual([]);
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
     );
 
     it.effect("renews an expired DPoP token only inside the renewal window", () =>

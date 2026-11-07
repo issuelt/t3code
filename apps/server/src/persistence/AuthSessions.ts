@@ -73,6 +73,8 @@ export const CreateReplacingActiveAuthSessionInput = Schema.Struct({
   session: CreateAuthSessionInput,
   revokedAt: Schema.DateTimeUtcFromString,
   replaceSessionId: Schema.optionalKey(AuthSessionId),
+  /** Revokes the session's DPoP family instead, expired rows included, so one key keeps one chain. */
+  replaceProofKeyFamily: Schema.optionalKey(Schema.Boolean),
 });
 export type CreateReplacingActiveAuthSessionInput =
   typeof CreateReplacingActiveAuthSessionInput.Type;
@@ -316,8 +318,17 @@ export const make = Effect.gen(function* () {
   const revokeActiveSessionsForReplacement = SqlSchema.findAll({
     Request: CreateReplacingActiveAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ session, revokedAt, replaceSessionId }) =>
-      sql`
+    execute: ({ session, revokedAt, replaceSessionId, replaceProofKeyFamily }) =>
+      replaceProofKeyFamily === true && session.proofKeyThumbprint !== undefined
+        ? sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE proof_key_thumbprint = ${session.proofKeyThumbprint}
+          AND subject = ${session.subject}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `
+        : sql`
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE ${

@@ -53,6 +53,17 @@ export const mapDpopReplayStoreError = (
         cause: error,
       });
 
+const forwardedHostUrl = (url: URL, header: string | undefined): string | undefined => {
+  const host = header?.split(",")[0]?.trim();
+  if (!host) return undefined;
+  try {
+    const forwarded = new URL(`${url.pathname}${url.search}`, `${url.protocol}//${host}`);
+    return forwarded.host === url.host ? undefined : forwarded.href;
+  } catch {
+    return undefined;
+  }
+};
+
 export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(function* (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   /** Overrides the `DPoP` header for requests that cannot carry one, such as a WebSocket upgrade. */
@@ -68,14 +79,21 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
     });
   }
   const now = yield* DateTime.now;
-  const result = verifyDpopProof({
-    proof,
-    method: input.request.method,
-    url: url.value.href,
-    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-    ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
-    ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
-  });
+  const verifyFor = (href: string) =>
+    verifyDpopProof({
+      proof,
+      method: input.request.method,
+      url: href,
+      nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+      ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
+      ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
+    });
+  let result = verifyFor(url.value.href);
+  const forwardedUrl = forwardedHostUrl(url.value, input.request.headers["x-forwarded-host"]);
+  // A forged X-Forwarded-Host gains nothing: ath binds the proof to a token this server signed, and jti blocks replay.
+  if (!result.ok && result.code === "url_mismatch" && forwardedUrl !== undefined) {
+    result = verifyFor(forwardedUrl);
+  }
   if (!result.ok) {
     yield* Effect.annotateCurrentSpan({
       "environment.dpop.failure_code": result.code,

@@ -394,6 +394,11 @@ export interface IssueSessionInput {
   readonly peerLink?: boolean;
   readonly replaceActiveForSubjectAndMethod?: boolean;
   readonly replaceSessionId?: AuthSessionId;
+  /**
+   * Revokes the older rows of this key and subject at the new row's issue time. The family
+   * check refuses only revocations strictly after a row's issue time, so the new chain renews.
+   */
+  readonly replaceProofKeyFamily?: boolean;
 }
 
 /**
@@ -417,7 +422,10 @@ export class SessionStore extends Context.Service<
      * or its DPoP family was revoked, checked in the same transaction as the insert.
      */
     readonly issueSuccessor: (
-      input: Omit<IssueSessionInput, "replaceActiveForSubjectAndMethod" | "replaceSessionId"> & {
+      input: Omit<
+        IssueSessionInput,
+        "replaceActiveForSubjectAndMethod" | "replaceSessionId" | "replaceProofKeyFamily"
+      > & {
         readonly predecessorSessionId: AuthSessionId;
         readonly revokePredecessor: boolean;
       },
@@ -775,13 +783,16 @@ const make = Effect.gen(function* () {
       const { sessionId, claims, client, sessionRecord } = prepared;
       const { issuedAt, expiresAt } = sessionRecord;
       const replacedSessionIds = yield* (
-        input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
+        input?.replaceSessionId !== undefined ||
+        input?.replaceActiveForSubjectAndMethod ||
+        (input?.replaceProofKeyFamily && sessionRecord.proofKeyThumbprint !== undefined)
           ? authSessions.createReplacingActive({
               session: sessionRecord,
               revokedAt: issuedAt,
               ...(input.replaceSessionId !== undefined
                 ? { replaceSessionId: input.replaceSessionId }
                 : {}),
+              ...(input.replaceProofKeyFamily ? { replaceProofKeyFamily: true } : {}),
             })
           : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
       ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
