@@ -5,9 +5,10 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthSessionId,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
-  RpcScopeAuthorization,
+  WsRpcGroup,
   ScheduledTask,
   WS_METHODS,
   EnvironmentId,
@@ -55,6 +56,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as RpcTest from "effect/rpc/RpcTest";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -1054,7 +1056,10 @@ const desktopFixture = Effect.gen(function* () {
             if (!("mcp" in request.invoke))
               return yield* Effect.die("Ordinary callers must not use Home's operations.");
             const result = yield* destination
-              .invoke(request.invoke, "desktop-session")
+              .invoke(request.invoke, {
+                sessionId: AuthSessionId.make("desktop-session"),
+                scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+              })
               .pipe(Effect.result);
             yield* broker.respond(
               result._tag === "Success"
@@ -1194,7 +1199,10 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
                 arguments: { threadId: boxThread, message: "Continue" },
               },
             },
-            "desktop-session",
+            {
+              sessionId: AuthSessionId.make("desktop-session"),
+              scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+            },
           )
           .pipe(Effect.exit);
         expect(Exit.isFailure(denied) && Cause.squash(denied.cause)).toMatchObject({ code });
@@ -1212,7 +1220,10 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
                 interactionMode: "default",
               },
             },
-            "desktop-session",
+            {
+              sessionId: AuthSessionId.make("desktop-session"),
+              scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+            },
           )
           .pipe(Effect.exit);
         expect(Exit.isFailure(denied) && Cause.squash(denied.cause)).toMatchObject({
@@ -1235,13 +1246,32 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
             interactionMode: "default",
           },
         } as const;
-        const authorize = yield* RpcScopeAuthorization.pipe(
-          Effect.provide(RpcAuthorization.layer(scopes)),
+        const group = WsRpcGroup.omit(
+          ...[...WsRpcGroup.requests.keys()].filter(
+            (
+              tag,
+            ): tag is Exclude<
+              keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+              typeof WS_METHODS.fleetInvoke
+            > => tag !== WS_METHODS.fleetInvoke,
+          ),
         );
-        const result = yield* authorize(a.destination.invoke(input, "read-destination"), {
-          rpc: { _tag: WS_METHODS.fleetInvoke },
-          payload: input,
-        });
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.fleetInvoke, (request) =>
+                "mcp" in request
+                  ? a.destination.invoke(request, {
+                      sessionId: AuthSessionId.make("read-destination"),
+                      scopes,
+                    })
+                  : Effect.die("Expected ordinary desktop call"),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+        );
+        const result = yield* client[WS_METHODS.fleetInvoke](input);
         expect(result).toMatchObject({ tasks: [{ scheduledTaskId: "webhook-fixture" }] });
         expect(JSON.stringify(result).includes("webhookUrl")).toBe(exposesTrigger);
       }

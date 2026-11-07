@@ -1,4 +1,5 @@
 import { type DesktopMcpInvokeInput, OrchestratorMcpFailure } from "@t3tools/contracts";
+import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -8,7 +9,7 @@ export class DesktopMcpRelay extends Context.Service<
   {
     readonly invoke: (
       input: DesktopMcpInvokeInput,
-      sessionId: string,
+      session: Pick<AuthenticatedSession, "sessionId" | "scopes">,
     ) => Effect.Effect<unknown, OrchestratorMcpFailure>;
   }
 >()("t3/mcp/DesktopMcpRelay") {}

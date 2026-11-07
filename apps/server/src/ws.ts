@@ -3249,7 +3249,7 @@ export const layerWsRpc = (
         [WS_METHODS.homeDisable]: (_input) => home.disable,
         [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
         [WS_METHODS.fleetInvoke]: (input) =>
-          "mcp" in input ? desktopMcp.invoke(input, currentSessionId) : fleet.execute(input),
+          "mcp" in input ? desktopMcp.invoke(input, currentSession) : fleet.execute(input),
         [WS_METHODS.fleetConnect]: (input) => Stream.unwrap(fleetBroker.connect(input)),
         [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
         [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),

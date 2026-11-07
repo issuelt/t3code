@@ -7,6 +7,8 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthSessionId,
+  AuthOrchestrationReadScope,
   DeviceId,
   DeviceOperationError,
   EnvironmentId,
@@ -1530,7 +1532,7 @@ it.effect("desktop relay calls cannot replace the HTTP server's toolkit handlers
           interactionMode: "plan",
         },
       },
-      "desktop-session",
+      { sessionId: AuthSessionId.make("desktop-session"), scopes: [AuthOrchestrationReadScope] },
     );
     expect(result).toEqual({ registry: "relay" });
     const ordinary = yield* http

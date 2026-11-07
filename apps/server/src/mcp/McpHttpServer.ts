@@ -16,6 +16,7 @@ import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
+  AuthOrchestrationOperateScope,
   DeviceToolError,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -1283,7 +1284,8 @@ const makeDesktopRelay = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const settings = yield* ServerSettings.ServerSettingsService;
   return DesktopMcpRelay.DesktopMcpRelay.of({
-    invoke: Effect.fn("DesktopMcpRelay.invoke")(function* ({ mcp }, sessionId) {
+    invoke: Effect.fn("DesktopMcpRelay.invoke")(function* ({ mcp }, session) {
+      const { sessionId } = session;
       if (!allowed.has(mcp.tool) || mcp.arguments.environmentId !== undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
@@ -1301,7 +1303,10 @@ const makeDesktopRelay = Effect.gen(function* () {
           client: {
             sessionId,
             label: "Desktop connection",
-            access: mcp.readOnly ? "read-only" : "full-access",
+            access:
+              mcp.readOnly || !session.scopes.includes(AuthOrchestrationOperateScope)
+                ? "read-only"
+                : "full-access",
             linked: true,
             narrowedTo: { runtimeMode: mcp.runtimeMode, interactionMode: mcp.interactionMode },
           },
