@@ -506,6 +506,54 @@ it.effect("requires operation-specific permissions for Home and ordinary desktop
       });
     }
     expect(handled).toBe(1);
+    const readClient = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.fleetInvoke, () =>
+            Effect.sync(() => {
+              handled++;
+              return {};
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    const reads = [
+      ["orchestrator_capabilities", {}],
+      ["t3_project_list", {}],
+      ["t3_project_read", {}],
+      ["t3_thread_search", {}],
+      ["t3_thread_list", {}],
+      ["t3_thread_read", {}],
+      ["t3_thread_wait", {}],
+      ["t3_pending_request", { action: "list" }],
+      ["t3_pending_request", { action: "read" }],
+      ["t3_queue", { action: "list" }],
+      ["t3_queue", { action: "read" }],
+      ["t3_thread_configure", {}],
+      ["t3_thread_transfer", { action: "status" }],
+    ] as const;
+    for (const [tool, arguments_] of reads) {
+      yield* readClient[WS_METHODS.fleetInvoke]({
+        mcp: { ...mcp, tool, arguments: arguments_ },
+      });
+    }
+    for (const [tool, arguments_] of [
+      ["t3_thread_send", {}],
+      ["t3_pending_request", { action: "respond" }],
+      ["t3_queue", { action: "delete" }],
+      ["t3_thread_configure", { modelSelection: {} }],
+      ["t3_thread_transfer", { action: "fork" }],
+      ["unknown_tool", {}],
+    ] as const) {
+      expect(
+        yield* readClient[WS_METHODS.fleetInvoke]({
+          mcp: { ...mcp, readOnly: true, tool, arguments: arguments_ },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+    }
+    expect(handled).toBe(1 + reads.length);
   }).pipe(Effect.scoped),
 );
 
