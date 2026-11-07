@@ -26,9 +26,10 @@ jobs:
   version:
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write. This is a ceiling: the callee's other jobs keep its top-level contents: read.
+    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
+      actions: read
     with:
       stage: version
 
@@ -190,9 +191,10 @@ jobs:
     needs: version
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write. This is a ceiling: the callee's other jobs keep its top-level contents: read.
+    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
+      actions: read
     with:
       stage: build
       version: ${{ needs.version.outputs.version }}
@@ -206,6 +208,7 @@ jobs:
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     permissions:
       contents: write
+      actions: read
     with:
       stage: publish
       version: ${{ needs.version.outputs.version }}
