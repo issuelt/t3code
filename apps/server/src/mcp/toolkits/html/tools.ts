@@ -20,8 +20,9 @@ const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_0
   description: "A complete, self-contained HTML document.",
 });
 
-const PAGE_RULES =
-  "Inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is.";
+const EMBED_RULE =
+  "The page runs in a sandbox without cookies or storage, where hosted widgets such as embedded trading or social charts usually render blank. Do not embed them. Fetch the data and draw the chart in the page with a charting library.";
+const PAGE_RULES = `Inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is. ${EMBED_RULE}`;
 
 export const HtmlPreviewTool = Tool.make("html_preview", {
   description: `Check an HTML page before html_render. Returns PNG, contentHeight, and console output. If it says the browser is still installing, call again in a minute. ${PAGE_RULES} Theme and layout rules are in html_render.`,
@@ -71,7 +72,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${EMBED_RULE} ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
   parameters: Schema.Struct({
     html: Html,
     title: Schema.String.check(
