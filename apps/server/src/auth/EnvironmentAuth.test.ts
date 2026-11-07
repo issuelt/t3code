@@ -923,7 +923,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     );
 
     it.effect(
-      "refuses renewal with another key, without a proof, after a family revoke, or for an MCP client",
+      "refuses renewal with another key, without a proof, after a family revoke, or for a subject no direct pairing created",
       () =>
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -957,6 +957,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             ttl: Duration.hours(1),
           });
           expect(yield* renew(mcp.token, key.thumbprint)).toBe("ServerAuthInvalidCredentialError");
+
+          // Only a direct pairing renews here. T3 Connect and dev tokens keep their own authority.
+          for (const subject of [
+            "cloud-connect",
+            "reusable-dev-token-child",
+            "desktop-bootstrap",
+          ]) {
+            const other = yield* sessions.issue({
+              subject,
+              method: "dpop-access-token",
+              scopes: ["orchestration:read"],
+              proofKeyThumbprint: key.thumbprint,
+              ttl: Duration.hours(1),
+            });
+            expect(yield* renew(other.token, key.thumbprint)).toBe(
+              "ServerAuthInvalidCredentialError",
+            );
+          }
 
           const renewed = yield* serverAuth.exchangeAccessTokenForDpopSession(
             paired.access_token,
@@ -1012,7 +1030,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
     );
 
-    it.effect("converts a one-time-token bearer into a DPoP session once", () =>
+    it.effect("converts a one-time-token bearer once and repeats it only for the same key", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
@@ -1035,15 +1053,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* Effect.flip(sessions.verify(bearer.access_token)))._tag).toBe(
           "SessionTokenRevokedError",
         );
-        const twice = yield* Effect.flip(
-          serverAuth.exchangeAccessTokenForDpopSession(
-            bearer.access_token,
-            undefined,
-            requestMetadata,
-            { proofKeyThumbprint: makeDpopKey().thumbprint },
-          ),
+        const convert = (token: string, proofKeyThumbprint: string) =>
+          serverAuth.exchangeAccessTokenForDpopSession(token, undefined, requestMetadata, {
+            proofKeyThumbprint,
+          });
+        const refusal = (token: string, proofKeyThumbprint: string) =>
+          convert(token, proofKeyThumbprint).pipe(
+            Effect.flip,
+            Effect.map((error) => error._tag),
+          );
+        expect(yield* refusal(bearer.access_token, makeDpopKey().thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
         );
-        expect(twice._tag).toBe("ServerAuthInvalidCredentialError");
+
+        // A lost response: the same key may convert again into the same family.
+        const retried = yield* convert(bearer.access_token, key.thumbprint);
+        expect(yield* sessions.verify(retried.access_token)).toMatchObject({
+          subject: "one-time-token",
+          scopes: ["orchestration:read"],
+          proofKeyThumbprint: key.thumbprint,
+        });
+        yield* serverAuth.revokeSession((yield* sessions.verify(retried.access_token)).sessionId);
+        expect(yield* refusal(bearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        const revokedBearer = yield* pairDevice(["orchestration:read"]);
+        yield* serverAuth.revokeSession(
+          (yield* sessions.verify(revokedBearer.access_token)).sessionId,
+        );
+        expect(yield* refusal(revokedBearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
@@ -1062,6 +1103,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             );
 
         const cli = yield* serverAuth.issueSession({ scopes: ["orchestration:read"] });
+        const cliPairing = yield* Effect.flip(
+          serverAuth.issueSession({ scopes: ["orchestration:read"], subject: "one-time-token" }),
+        );
+        expect(cliPairing._tag).toBe("ServerAuthReservedSubjectError");
         const mcp = yield* serverAuth.issueMcpClientSession({
           label: "Agent",
           access: "read-only",

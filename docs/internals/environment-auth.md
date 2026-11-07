@@ -28,15 +28,28 @@ rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
 A DPoP session lasts an hour. A direct client renews it at `/oauth/token` by
-presenting the access token with a proof from the same key. The server accepts
-a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link in use
-never expires and an idle one pairs again. Renewal copies the subject and never
-widens scopes. Sessions with MCP or peer-link claims cannot renew this way. The
-rows that share a key and a subject form one family. Revoking any row revokes the
-whole family, and Sharing & access lists only its newest row. A row revoked
-alone would leave its predecessors able to renew. A bearer session from a pairing
-link converts to DPoP once. The conversion revokes the bearer in the same
-transaction, and expired bearers cannot convert.
+presenting the access token with a proof from the same key. Only subjects that a
+direct pairing creates may renew there, which today means `one-time-token`
+(`DIRECT_PAIRING_SUBJECTS` in `SessionStore.ts`). The rule is an allowlist.
+T3 Connect, dev-token, and desktop sessions renew through the authority that
+issued them, so unlinking or rotating that authority still ends them. The server
+accepts a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link
+in use never expires and an idle one pairs again. Renewal copies the subject,
+never widens scopes, and stops when the managed policy disallows remote clients.
+The rows that share a key and a subject form one family. Revoking any row revokes
+the whole family. A row revoked alone would leave its predecessors able to
+renew. Sharing & access lists a family by its newest row while that row's
+`expires_at` plus the renewal window is still in the future, because the device
+can renew until then. A policy rollout revokes disallowed subjects in SQL with no
+expiry filter for the same reason.
+
+A bearer session from a pairing link converts to DPoP. The conversion revokes the
+bearer in the same transaction and records it as the successor's predecessor.
+If the response is lost, the same bearer may convert again with the same proof
+key while a successor it created is unrevoked. Any other key, a bearer revoked
+for another reason, and a revoked family stay refused. Expired bearers cannot
+convert. `t3 auth session issue` refuses the pairing subjects, so a CLI bearer
+cannot convert.
 
 ### Guest links are not sessions
 

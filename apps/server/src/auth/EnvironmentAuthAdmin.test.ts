@@ -2,8 +2,10 @@ import { AuthStandardClientScopes, type ManagedPolicyDocument } from "@t3tools/c
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -76,6 +78,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
         const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const phone = yield* sessions.issue({ subject: "one-time-token" });
+        const idlePhone = yield* sessions.issue({
+          subject: "one-time-token",
+          method: "dpop-access-token",
+          proofKeyThumbprint: "idle-phone-key",
+          ttl: Duration.hours(1),
+        });
+        yield* TestClock.adjust(Duration.hours(2));
         const bot = yield* sessions.issue({ subject: "cli-issued-session" });
         const startup = (ipAddress: string) =>
           sessions.issue({
@@ -98,7 +107,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         assert.include(remaining, startupBrowser.sessionId);
         assert.include(remaining, bot.sessionId);
         assert.lengthOf(yield* pairingLinks.listActive(), 0);
-      }).pipe(Effect.provide(layerEnvironmentAuth())),
+        // An idle DPoP device is past its expiry but could still renew, so it goes too.
+        const idle = yield* sessions
+          .verify(idlePhone.token, { acceptExpiredFor: Duration.days(30) })
+          .pipe(Effect.flip);
+        assert.equal(idle._tag, "SessionTokenRevokedError");
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
+    );
+
+    it.effect("refuses DPoP renewal under a policy without remote clients", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const phone = yield* sessions.issue({
+          subject: "one-time-token",
+          method: "dpop-access-token",
+          proofKeyThumbprint: "phone-key",
+          ttl: Duration.hours(1),
+        });
+        const error = yield* environmentAuth
+          .exchangeAccessTokenForDpopSession(
+            phone.token,
+            undefined,
+            { deviceType: "mobile" },
+            { proofKeyThumbprint: "phone-key" },
+          )
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ServerAuthInvalidCredentialError");
+      }).pipe(Effect.provide(layerEnvironmentAuth(undefined, desktopAndLocalOnly))),
     );
 
     it.effect("revokes only T3 Connect clients when the policy keeps remote clients", () =>

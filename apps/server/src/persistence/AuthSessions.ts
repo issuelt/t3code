@@ -53,6 +53,8 @@ export const CreateAuthSessionInput = Schema.Struct({
   client: AuthSessionClientMetadataRecord,
   /** Set for DPoP sessions. Rows sharing it and the subject form one renewal family. */
   proofKeyThumbprint: Schema.optionalKey(Schema.String),
+  /** The session this one renewed or converted. */
+  predecessorSessionId: Schema.optionalKey(AuthSessionId),
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -83,6 +85,13 @@ export type GetAuthSessionByIdInput = typeof GetAuthSessionByIdInput.Type;
 export const ListActiveAuthSessionsInput = Schema.Struct({
   now: Schema.DateTimeUtcFromString,
   connectedSessionIds: Schema.optionalKey(Schema.Array(AuthSessionId)),
+  /** Also lists expired DPoP rows of these subjects that expired after `expiredSince`. */
+  renewable: Schema.optionalKey(
+    Schema.Struct({
+      subjects: Schema.Array(Schema.String),
+      expiredSince: Schema.DateTimeUtcFromString,
+    }),
+  ),
 });
 export type ListActiveAuthSessionsInput = typeof ListActiveAuthSessionsInput.Type;
 
@@ -91,6 +100,12 @@ export const RevokeAuthSessionInput = Schema.Struct({
   revokedAt: Schema.DateTimeUtcFromString,
 });
 export type RevokeAuthSessionInput = typeof RevokeAuthSessionInput.Type;
+
+export const RevokeAuthSessionsBySubjectInput = Schema.Struct({
+  subjects: Schema.Array(Schema.String),
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeAuthSessionsBySubjectInput = typeof RevokeAuthSessionsBySubjectInput.Type;
 
 export const RevokeOtherAuthSessionsInput = Schema.Struct({
   currentSessionId: AuthSessionId,
@@ -118,7 +133,9 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
     /**
      * Inserts `session` only while the predecessor is unrevoked and no row in its
-     * DPoP family was revoked after the predecessor was issued. Returns whether it did.
+     * DPoP family was revoked after the predecessor was issued. A conversion may repeat
+     * after it revoked the predecessor, while an unrevoked successor it created has the same
+     * key and subject. Returns whether it inserted.
      */
     readonly createSuccessor: (
       input: CreateSuccessorAuthSessionInput,
@@ -132,6 +149,10 @@ export class AuthSessionRepository extends Context.Service<
     /** Revokes the session and, for a DPoP session, every row in its family. */
     readonly revoke: (
       input: RevokeAuthSessionInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    /** Revokes every unrevoked row with one of `subjects`, expired or not. */
+    readonly revokeBySubject: (
+      input: RevokeAuthSessionsBySubjectInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
@@ -238,6 +259,7 @@ export const make = Effect.gen(function* () {
           client_os,
           client_browser,
           proof_key_thumbprint,
+          predecessor_session_id,
           issued_at,
           expires_at,
           revoked_at
@@ -254,6 +276,7 @@ export const make = Effect.gen(function* () {
           ${input.client.os},
           ${input.client.browser},
           ${input.proofKeyThumbprint ?? null},
+          ${input.predecessorSessionId ?? null},
           ${input.issuedAt},
           ${input.expiresAt},
           NULL
@@ -329,10 +352,27 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  // Only a conversion revokes its predecessor and links a successor to it, so a live linked
+  // row with this key proves the bearer went to this device and its family is unrevoked.
+  const findLiveConversion = SqlSchema.findOneOption({
+    Request: CreateSuccessorAuthSessionInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ predecessorSessionId, session }) =>
+      sql`
+        SELECT session_id AS "sessionId"
+        FROM auth_sessions
+        WHERE predecessor_session_id = ${predecessorSessionId}
+          AND proof_key_thumbprint = ${session.proofKeyThumbprint ?? null}
+          AND subject = ${session.subject}
+          AND revoked_at IS NULL
+        LIMIT 1
+      `,
+  });
+
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
-    execute: ({ now, connectedSessionIds = [] }) =>
+    execute: ({ now, connectedSessionIds = [], renewable }) =>
       sql`
         SELECT
           session_id AS "sessionId",
@@ -352,7 +392,20 @@ export const make = Effect.gen(function* () {
           revoked_at AS "revokedAt"
         FROM auth_sessions
         WHERE revoked_at IS NULL
-          AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
+          AND (
+            expires_at > ${now}
+            OR ${sql.in("session_id", connectedSessionIds)}
+            ${
+              renewable === undefined || renewable.subjects.length === 0
+                ? sql``
+                : sql`OR (
+                    method = 'dpop-access-token'
+                    AND proof_key_thumbprint IS NOT NULL
+                    AND ${sql.in("subject", renewable.subjects)}
+                    AND expires_at > ${renewable.expiredSince}
+                  )`
+            }
+          )
         ORDER BY issued_at DESC, session_id DESC
       `,
   });
@@ -398,6 +451,19 @@ export const make = Effect.gen(function* () {
         SET revoked_at = ${revokedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
+      `,
+  });
+
+  const revokeSessionRowsBySubject = SqlSchema.findAll({
+    Request: RevokeAuthSessionsBySubjectInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ subjects, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE revoked_at IS NULL
+          AND ${sql.in("subject", subjects)}
+        RETURNING session_id AS "sessionId"
       `,
   });
 
@@ -460,14 +526,21 @@ export const make = Effect.gen(function* () {
       .withTransaction(
         Effect.gen(function* () {
           const predecessor = yield* findRenewablePredecessor(input);
-          if (Option.isNone(predecessor)) return false;
+          if (Option.isNone(predecessor)) {
+            if (!input.revokePredecessor) return false;
+            const conversion = yield* findLiveConversion(input);
+            if (Option.isNone(conversion)) return false;
+          }
           if (input.revokePredecessor) {
             yield* revokeSessionById({
               sessionId: input.predecessorSessionId,
               revokedAt: input.now,
             });
           }
-          yield* createSessionRow(input.session);
+          yield* createSessionRow({
+            ...input.session,
+            predecessorSessionId: input.predecessorSessionId,
+          });
           return true;
         }),
       )
@@ -557,6 +630,17 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeBySubject: AuthSessionRepository["Service"]["revokeBySubject"] = (input) =>
+    (input.subjects.length === 0 ? Effect.succeed([]) : revokeSessionRowsBySubject(input)).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.revokeBySubject:query",
+          "AuthSessionRepository.revokeBySubject:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
+    );
+
   const revokeAllExcept: AuthSessionRepository["Service"]["revokeAllExcept"] = (input) =>
     revokeOtherSessionRows(input).pipe(
       Effect.mapError(
@@ -588,6 +672,7 @@ export const make = Effect.gen(function* () {
     getById,
     listActive,
     revoke,
+    revokeBySubject,
     revokeAllExcept,
     setLastConnectedAt,
   } satisfies AuthSessionRepository["Service"];

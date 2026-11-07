@@ -239,6 +239,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("lists an idle direct DPoP family until its renewal window closes", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const direct = yield* sessions.issue({ ...relaySessionInput, subject: "one-time-token" });
+      const revokedLater = yield* sessions.issue({
+        ...relaySessionInput,
+        subject: "one-time-token",
+        proofKeyThumbprint: "other-key",
+      });
+      const connect = yield* sessions.issue(relaySessionInput);
+      const listedIds = Effect.map(sessions.listActive(), (listed) =>
+        listed.map((session) => session.sessionId),
+      );
+
+      yield* TestClock.adjust(Duration.hours(2));
+      // Only a direct pairing renews after expiry, so only it stays listed.
+      expect((yield* listedIds).toSorted()).toEqual(
+        [revokedLater.sessionId, direct.sessionId].toSorted(),
+      );
+      expect(yield* listedIds).not.toContain(connect.sessionId);
+      yield* sessions.revoke(revokedLater.sessionId);
+      expect(yield* listedIds).toEqual([direct.sessionId]);
+
+      yield* TestClock.adjust(Duration.sum(Duration.days(30), Duration.minutes(-61)));
+      expect(yield* listedIds).toEqual([direct.sessionId]);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* listedIds).toEqual([]);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keeps both sockets when a direct and a Connect chain share one key", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

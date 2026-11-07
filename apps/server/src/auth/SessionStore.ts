@@ -60,6 +60,8 @@ export interface VerifiedSession {
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
+  /** Set only when `verify` ran with `acceptRevoked`. */
+  readonly revokedAt?: DateTime.Utc;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -350,6 +352,18 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class SubjectSessionsRevocationError extends Schema.TaggedError<SubjectSessionsRevocationError>()(
+  "SubjectSessionsRevocationError",
+  {
+    subjects: Schema.Array(Schema.String),
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke sessions by subject.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -359,6 +373,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  SubjectSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -381,6 +396,14 @@ export interface IssueSessionInput {
   readonly replaceSessionId?: AuthSessionId;
 }
 
+/**
+ * Subjects a direct pairing creates. Only their DPoP sessions renew at `/oauth/token`; every
+ * other subject renews through the authority that issued it, such as the T3 Connect relay.
+ */
+export const DIRECT_PAIRING_SUBJECTS: ReadonlyArray<string> = ["one-time-token"];
+/** How long after its token expires a direct DPoP link may still renew. Idle longer, it pairs again. */
+export const DPOP_RENEWAL_WINDOW = Duration.days(30);
+
 export class SessionStore extends Context.Service<
   SessionStore,
   {
@@ -399,10 +422,16 @@ export class SessionStore extends Context.Service<
         readonly revokePredecessor: boolean;
       },
     ) => Effect.Effect<IssuedSession, SessionCredentialInternalError | SessionTokenRevokedError>;
-    /** `acceptExpiredFor` accepts a signed `exp` up to that long in the past, for renewal. */
+    /**
+     * `acceptExpiredFor` accepts a signed `exp` up to that long in the past, for renewal.
+     * `acceptRevoked` returns a revoked session with its `revokedAt`, for a repeated conversion.
+     */
     readonly verify: (
       token: string,
-      options?: { readonly acceptExpiredFor?: Duration.Duration },
+      options?: {
+        readonly acceptExpiredFor?: Duration.Duration;
+        readonly acceptRevoked?: boolean;
+      },
     ) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
@@ -436,6 +465,10 @@ export class SessionStore extends Context.Service<
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /** Revokes every session with one of `subjects`, including expired ones that could renew. */
+    readonly revokeBySubject: (
+      subjects: ReadonlyArray<string>,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -905,7 +938,7 @@ const make = Effect.gen(function* () {
       if (Option.isNone(row)) {
         return yield* new UnknownSessionTokenError({ sessionId: claims.sid });
       }
-      if (row.value.revokedAt !== null) {
+      if (row.value.revokedAt !== null && options?.acceptRevoked !== true) {
         return yield* new SessionTokenRevokedError({
           sessionId: claims.sid,
           revokedAt: row.value.revokedAt,
@@ -923,6 +956,7 @@ const make = Effect.gen(function* () {
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(row.value.revokedAt !== null ? { revokedAt: row.value.revokedAt } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -1044,6 +1078,10 @@ const make = Effect.gen(function* () {
       const rows = yield* authSessions.listActive({
         now,
         connectedSessionIds: Array.from(connectedSessions.keys()),
+        renewable: {
+          subjects: DIRECT_PAIRING_SUBJECTS,
+          expiredSince: DateTime.subtractDuration(now, DPOP_RENEWAL_WINDOW),
+        },
       });
 
       // A renewed DPoP chain is one client: list its newest row, connected if any row is.
@@ -1109,6 +1147,21 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const forgetRevoked = Effect.fnUntraced(function* (
+    revokedSessionIds: ReadonlyArray<AuthSessionId>,
+  ) {
+    if (revokedSessionIds.length === 0) return;
+    yield* Ref.update(connectedSessionsRef, (current) => {
+      const next = new Map(current);
+      for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
+      return next;
+    });
+    yield* Effect.forEach(revokedSessionIds, emitRemoved, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+  });
+
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
   )(function* (sessionId) {
@@ -1123,23 +1176,18 @@ const make = Effect.gen(function* () {
           (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
         ),
       );
-    if (revokedSessionIds.length > 0) {
-      yield* Ref.update(connectedSessionsRef, (current) => {
-        const next = new Map(current);
-        for (const revokedSessionId of revokedSessionIds) {
-          next.delete(revokedSessionId);
-        }
-        return next;
-      });
-      yield* Effect.forEach(
-        revokedSessionIds,
-        (revokedSessionId) => emitRemoved(revokedSessionId),
-        {
-          concurrency: "unbounded",
-          discard: true,
-        },
-      );
-    }
+    yield* forgetRevoked(revokedSessionIds);
+    return revokedSessionIds.length;
+  });
+
+  const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
+    "SessionStore.revokeBySubject",
+  )(function* (subjects) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeBySubject({ subjects, revokedAt })
+      .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ subjects, cause })));
+    yield* forgetRevoked(revokedSessionIds);
     return revokedSessionIds.length;
   });
 
@@ -1219,6 +1267,7 @@ const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    revokeBySubject,
     markConnected,
     markDisconnected,
   });

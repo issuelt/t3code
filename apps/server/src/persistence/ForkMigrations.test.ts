@@ -36,7 +36,13 @@ const expectUpstreamHistoryAndTaskGraphs = Effect.gen(function* () {
   const fork = yield* sql<{ readonly name: string }>`SELECT name FROM fork_sql_migrations`;
   assert.deepStrictEqual(
     fork.map((row) => row.name),
-    ["TaskGraphs", "PeerLinkOrigin", "CoordinationRequests", "AuthSessionProofKeyThumbprint"],
+    [
+      "TaskGraphs",
+      "PeerLinkOrigin",
+      "CoordinationRequests",
+      "AuthSessionProofKeyThumbprint",
+      "AuthSessionPredecessor",
+    ],
   );
   const tables = yield* sql`SELECT name FROM sqlite_master WHERE name = 'task_graphs'`;
   assert.strictEqual(tables.length, 1);

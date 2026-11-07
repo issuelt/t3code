@@ -75,10 +75,7 @@ export interface IssuedBearerSession {
 
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
-const ONE_TIME_TOKEN_SUBJECT = "one-time-token";
 const DPOP_SESSION_TTL = Duration.hours(1);
-/** How long after its token expires a DPoP link may still renew. Idle longer, it pairs again. */
-const DPOP_RENEWAL_WINDOW = Duration.days(30);
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
@@ -412,6 +409,15 @@ export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthIn
   }
 }
 
+export class ServerAuthReservedSubjectError extends Schema.TaggedError<ServerAuthReservedSubjectError>()(
+  "ServerAuthReservedSubjectError",
+  { subject: Schema.String },
+) {
+  override get message(): string {
+    return `The session subject "${this.subject}" is reserved for paired clients.`;
+  }
+}
+
 export class ServerAuthScopeNotGrantedError extends Schema.TaggedError<ServerAuthScopeNotGrantedError>()(
   "ServerAuthScopeNotGrantedError",
   {},
@@ -530,7 +536,10 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
-    }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
+    }) => Effect.Effect<
+      IssuedBearerSession,
+      ServerAuthReservedSubjectError | ServerAuthInternalError
+    >;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
       ServerAuthInternalError
@@ -1053,8 +1062,15 @@ export const make = Effect.gen(function* () {
         if (proofKeyThumbprint === undefined) {
           return yield* refuseDpopExchange("An access-token exchange requires a DPoP proof.");
         }
+        // Direct pairing is a remote client, so a policy without remote clients ends renewal too.
+        if (!ManagedLimits.allowsRemoteClients(managedPolicy)) {
+          return yield* refuseDpopExchange("The managed policy does not allow remote clients.");
+        }
         const presented = yield* sessions
-          .verify(accessToken, { acceptExpiredFor: DPOP_RENEWAL_WINDOW })
+          .verify(accessToken, {
+            acceptExpiredFor: SessionStore.DPOP_RENEWAL_WINDOW,
+            acceptRevoked: true,
+          })
           .pipe(
             mapSessionVerificationErrors,
             Effect.tapError((error) =>
@@ -1067,23 +1083,24 @@ export const make = Effect.gen(function* () {
             ),
           );
         const renewal = presented.method === "dpop-access-token";
+        // Other subjects renew through their own authority, such as the T3 Connect relay.
+        if (!SessionStore.DIRECT_PAIRING_SUBJECTS.includes(presented.subject)) {
+          return yield* refuseDpopExchange("Only a direct pairing renews or converts here.");
+        }
         if (renewal) {
+          if (presented.revokedAt !== undefined) {
+            return yield* refuseDpopExchange("The session or its family was revoked.");
+          }
           if (presented.proofKeyThumbprint !== proofKeyThumbprint) {
             return yield* refuseDpopExchange("The proof key does not match the session's key.");
           }
           // MCP and peer-link limits are signed claims this exchange does not carry over.
-          if (
-            presented.subject === MCP_CLIENT_SUBJECT ||
-            presented.runtimeModeCeiling !== undefined ||
-            presented.peerLink === true
-          ) {
+          if (presented.runtimeModeCeiling !== undefined || presented.peerLink === true) {
             return yield* refuseDpopExchange("This session cannot renew directly.");
           }
         } else {
-          if (
-            presented.method !== "bearer-access-token" ||
-            presented.subject !== ONE_TIME_TOKEN_SUBJECT
-          ) {
+          // A revoked bearer converts again only for the key its successor holds (store checks).
+          if (presented.method !== "bearer-access-token") {
             return yield* refuseDpopExchange("Only pairing-link bearer sessions can convert.");
           }
           const now = yield* DateTime.now;
@@ -1207,10 +1224,17 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokePairingLink"),
     );
 
-  const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
-    sessions
+  const issueSession: EnvironmentAuth["Service"]["issueSession"] = Effect.fn(
+    "EnvironmentAuth.issueSession",
+  )(function* (input) {
+    const subject = input?.subject ?? DEFAULT_SESSION_SUBJECT;
+    // A CLI session with a pairing subject could convert to a renewable DPoP link.
+    if (SessionStore.DIRECT_PAIRING_SUBJECTS.includes(subject)) {
+      return yield* new ServerAuthReservedSubjectError({ subject });
+    }
+    const issued = yield* sessions
       .issue({
-        subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
+        subject,
         method: "bearer-access-token",
         scopes: input?.scopes ?? AuthStandardClientScopes,
         client: {
@@ -1219,22 +1243,17 @@ export const make = Effect.gen(function* () {
         },
         ...(input?.ttl ? { ttl: input.ttl } : {}),
       })
-      .pipe(
-        Effect.map(
-          (issued) =>
-            ({
-              sessionId: issued.sessionId,
-              token: issued.token,
-              method: "bearer-access-token",
-              scopes: issued.scopes,
-              subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
-              client: issued.client,
-              expiresAt: DateTime.toUtc(issued.expiresAt),
-            }) satisfies IssuedBearerSession,
-        ),
-        Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueSession"),
-      );
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+    return {
+      sessionId: issued.sessionId,
+      token: issued.token,
+      method: "bearer-access-token",
+      scopes: issued.scopes,
+      subject,
+      client: issued.client,
+      expiresAt: DateTime.toUtc(issued.expiresAt),
+    } satisfies IssuedBearerSession;
+  });
 
   const listSessions: EnvironmentAuth["Service"]["listSessions"] = () =>
     sessions.listActive().pipe(
@@ -1557,25 +1576,28 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   if (!remoteAllowed) disallowed.add(LINK_PAIRED_SUBJECTS.link);
   if (!ManagedLimits.allowsConnect(policy)) disallowed.add(LINK_PAIRED_SUBJECTS.connect);
   if (disallowed.size === 0) return;
-  const sessions = (yield* stores.sessions.listActive()).filter(
-    (session) =>
-      disallowed.has(session.subject) ||
-      // The startup link also pairs browsers on this machine; only a device elsewhere goes.
-      (!remoteAllowed &&
-        session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
-        session.client.ipAddress !== undefined &&
-        !isLocalLoopbackHost(session.client.ipAddress)),
-  );
+  // Without an expiry filter: an expired direct DPoP session can still renew.
+  const revokedBySubject = yield* stores.sessions.revokeBySubject([...disallowed]);
+  // The startup link also pairs browsers on this machine; only a device elsewhere goes.
+  const startupSessions = remoteAllowed
+    ? []
+    : (yield* stores.sessions.listActive()).filter(
+        (session) =>
+          session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
+          session.client.ipAddress !== undefined &&
+          !isLocalLoopbackHost(session.client.ipAddress),
+      );
   const links = (yield* stores.pairingLinks.listActive()).filter((link) =>
     disallowed.has(link.subject),
   );
-  yield* Effect.forEach(sessions, (session) => stores.sessions.revoke(session.sessionId), {
+  yield* Effect.forEach(startupSessions, (session) => stores.sessions.revoke(session.sessionId), {
     discard: true,
   });
   yield* Effect.forEach(links, (link) => stores.pairingLinks.revoke(link.id), { discard: true });
-  if (sessions.length > 0 || links.length > 0) {
+  const revokedSessions = revokedBySubject + startupSessions.length;
+  if (revokedSessions > 0 || links.length > 0) {
     yield* Effect.logInfo("Revoked clients the managed policy does not allow.", {
-      sessions: sessions.length,
+      sessions: revokedSessions,
       pairingLinks: links.length,
     });
   }
