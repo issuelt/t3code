@@ -23,6 +23,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   repointLauncher,
+  repointRecordedLaunchers,
   resolveLauncherPath,
   resolveMirrorVersion,
   resolveNewestVersion,
@@ -217,6 +218,36 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("repoints recorded launchers when the update did not start through one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
+      const newExe = path.join(root, "runtime/versions/2.0.0/t3");
+      const otherExe = path.join(root, "elsewhere/t3");
+      for (const file of [oldExe, newExe, otherExe]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      const launcher = path.join(root, "bin/t3");
+      const foreign = path.join(root, "bin/t3-other");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.symlink(oldExe, launcher);
+      yield* fs.symlink(otherExe, foreign);
+      yield* fs.writeFileString(
+        path.join(root, "runtime/launchers"),
+        `\n${launcher}\n${foreign}\n`,
+      );
+
+      const repointed = yield* repointRecordedLaunchers({ baseDir: root, targetEntryPath: newExe });
+
+      assert.deepStrictEqual(repointed, [launcher]);
+      assert.equal(yield* fs.readLink(launcher), newExe);
+      assert.equal(yield* fs.readLink(foreign), otherExe);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 

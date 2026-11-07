@@ -443,6 +443,18 @@ export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.recor
   },
 );
 
+/** The launcher paths recorded for this T3 home, in the order they were recorded. */
+export const recordedPinnedRuntimeLaunchers = Effect.fn("cloud.pinned_runtime.recorded_launchers")(
+  function* (baseDir: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
+    return (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
+      .split(/\r?\n/)
+      .filter((launcher) => launcher.trim().length > 0);
+  },
+);
+
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 
@@ -457,9 +469,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const home = yield* HostProcess.HomeDirectory;
   const launcherName = platform === "win32" ? "t3.cmd" : "t3";
   const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
-  const recorded = (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
-    .split(/\r?\n/)
-    .filter((launcher) => launcher.trim().length > 0);
+  const recorded = yield* recordedPinnedRuntimeLaunchers(baseDir);
   const found = [
     environment["T3CODE_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),

@@ -32,6 +32,7 @@ import {
   pinnedRuntimeVersionsDir,
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
+  recordedPinnedRuntimeLaunchers,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
@@ -193,6 +194,26 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   );
   return Option.some(input.launchedAs);
 });
+
+/**
+ * An update started from a versioned binary, or by the service itself, has no launcher of its
+ * own, so each recorded symlink launcher still in this home's versions tree moves as well.
+ */
+export const repointRecordedLaunchers = Effect.fn("cli.update.repoint_recorded_launchers")(
+  function* (input: { readonly baseDir: string; readonly targetEntryPath: string }) {
+    if ((yield* HostProcess.Platform) === "win32") return [];
+    const repointed: Array<string> = [];
+    for (const launcher of yield* recordedPinnedRuntimeLaunchers(input.baseDir)) {
+      const result = yield* repointLauncher({ launchedAs: launcher, ...input }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning(error.reason).pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+      if (Option.isSome(result)) repointed.push(result.value);
+    }
+    return repointed;
+  },
+);
 
 /** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
 export const resolveLauncherPath = Effect.gen(function* () {
@@ -547,6 +568,10 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     baseDir: input.baseDir,
     targetEntryPath: runtime.entryPath,
   });
+  const recordedRepointed = yield* repointRecordedLaunchers({
+    baseDir: input.baseDir,
+    targetEntryPath: runtime.entryPath,
+  });
 
   // Use today's service manager for the target version. Inside the service it hands off to
   // the target CLI, so stopping this process cannot interrupt the switch.
@@ -589,7 +614,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   progress.success(`Installed T3 Code ${targetVersion}`);
-  if (Option.isSome(repointed)) {
+  if (Option.isSome(repointed) || recordedRepointed.length > 0) {
     yield* Console.log("  Run t3 to get started.\n");
   } else {
     yield* Console.log(`  Run ${runtime.entryPath}\n`);
