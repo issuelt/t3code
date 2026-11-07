@@ -485,6 +485,22 @@ it.effect("requires operation-specific permissions for Home and ordinary desktop
     expect(Exit.isFailure(clone) && Cause.squash(clone.cause)).toMatchObject({
       requiredPermission: AuthSourceControlWriteScope,
     });
+    const worktreeLaunch = yield* Effect.exit(
+      client[WS_METHODS.fleetInvoke]({
+        actor,
+        request: {
+          op: "threads.launch",
+          input: {
+            environmentId: EnvironmentId.make("studio"),
+            title: "Worktree",
+            workspaceStrategy: { type: "worktree", baseRef: "origin/main" },
+          },
+        },
+      }),
+    );
+    expect(Exit.isFailure(worktreeLaunch) && Cause.squash(worktreeLaunch.cause)).toMatchObject({
+      requiredPermission: AuthSourceControlWriteScope,
+    });
     const mcp = {
       namespace: "session",
       readOnly: false,
@@ -495,6 +511,11 @@ it.effect("requires operation-specific permissions for Home and ordinary desktop
       ["t3_project_clone", { destinationPath: "/srv/repo" }, AuthSourceControlWriteScope],
       ["t3_project_create", { scripts: [] }, AuthSettingsWriteScope],
       ["t3_project_update", { scripts: [] }, AuthSettingsWriteScope],
+      [
+        "t3_thread_launch",
+        { title: "Worktree", workspaceStrategy: { type: "worktree", baseRef: "origin/main" } },
+        AuthSourceControlWriteScope,
+      ],
     ] as const) {
       const refused = yield* Effect.exit(
         client[WS_METHODS.fleetInvoke]({

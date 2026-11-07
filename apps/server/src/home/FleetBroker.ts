@@ -1,7 +1,7 @@
 /**
- * Relays agent calls to other environments through the desktop renderer, the only holder of
- * live connections to them. The newest `fleet.connect` registration wins; with no renderer,
- * agents can use only peer links.
+ * Relays agent calls to other environments through a desktop renderer, the only holder of live
+ * connections to them. Every connected desktop registers, but only this server's own desktop
+ * offers `mcpRelay`, so its registration outranks the others. The newest of each kind wins.
  */
 import {
   type EnvironmentId,
@@ -75,16 +75,20 @@ interface Pending {
 }
 
 interface State {
-  readonly host: Host | null;
+  /** At most one host per `mcpRelay` value. */
+  readonly hosts: ReadonlyArray<Host>;
   readonly pending: ReadonlyMap<string, Pending>;
 }
 
 const unavailable = (message: string) =>
   new OrchestratorMcpFailure({ code: "environment_unavailable", message });
 
+const activeHost = (hosts: State["hosts"]): Host | null =>
+  hosts.find((host) => host.mcpRelay) ?? hosts[0] ?? null;
+
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
-  const state = yield* SynchronizedRef.make<State>({ host: null, pending: new Map() });
+  const state = yield* SynchronizedRef.make<State>({ hosts: [], pending: new Map() });
 
   // Ends one host generation and fails what it still owed.
   const retire = (queue: Host["queue"]) =>
@@ -92,7 +96,7 @@ const make = Effect.gen(function* () {
       const owed = [...current.pending].filter(([, entry]) => entry.queue === queue);
       const pending = new Map(current.pending);
       for (const [requestId] of owed) pending.delete(requestId);
-      const host = current.host?.queue === queue ? null : current.host;
+      const hosts = current.hosts.filter((host) => host.queue !== queue);
       return Effect.gen(function* () {
         yield* Queue.shutdown(queue);
         yield* Effect.forEach(
@@ -104,24 +108,23 @@ const make = Effect.gen(function* () {
             ),
           { discard: true },
         );
-        return [undefined, { host, pending }] as const;
+        return [undefined, { hosts, pending }] as const;
       });
     });
 
   const acquire = Effect.fn("FleetBroker.acquire")(function* (registration: FleetHostRegistration) {
     const queue = yield* Queue.unbounded<FleetHostRequest, Cause.Done>();
-    const previous = yield* SynchronizedRef.modify(state, (current) => [
-      current.host,
-      {
-        ...current,
-        host: {
-          queue,
-          environments: registration.environments,
-          mcpRelay: registration.mcpRelay === true,
-        },
-      },
-    ]);
-    if (previous !== null) yield* retire(previous.queue);
+    const host: Host = {
+      queue,
+      environments: registration.environments,
+      mcpRelay: registration.mcpRelay === true,
+    };
+    const replaced = yield* SynchronizedRef.modify(state, (current) => {
+      const previous = current.hosts.filter((entry) => entry.mcpRelay === host.mcpRelay);
+      const kept = current.hosts.filter((entry) => entry.mcpRelay !== host.mcpRelay);
+      return [previous, { ...current, hosts: [host, ...kept] }] as const;
+    });
+    yield* Effect.forEach(replaced, (previous) => retire(previous.queue), { discard: true });
     return queue;
   });
 
@@ -153,7 +156,8 @@ const make = Effect.gen(function* () {
     }),
 
     reach: SynchronizedRef.get(state).pipe(
-      Effect.map(({ host }) => ({
+      Effect.map(({ hosts }) => activeHost(hosts)),
+      Effect.map((host) => ({
         hostConnected: host !== null,
         mcpRelay: host?.mcpRelay ?? false,
         environments: host?.environments ?? [],
@@ -164,7 +168,7 @@ const make = Effect.gen(function* () {
       const requestId = yield* random.uuidV4().pipe(Effect.orDie);
       const deferred = yield* Deferred.make<unknown, OrchestratorMcpFailure>();
       const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
-        const host = current.host;
+        const host = activeHost(current.hosts);
         if (host === null || ("mcp" in invoke && !host.mcpRelay)) {
           return Effect.succeed([
             Option.some(

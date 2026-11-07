@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as FleetBroker from "./FleetBroker.ts";
@@ -106,5 +107,42 @@ it.effect("a renderer must offer ordinary MCP relay before it can carry ordinary
     expect(Exit.isFailure(denied) && Cause.squash(denied.cause)).toMatchObject({
       code: "environment_unavailable",
     });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("a desktop without the relay never displaces the one carrying it", () =>
+  Effect.gen(function* () {
+    const broker = yield* FleetBroker.FleetBroker;
+    const relayRequest = yield* serve(yield* broker.connect(host("own-desktop")));
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* serve(yield* broker.connect(host("second-desktop", true, false)));
+        expect(yield* broker.reach).toMatchObject({ hostConnected: true, mcpRelay: true });
+        const call = yield* broker.invoke(studio, mcpInvoke).pipe(Effect.forkScoped);
+        const request = yield* Deferred.await(relayRequest);
+        yield* broker.respond({ requestId: request.requestId, result: { projects: [] } });
+        expect(yield* Fiber.join(call)).toEqual({ projects: [] });
+      }),
+    );
+    // The second desktop disconnecting leaves the relay in place.
+    expect(yield* broker.reach).toMatchObject({ hostConnected: true, mcpRelay: true });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("retiring a replaced desktop keeps the newer one", () =>
+  Effect.gen(function* () {
+    const broker = yield* FleetBroker.FleetBroker;
+    const oldScope = yield* Scope.make();
+    const oldRequest = yield* serve(yield* broker.connect(host("old"))).pipe(
+      Scope.provide(oldScope),
+    );
+    const newRequest = yield* serve(yield* broker.connect(host("new")));
+    yield* Scope.close(oldScope, Exit.void);
+    expect(yield* broker.reach).toMatchObject({ hostConnected: true, mcpRelay: true });
+    const call = yield* broker.invoke(studio, invoke).pipe(Effect.forkScoped);
+    const request = yield* Deferred.await(newRequest);
+    expect(yield* Deferred.isDone(oldRequest)).toBe(false);
+    yield* broker.respond({ requestId: request.requestId, result: { requestIds: [] } });
+    expect(yield* Fiber.join(call)).toEqual({ requestIds: [] });
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );

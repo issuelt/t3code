@@ -2050,7 +2050,8 @@ const make = Effect.gen(function* () {
   /**
    * Its webhook URL starts runs, so only a caller that may start one sees it: never a client
    * approved for read-only access, and a thread caller only with a live turn, at modes covering
-   * every mode the task runs at.
+   * every mode the task runs at. A linked or relayed client never sees it, because the URL keeps
+   * starting runs after that session is revoked.
    */
   const summarizeScheduledTask = Effect.fn("OrchestratorMcpService.summarizeScheduledTask")(
     function* (
@@ -2066,7 +2067,7 @@ const make = Effect.gen(function* () {
     ) {
       const live =
         caller.parent === undefined
-          ? scope.client?.access !== "read-only"
+          ? scope.client?.access !== "read-only" && scope.client?.linked !== true
           : Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent)));
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
       return scheduledTaskSummary(

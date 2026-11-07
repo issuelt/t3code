@@ -1230,11 +1230,11 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
           code: "capability_denied",
         });
       }
-      for (const [scopes, readOnly, exposesTrigger] of [
-        [[AuthOrchestrationReadScope], false, false],
-        [[AuthOrchestrationReadScope], true, false],
-        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], true, false],
-        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], false, true],
+      for (const [scopes, readOnly] of [
+        [[AuthOrchestrationReadScope], false],
+        [[AuthOrchestrationReadScope], true],
+        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], true],
+        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], false],
       ] as const) {
         const input = {
           mcp: {
@@ -1273,7 +1273,7 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
         );
         const result = yield* client[WS_METHODS.fleetInvoke](input);
         expect(result).toMatchObject({ tasks: [{ scheduledTaskId: "webhook-fixture" }] });
-        expect(JSON.stringify(result).includes("webhookUrl")).toBe(exposesTrigger);
+        expect(JSON.stringify(result).includes("webhookUrl")).toBe(false);
       }
     }),
   ),
