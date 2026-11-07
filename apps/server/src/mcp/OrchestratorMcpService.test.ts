@@ -2639,18 +2639,15 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("never shows a read-only client a webhook URL", () =>
+    it.effect.each([
+      { sessionId: "scheduled", label: "Claude Code", access: "read-only" },
+      { sessionId: "relayed", label: "Desktop connection", access: "full-access", linked: true },
+    ] as const)("never shows a read-only or linked client a webhook URL: $label", (client) =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
         const listed = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) =>
-            mcp.listScheduledTasks(
-              {
-                ...supervisedClient,
-                client: { sessionId: "scheduled", label: "Claude Code", access: "read-only" },
-              },
-              { projectId },
-            ),
+            mcp.listScheduledTasks({ ...supervisedClient, client }, { projectId }),
           ),
           Effect.provide(service([task({})], null, upserted)),
         );
