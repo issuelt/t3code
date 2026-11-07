@@ -64,6 +64,7 @@ function layerPairingHttp(
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly dpopRenewal?: boolean;
+    readonly signerUnavailable?: boolean;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
   },
 ) {
@@ -186,10 +187,24 @@ function layerPairingOnboarding(
       put: () => Effect.void,
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
-    Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, {
-      thumbprint: Effect.succeed("thumbprint-1"),
-      createProof: (proof) => Effect.succeed(`proof:${proof.method}:${proof.url}`),
-    }),
+    Layer.succeed(
+      ManagedRelay.ManagedRelayDpopSigner,
+      options?.signerUnavailable === true
+        ? {
+            thumbprint: Effect.fail(signerUnavailable),
+            createProof: (proof) =>
+              Effect.fail(
+                new ManagedRelay.ManagedRelayDpopProofCreationError({
+                  ...proof,
+                  cause: signerUnavailable,
+                }),
+              ),
+          }
+        : {
+            thumbprint: Effect.succeed("thumbprint-1"),
+            createProof: (proof) => Effect.succeed(`proof:${proof.method}:${proof.url}`),
+          },
+    ),
     Layer.succeed(
       Connectivity.Connectivity,
       Connectivity.Connectivity.of({ status: Effect.succeed("online"), changes: Stream.never }),
@@ -206,6 +221,11 @@ function layerPairingOnboarding(
 }
 
 const PAIRED_ENVIRONMENT_ID = EnvironmentId.make("environment-paired");
+// An insecure web origin has no crypto.subtle, so the signer cannot make a key.
+const signerUnavailable = new ManagedRelay.ManagedRelayDpopKeyLoadError({
+  keyStore: "indexed-db",
+  cause: new TypeError("crypto.subtle is undefined"),
+});
 const PAIRING_INPUT = { host: "remote.example.test", pairingCode: "pairing-token" };
 const PAIRED_PROFILE = new BearerConnectionProfile({
   connectionId: "bearer:environment-paired:https://remote.example.test",
@@ -311,6 +331,23 @@ describe("connection onboarding", () => {
         "proof:POST:https://remote.example.test/oauth/token",
       );
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("pairs with a bearer when the device cannot create a DPoP key", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration(PAIRING_INPUT).pipe(
+        Effect.provide(
+          layerPairingOnboarding({ dpopRenewal: true, signerUnavailable: true }, calls),
+        ),
+      );
+
+      expect(registration.credential).toEqual(
+        new BearerConnectionCredential({ token: "bearer-token" }),
+      );
+      const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
+      expect(new Headers(tokenRequest?.init.headers).has("dpop")).toBe(false);
+    }),
   );
 
   it.effect("turns a switched-off environment back on when it is paired again", () =>
