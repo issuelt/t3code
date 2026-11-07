@@ -1,9 +1,14 @@
 import {
   ConnectionTransientError,
+  DpopConnectionCredential,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
+import {
+  ConnectionCatalogDocument,
+  Persistence,
+  putCatalogCredential,
+} from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +50,40 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       expect(quarantined).toEqual(["{not-json"]);
       expect(writes).toHaveLength(1);
       expect(decodeCatalog(writes[0]!)).toEqual(emptyCatalog);
+    }),
+  );
+
+  it.effect("merges a write from another tab instead of overwriting it", () =>
+    Effect.gen(function* () {
+      let stored: string | null = null;
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const tabA = yield* ConnectionStorage.makeCatalogStore(backend);
+      const tabB = yield* ConnectionStorage.makeCatalogStore(backend);
+      yield* tabA.read;
+      yield* tabB.read;
+      const converted = new DpopConnectionCredential({
+        accessToken: "converted",
+        expiresAtEpochMs: 3_600_000,
+        dpopThumbprint: "thumbprint-1",
+      });
+
+      yield* tabA.update((document) => putCatalogCredential(document, "bearer:env", converted));
+      yield* tabB.update((document) => ({
+        ...document,
+        disabledEnvironmentIds: [EnvironmentId.make("environment-2")],
+      }));
+
+      const saved = decodeCatalog(stored!);
+      expect(saved.dpopCredentials).toEqual([
+        { connectionId: "bearer:env", credential: converted },
+      ]);
+      expect(saved.disabledEnvironmentIds).toEqual(["environment-2"]);
     }),
   );
 

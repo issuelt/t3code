@@ -633,6 +633,32 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Successors whose save failed, with the credential each replaces. The server
+   * may already have revoked the replaced one, so the successor stays usable and
+   * its save is retried on the next resolve.
+   */
+  const unsaved = new Map<
+    string,
+    { readonly credential: ConnectionCredential; readonly replaces: ConnectionCredential }
+  >();
+
+  const save = Effect.fn("clientRuntime.connection.remote.saveDirectCredential")(function* (
+    credentialId: string,
+    credential: ConnectionCredential,
+    replaces: ConnectionCredential,
+  ) {
+    const saved = yield* credentials.put(credentialId, credential).pipe(Effect.result);
+    if (Result.isSuccess(saved)) {
+      unsaved.delete(credentialId);
+      return;
+    }
+    unsaved.set(credentialId, { credential, replaces });
+    yield* Effect.logWarning("Could not save the renewed environment credential.", {
+      error: saved.failure,
+    });
+  });
+
   const convertBearer = Effect.fn("clientRuntime.connection.remote.convertBearer")(function* (
     input: { readonly credentialId: string; readonly httpBaseUrl: string },
     bearer: BearerConnectionCredential,
@@ -641,6 +667,15 @@ export const make = Effect.gen(function* () {
       !input.credentialId.startsWith(PAIRED_CREDENTIAL_PREFIX) ||
       conversionChecked.has(input.credentialId)
     ) {
+      return bearer;
+    }
+    // Without WebCrypto, as on an insecure web origin, this device can never hold a DPoP session.
+    const key = yield* signer.thumbprint.pipe(Effect.result);
+    if (Result.isFailure(key)) {
+      conversionChecked.add(input.credentialId);
+      yield* Effect.logWarning("This device cannot hold a DPoP key; keeping the bearer.", {
+        error: key.failure,
+      });
       return bearer;
     }
     const auth = yield* fetchRemoteAuthDescriptor({ httpBaseUrl: input.httpBaseUrl }).pipe(
@@ -657,22 +692,41 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (Result.isFailure(converted)) {
-      const error = converted.failure;
-      if (
-        error._tag === "ConnectionBlockedError" ||
-        error._tag === "EnvironmentAuthInvalidError" ||
-        error._tag === "EnvironmentRequestInvalidError"
-      ) {
-        conversionChecked.add(input.credentialId);
-        yield* Effect.logWarning("The environment kept the saved bearer credential.", { error });
-      }
+      const error = mapDpopSocketError(converted.failure, "direct");
+      // A lost response may have revoked the bearer. The server answers the
+      // same bearer and key again with the same DPoP session, so retry it.
+      if (error._tag === "ConnectionTransientError") return yield* error;
+      conversionChecked.add(input.credentialId);
+      yield* Effect.logWarning("The environment kept the saved bearer credential.", {
+        error: converted.failure,
+      });
       return bearer;
     }
     conversionChecked.add(input.credentialId);
-    // The server revoked the bearer, so a lost successor means pairing again.
-    yield* credentials.put(input.credentialId, converted.success);
+    yield* save(input.credentialId, converted.success, bearer);
     return converted.success;
   });
+
+  const sameCredential = (left: ConnectionCredential, right: ConnectionCredential) =>
+    left._tag === "BearerConnectionCredential"
+      ? right._tag === "BearerConnectionCredential" && left.token === right.token
+      : right._tag === "DpopConnectionCredential" && left.accessToken === right.accessToken;
+
+  /** The newest credential: an unsaved successor while the store still holds what it replaced. */
+  const currentCredential = Effect.fn("clientRuntime.connection.remote.currentDirectCredential")(
+    function* (credentialId: string) {
+      const stored = yield* credentials.get(credentialId);
+      const pending = unsaved.get(credentialId);
+      if (pending === undefined) return stored;
+      if (Option.isNone(stored) || !sameCredential(stored.value, pending.replaces)) {
+        // Pairing again or removing the connection replaced it.
+        unsaved.delete(credentialId);
+        return stored;
+      }
+      yield* save(credentialId, pending.credential, pending.replaces);
+      return Option.some(pending.credential);
+    },
+  );
 
   /**
    * Returns the saved credential, renewed or converted when it needs to be.
@@ -688,7 +742,7 @@ export const make = Effect.gen(function* () {
   }) {
     return yield* directLock(input.credentialId).withPermits(1)(
       Effect.gen(function* (): Effect.fn.Return<ConnectionCredential, ConnectionAttemptError> {
-        const stored = yield* credentials.get(input.credentialId);
+        const stored = yield* currentCredential(input.credentialId);
         if (Option.isNone(stored)) {
           return yield* credentialMissingError(input.credentialId);
         }
@@ -707,7 +761,7 @@ export const make = Effect.gen(function* () {
           input.httpBaseUrl,
           credential.accessToken,
         ).pipe(Effect.mapError((error) => mapDpopSocketError(error, "direct")));
-        yield* credentials.put(input.credentialId, renewed);
+        yield* save(input.credentialId, renewed, credential);
         return renewed;
       }),
     );

@@ -152,40 +152,59 @@ export const preparePairingRegistration = Effect.fn(
   const auth = yield* fetchRemoteAuthDescriptor({ httpBaseUrl: target.httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
-  const credential: ConnectionCredential =
-    auth.dpopRenewal === true
-      ? yield* redeemPairingWithDpop(target.httpBaseUrl, target.credential)
-      : new BearerConnectionCredential({
-          token: (yield* bootstrapRemoteBearerSession({
-            httpBaseUrl: target.httpBaseUrl,
-            credential: target.credential,
-            clientMetadata: presentation.metadata,
-          }).pipe(Effect.mapError(mapRemoteEnvironmentError))).access_token,
-        });
+  const dpop =
+    auth.dpopRenewal === true ? yield* pairingDpopProof(target.httpBaseUrl) : Option.none();
+  const credential: ConnectionCredential = Option.isSome(dpop)
+    ? yield* redeemPairingWithDpop(target.httpBaseUrl, target.credential, dpop.value)
+    : new BearerConnectionCredential({
+        token: (yield* bootstrapRemoteBearerSession({
+          httpBaseUrl: target.httpBaseUrl,
+          credential: target.credential,
+          clientMetadata: presentation.metadata,
+        }).pipe(Effect.mapError(mapRemoteEnvironmentError))).access_token,
+      });
 
   return new BearerConnectionRegistration({ ...route, credential });
 });
 
+/**
+ * The device's T3 Connect DPoP key and a proof for the pairing exchange. None
+ * where the device cannot sign, such as a web origin without WebCrypto, so
+ * pairing falls back to a bearer before it spends the one-time code.
+ */
+const pairingDpopProof = Effect.fn("clientRuntime.connection.onboarding.pairingDpopProof")(
+  function* (httpBaseUrl: string) {
+    const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
+    return yield* Effect.all({
+      thumbprint: signer.thumbprint,
+      proof: signer.createProof({
+        method: "POST",
+        url: environmentEndpointUrl(httpBaseUrl, "/oauth/token"),
+      }),
+    }).pipe(
+      Effect.asSome,
+      Effect.catch((error) =>
+        Effect.logWarning("This device cannot hold a DPoP key; pairing with a bearer.", {
+          error,
+        }).pipe(Effect.as(Option.none())),
+      ),
+    );
+  },
+);
+
 /** Binds the paired session to the device's DPoP key, the one T3 Connect uses, so it can renew. */
 const redeemPairingWithDpop = Effect.fn(
   "clientRuntime.connection.onboarding.redeemPairingWithDpop",
-)(function* (httpBaseUrl: string, pairingCredential: string) {
+)(function* (
+  httpBaseUrl: string,
+  pairingCredential: string,
+  key: { readonly thumbprint: string; readonly proof: string },
+) {
   const presentation = yield* ClientCapabilities.ClientPresentation;
-  const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
-  const keyError = () =>
-    new ConnectionBlockedError({
-      reason: "configuration",
-      detail: "Could not create the environment authorization proof.",
-      hop: "device",
-    });
-  const thumbprint = yield* signer.thumbprint.pipe(Effect.mapError(keyError));
-  const dpopProof = yield* signer
-    .createProof({ method: "POST", url: environmentEndpointUrl(httpBaseUrl, "/oauth/token") })
-    .pipe(Effect.mapError(keyError));
   const access = yield* exchangeRemoteDpopAccessToken({
     httpBaseUrl,
     credential: pairingCredential,
-    dpopProof,
+    dpopProof: key.proof,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")));
   if (access.token_type !== "DPoP") {
@@ -195,7 +214,7 @@ const redeemPairingWithDpop = Effect.fn(
   return new DpopConnectionCredential({
     accessToken: access.access_token,
     expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
-    dpopThumbprint: thumbprint,
+    dpopThumbprint: key.thumbprint,
   });
 });
 
