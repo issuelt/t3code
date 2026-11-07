@@ -1071,6 +1071,27 @@ it.effect(
         expect(sends).toHaveLength(2);
         expect(sends[0]?.commandId).not.toEqual(sends[1]?.commandId);
         expect(yield* Ref.get(a.calls)).toBe(6);
+        const delegatedFrom = {
+          environmentId: laptop.environmentId,
+          threadId: ThreadId.make("thread:project-one-codex"),
+          title: "Parent fixture",
+        };
+        const launched = yield* a.call("thread:project-one-codex", "t3_thread_launch", {
+          environmentId: box.environmentId,
+          projectId: boxProject,
+          title: "Child fixture",
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          delegatedFrom,
+        });
+        expect(launched.isError).toBe(false);
+        expect((yield* Ref.get(a.seen)).launches[0]).toMatchObject({
+          delegatedFrom,
+          linkOrigin: {
+            sessionId: "desktop-session",
+            label: "Desktop connection",
+            access: "full-access",
+          },
+        });
       }),
     ),
 );
