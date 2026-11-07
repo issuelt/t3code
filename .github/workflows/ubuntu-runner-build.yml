@@ -110,7 +110,7 @@ jobs:
             command -v java >/dev/null || fail 'Missing JDK 17'
             java -version 2>&1 | grep -E 'version "17[.]' || fail 'Requires JDK 17'
             [[ -n "${ANDROID_HOME:-}" && "${ANDROID_SDK_ROOT:-}" == "$ANDROID_HOME" ]] || fail 'Set both Android SDK paths to the provisioned SDK'
-            for file in platforms/android-37/android.jar build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
+            for file in platforms/android-37.0/android.jar build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
               [[ -s "$ANDROID_HOME/$file" ]] || fail "Missing provisioned SDK component: $file"
             done
             for tool in build-tools/37.0.0/aapt cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja; do
