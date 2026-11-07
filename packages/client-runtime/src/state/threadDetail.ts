@@ -1,6 +1,8 @@
 import {
   OrchestrationV2AppThread,
   OrchestrationV2TurnItem,
+  TurnItemId,
+  isAgentDeliveredMessage,
   type OrchestrationV2ThreadProjection,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -89,6 +91,100 @@ type AppThread = OrchestrationV2ThreadProjection["thread"];
 // structure changes, which the incremental timeline relies on.
 const structureTurnItems = new WeakMap<TurnItem, ThreadStructureTurnItem>();
 const structureVisibleTurnItems = new WeakMap<VisibleTurnItem, ThreadStructureVisibleTurnItem>();
+const pendingAgentPresentations = new WeakMap<
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadProjection
+>();
+const pendingAgentRows = new WeakMap<
+  OrchestrationV2ThreadProjection["messages"][number],
+  { readonly run: OrchestrationV2ThreadProjection["runs"][number]; readonly row: VisibleTurnItem }
+>();
+
+// Older servers queued coordination without a turn item. This is presentation, never provider input.
+function withPendingAgentMessages(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  const cached = pendingAgentPresentations.get(projection);
+  if (cached !== undefined) return cached;
+  const queued = projection.runs.filter((run) => run.status === "queued");
+  if (queued.length === 0) return projection;
+  const messages = new Map(projection.messages.map((message) => [message.id, message]));
+  const represented = new Set(
+    projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item.messageId] : [])),
+  );
+  const pending: VisibleTurnItem[] = [];
+  const lastOrdinal = projection.turnItems.reduce((last, item) => Math.max(last, item.ordinal), 0);
+  const lastPosition = projection.visibleTurnItems.at(-1)?.position ?? -1;
+  for (const run of queued.sort(
+    (left, right) =>
+      (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
+      left.ordinal - right.ordinal,
+  )) {
+    const message = messages.get(run.userMessageId);
+    if (
+      message === undefined ||
+      message.role !== "user" ||
+      represented.has(message.id) ||
+      message.notification !== undefined ||
+      message.delegatedCompletion !== undefined ||
+      !isAgentDeliveredMessage(projection.thread.id, message)
+    )
+      continue;
+    represented.add(message.id);
+    const position = lastPosition + pending.length + 1;
+    const ordinal = lastOrdinal + pending.length + 1;
+    const previous = pendingAgentRows.get(message);
+    if (
+      previous?.run === run &&
+      previous.row.position === position &&
+      previous.row.item.ordinal === ordinal
+    ) {
+      pending.push(previous.row);
+      continue;
+    }
+    const id = TurnItemId.make(`pending-agent:${message.id}`);
+    const row: VisibleTurnItem = {
+      position,
+      visibility: "local",
+      sourceThreadId: projection.thread.id,
+      sourceItemId: id,
+      item: {
+        id,
+        threadId: projection.thread.id,
+        runId: run.id,
+        nodeId: message.nodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        type: "user_message",
+        messageId: message.id,
+        text: message.text,
+        attachments: message.attachments,
+        createdBy: message.createdBy,
+        creationSource: message.creationSource,
+        ...(message.context === undefined ? {} : { context: message.context }),
+        ...(message.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+        ...(message.coordination === undefined ? {} : { coordination: message.coordination }),
+        inputIntent: "queued_turn",
+        status: "pending",
+        title: null,
+        startedAt: message.createdAt,
+        completedAt: null,
+        updatedAt: message.updatedAt,
+      },
+    };
+    pendingAgentRows.set(message, { run, row });
+    pending.push(row);
+  }
+  const presented =
+    pending.length === 0
+      ? projection
+      : { ...projection, visibleTurnItems: [...projection.visibleTurnItems, ...pending] };
+  pendingAgentPresentations.set(projection, presented);
+  return presented;
+}
 
 function toThreadStructureTurnItem(item: TurnItem): ThreadStructureTurnItem {
   if (item.type !== "assistant_message" && item.type !== "reasoning") return item;
@@ -128,12 +224,13 @@ function toThreadStructureThread(thread: AppThread): ThreadStructureThread {
 }
 
 function toThreadStructure(projection: OrchestrationV2ThreadProjection): ThreadStructure {
-  const { updatedAt: _updatedAt, ...structure } = projection;
+  const presented = withPendingAgentMessages(projection);
+  const { updatedAt: _updatedAt, ...structure } = presented;
   return {
     ...structure,
     thread: toThreadStructureThread(projection.thread),
     turnItems: projection.turnItems.map(toThreadStructureTurnItem),
-    visibleTurnItems: projection.visibleTurnItems.map(toThreadStructureVisibleTurnItem),
+    visibleTurnItems: presented.visibleTurnItems.map(toThreadStructureVisibleTurnItem),
   };
 }
 
@@ -327,7 +424,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     return Atom.make((get): OrchestrationV2ThreadProjection["visibleTurnItems"] => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (projection === null) return EMPTY_VISIBLE_TURN_ITEMS;
-      const rows = projectQuestionHistory(projection);
+      const rows = projectQuestionHistory(withPendingAgentMessages(projection));
       const notice = get(usageLimitNoticeRowsAtomFamily(key));
       if (rows !== previousRows || notice !== previousNotice) {
         previousRows = rows;

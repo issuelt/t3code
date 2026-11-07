@@ -37,7 +37,7 @@ import { Input } from "../ui/input";
 import { useAssetUrls } from "~/assets/assetUrls";
 import { type ChatFileAttachment, isImageAttachment } from "../../types";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
-import { GuestMessageAttachments } from "./GuestMessageAttachments";
+import { MessageAttachments } from "./MessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
 
@@ -285,7 +285,7 @@ export function GuestPendingMessages({
                 guestBubbleClassName(true),
               )}
             >
-              <GuestMessageAttachments
+              <MessageAttachments
                 attachments={message.attachments ?? []}
                 imageUrl={(attachment) => imageUrlById.get(attachment.id)}
                 onOpenImage={openImage}

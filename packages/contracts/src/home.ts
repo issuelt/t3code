@@ -37,6 +37,7 @@ import {
   OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 import {
+  type OrchestrationV2ConversationMessage,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -124,6 +125,28 @@ export const isHomeDeliveredMessage = (
   message.createdBy !== "user" &&
   message.idleCompaction === undefined &&
   message.scheduledTaskId === undefined;
+
+/** Durable agent provenance, including coordination results created by the server. */
+export const isAgentDeliveredMessage = (
+  threadId: string,
+  message: {
+    readonly createdBy?: string | undefined;
+    readonly creationSource?: string | undefined;
+    readonly senderThreadId?: string | undefined;
+    readonly coordination?: OrchestrationV2ConversationMessage["coordination"] | undefined;
+    readonly idleCompaction?: unknown;
+    readonly scheduledTaskId?: unknown;
+    readonly context?: { readonly guest?: unknown } | undefined;
+  },
+): boolean =>
+  message.idleCompaction === undefined &&
+  message.scheduledTaskId === undefined &&
+  message.context?.guest === undefined &&
+  (message.senderThreadId !== undefined ||
+    message.coordination !== undefined ||
+    (message.createdBy === "agent" &&
+      (message.creationSource === "mcp" || message.creationSource === "provider")) ||
+    (isHomeThreadId(threadId) && message.createdBy !== undefined && message.createdBy !== "user"));
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;

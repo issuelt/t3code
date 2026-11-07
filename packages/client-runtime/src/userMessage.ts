@@ -3,6 +3,8 @@ import {
   type ChatFileAttachment,
   type GuestMessageAttribution,
   HOME_REPORT_MESSAGE_ID_PREFIX,
+  isAgentDeliveredMessage,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationMessageContext,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
@@ -68,6 +70,8 @@ export function resolveUserMessagePresentation(message: {
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
   /** Set only when another thread sent the message, including a result the server returned for it. */
   readonly senderThreadId?: string | undefined;
+  readonly coordination?: OrchestrationV2ConversationMessage["coordination"] | undefined;
+  readonly idleCompaction?: OrchestrationV2IdleCompaction | undefined;
   readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
 }): {
   readonly text: string;
@@ -110,14 +114,13 @@ export function resolveUserMessagePresentation(message: {
   return {
     // The agent needs words to start a turn; people sent only the attachments.
     text: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
-    attribution:
-      message.senderThreadId !== undefined
-        ? "agent"
-        : message.createdBy !== "agent"
-          ? null
-          : message.creationSource === "server"
-            ? "t3code"
-            : "agent",
+    attribution: isAgentDeliveredMessage("", message)
+      ? "agent"
+      : message.createdBy !== "agent"
+        ? null
+        : message.creationSource === "server"
+          ? "t3code"
+          : "agent",
     scheduledTaskId: undefined,
   };
 }

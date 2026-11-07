@@ -759,6 +759,33 @@ it.effect.each([
             projection.messages.filter((message) => message.id === MessageId.make(messageId)),
             1,
           );
+          const deliveredItem = projection.turnItems
+            .filter((item) => item.type === "user_message")
+            .find((item) => item.messageId === MessageId.make(messageId));
+          assert.isDefined(deliveredItem);
+          const responseId = TurnItemId.make("item:response-after-steer");
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:response-after-steer"),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...deliveredItem,
+                  id: responseId,
+                  type: "assistant_message",
+                  messageId: MessageId.make("message:response-after-steer"),
+                  text: "I received the report.",
+                  streaming: false,
+                },
+              },
+            ],
+          });
+          const afterReply = yield* orchestrator.getThreadProjection(threadId);
+          const response = afterReply.turnItems.find((item) => item.id === responseId);
+          assert.isDefined(response);
+          assert.isBelow(deliveredItem.ordinal, response.ordinal);
           assert.deepEqual(
             projection.runs
               .filter((run) => run.status === "queued")

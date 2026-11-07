@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  GuestMessageId,
+  ScheduledTaskId,
+  EnvironmentId,
+  ThreadId,
+  MessageId,
+} from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -227,6 +234,33 @@ describe("resolveUserMessagePresentation", () => {
         text: "Merged #17.",
       }),
     ).toEqual({ text: "Merged #17.", attribution: "agent", scheduledTaskId: undefined });
+  });
+
+  it("recognizes historical coordination metadata without guessing from its text", () => {
+    for (const coordination of [
+      {
+        kind: "request" as const,
+        requester: { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("sender") },
+      },
+      { kind: "response" as const, requestMessageId: MessageId.make("request") },
+    ]) {
+      expect(
+        resolveUserMessagePresentation({
+          role: "user",
+          createdBy: "system",
+          creationSource: "server",
+          coordination,
+          text: "Ready.",
+        }).attribution,
+      ).toBe("agent");
+    }
+    expect(
+      resolveUserMessagePresentation({
+        role: "user",
+        createdBy: "user",
+        text: "Message from agent sender: Ready.",
+      }).attribution,
+    ).toBeNull();
   });
 
   it("recovers the triggering automation from older scheduler message ids", () => {

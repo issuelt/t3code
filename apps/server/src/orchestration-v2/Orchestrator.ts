@@ -24,6 +24,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isAgentDeliveredMessage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -6430,7 +6431,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const existingItem = projection.turnItems.find(
         (item) => item.type === "user_message" && item.messageId === command.messageId,
       );
-      if (existingItem?.type === "user_message") {
+      const pendingItem =
+        existingItem?.type === "user_message"
+          ? existingItem
+          : message.notification === undefined &&
+              message.delegatedCompletion === undefined &&
+              isAgentDeliveredMessage(command.threadId, message)
+            ? {
+                id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+                threadId: command.threadId,
+                runId,
+                nodeId: rootNodeId,
+                providerThreadId: queuedProviderThread.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: yield* nextTurnItemOrdinal(projection),
+                type: "user_message" as const,
+                messageId: command.messageId,
+                text: message.text,
+                attachments: message.attachments,
+                createdBy: message.createdBy,
+                creationSource: message.creationSource,
+                ...(message.context === undefined ? {} : { context: message.context }),
+                ...(message.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: message.senderThreadId }),
+                ...(message.coordination === undefined
+                  ? {}
+                  : { coordination: message.coordination }),
+                title: null,
+              }
+            : undefined;
+      if (pendingItem !== undefined) {
         yield* emitEvent({
           type: "turn-item.updated",
           threadId: command.threadId,
@@ -6439,7 +6472,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
           payload: {
-            ...existingItem,
+            ...pendingItem,
             runId,
             nodeId: rootNodeId,
             providerThreadId: queuedProviderThread.id,

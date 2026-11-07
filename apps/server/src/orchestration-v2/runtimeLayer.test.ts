@@ -5506,10 +5506,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const send = (key: string, createdBy: "user" | "agent", start: boolean) =>
+      const send = (
+        key: string,
+        createdBy: "user" | "agent",
+        start: boolean,
+        senderThreadId?: ThreadId,
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy,
+          ...(senderThreadId === undefined ? {} : { senderThreadId }),
           creationSource: createdBy === "user" ? "web" : "server",
           commandId: CommandId.make(`${threadId}:message:${key}`),
           threadId,
@@ -5642,7 +5648,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* send("earlier", "agent", true);
       yield* end("earlier", "completed");
       yield* send("active", "agent", true);
-      yield* send("issue", "agent", false);
+      yield* send("issue", "agent", false, ThreadId.make("coordinator"));
+      const pending = (yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(
+        threadId,
+      )).turnItems.find(
+        (item) =>
+          item.type === "user_message" &&
+          item.messageId === MessageId.make(`${threadId}:message:issue`),
+      );
+      assert.deepInclude(pending, {
+        type: "user_message",
+        inputIntent: "queued_turn",
+        status: "pending",
+        senderThreadId: ThreadId.make("coordinator"),
+      });
       yield* send("user", "user", false);
       yield* end("active", "failed");
       yield* awaitHeld("issue");
@@ -5652,9 +5671,52 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       // A scheduled tick finds the thread idle and starts past the held queue.
       yield* send("tick", "agent", true);
       assert.equal((yield* runFor("tick")).status, "starting");
+      const tick = yield* runFor("tick");
+      const replyTime = yield* DateTime.now;
+      const replyId = TurnItemId.make(`${threadId}:tick:reply`);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:tick:reply`),
+            type: "turn-item.updated",
+            threadId,
+            runId: tick.id,
+            occurredAt: replyTime,
+            payload: {
+              id: replyId,
+              threadId,
+              runId: tick.id,
+              nodeId: tick.rootNodeId,
+              providerThreadId: tick.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 0,
+              status: "completed",
+              title: null,
+              startedAt: replyTime,
+              completedAt: replyTime,
+              updatedAt: replyTime,
+              type: "assistant_message",
+              messageId: MessageId.make(`${threadId}:tick:reply`),
+              text: "The tick completed before the queued issue was received.",
+              streaming: false,
+            },
+          },
+        ],
+      });
       yield* end("tick", "completed");
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("issue")).id);
       yield* releasedAfter("issue", "tick");
+      const deliveredProjection = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(
+        threadId,
+      );
+      const delivered = deliveredProjection.turnItems.find((item) => item.id === pending?.id);
+      const tickReply = deliveredProjection.turnItems.find((item) => item.id === replyId);
+      assert.isDefined(delivered);
+      assert.isDefined(tickReply);
+      assert.equal(delivered.status, "completed");
+      assert.isAbove(delivered.ordinal, tickReply.ordinal);
       const user = yield* runFor("user");
       assert.equal(user.status, "queued");
       assert.isTrue(user.queueHeld);

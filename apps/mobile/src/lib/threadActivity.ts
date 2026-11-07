@@ -1,3 +1,4 @@
+import { isAgentDeliveredMessage } from "@t3tools/contracts";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -138,6 +139,7 @@ export interface ThreadFeedMessage {
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly coordination?: import("@t3tools/contracts").OrchestrationV2ConversationMessage["coordination"];
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
@@ -2238,7 +2240,8 @@ export function buildThreadFeed(
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&
-      item.status === "pending"
+      item.status === "pending" &&
+      !isAgentDeliveredMessage(item.threadId, item)
     )
       continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
@@ -2314,6 +2317,7 @@ export function buildThreadFeed(
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
                 ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
+                ...(item.coordination ? { coordination: item.coordination } : {}),
                 ...(item.idleCompaction ? { idleCompaction: item.idleCompaction } : {}),
               }
             : {}),

@@ -1,5 +1,6 @@
 import {
   MessageId,
+  EnvironmentId,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -38,6 +39,23 @@ import {
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
+
+it("retains pending coordination provenance while human queued prompts stay in the queue", () => {
+  const human = {
+    ...userMessage(),
+    inputIntent: "queued_turn" as const,
+    status: "pending" as const,
+  };
+  expect(buildThreadFeed([projected(human, 0)])).toEqual([]);
+  const coordination = {
+    kind: "request" as const,
+    requester: { environmentId: EnvironmentId.make("env"), threadId: sourceThreadId },
+  };
+  const agent = { ...human, senderThreadId: sourceThreadId, coordination };
+  expect(buildThreadFeed([projected(agent, 0)])).toMatchObject([
+    { type: "message", message: { senderThreadId: sourceThreadId, coordination } },
+  ]);
+});
 
 it("shows a captured MCP app for a failed deferred write", () => {
   const mcpApp = {

@@ -105,6 +105,55 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(function* (item, runOrdinal) {
+        if (
+          item.type === "user_message" &&
+          (item.inputIntent === "queued_turn" || item.inputIntent === "promoted_queued_to_steer") &&
+          item.status === "completed" &&
+          item.runId !== null
+        ) {
+          const deliveredRunOrdinal =
+            runOrdinal ??
+            (yield* sql<{ readonly ordinal: number }>`
+            SELECT ordinal FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${item.threadId} AND run_id = ${item.runId}
+            LIMIT 1
+          `.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TurnItemPositionStoreError({
+                    threadId: item.threadId,
+                    turnItemId: item.id,
+                    cause,
+                  }),
+              ),
+            ))[0]?.ordinal;
+          if (deliveredRunOrdinal !== undefined) {
+            const lowerBound = deliveredRunOrdinal * 1_000_000;
+            const upperBound = lowerBound + 999_999;
+            // Delivery can move a pending prompt to a later run or steer it into an earlier one.
+            yield* sql`
+            UPDATE orchestration_v2_turn_item_positions
+            SET ordinal = (
+              SELECT COALESCE(MAX(ordinal), ${lowerBound}) + 1
+              FROM orchestration_v2_turn_item_positions
+              WHERE thread_id = ${item.threadId}
+                AND ordinal >= ${lowerBound}
+                AND ordinal <= ${upperBound}
+            )
+            WHERE thread_id = ${item.threadId} AND turn_item_id = ${item.id}
+              AND (ordinal < ${lowerBound} OR ordinal > ${upperBound})
+            `.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TurnItemPositionStoreError({
+                    threadId: item.threadId,
+                    turnItemId: item.id,
+                    cause,
+                  }),
+              ),
+            );
+          }
+        }
         return yield* allocate({
           threadId: item.threadId,
           turnItemId: item.id,
