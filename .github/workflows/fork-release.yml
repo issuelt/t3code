@@ -5,7 +5,8 @@ name: Fork Release
 # Upstream's release.yml needs Blacksmith runners and org secrets, so it stays
 # disabled here.
 # Pull requests only build Linux as a packaging canary; main builds every
-# platform before it publishes.
+# platform before it publishes. Linux and Android stages live in
+# fork-release-linux.yml, which picks VM104 for trusted events.
 
 on:
   push:
@@ -23,58 +24,32 @@ permissions:
 
 jobs:
   version:
-    runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      name: ${{ steps.meta.outputs.name }}
-      desktop_matrix: ${{ steps.desktop.outputs.matrix }}
-    steps:
-      # A matrix `exclude` cannot drop `include` entries, so the PR filter happens here.
-      - id: desktop
-        env:
-          LINUX_ONLY: ${{ github.event_name == 'pull_request' }}
-        run: |
-          set -euo pipefail
-          matrix="$(jq -c --argjson linux_only "$LINUX_ONLY" \
-            '{include: map(select(($linux_only | not) or .platform == "linux"))}' <<'EOF'
-          [
-            {"platform": "mac", "target": "dmg", "arch": "arm64", "runner": "macos-15",
-             "rust_target": "aarch64-apple-darwin", "resource_key": "darwin-arm64"},
-            {"platform": "linux", "target": "AppImage", "arch": "x64", "runner": "ubuntu-24.04",
-             "rust_target": "x86_64-unknown-linux-gnu", "resource_key": "linux-x64"},
-            {"platform": "win", "target": "nsis", "arch": "x64", "runner": "windows-2025",
-             "rust_target": "x86_64-pc-windows-msvc", "resource_key": "win32-x64"}
-          ]
-          EOF
-          )"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-      - id: meta
-        run: |
-          node scripts/resolve-nightly-release.ts \
-            --date "$(date -u +%Y%m%d)" \
-            --run-number "${{ github.run_number }}" \
-            --sha "${{ github.sha }}" \
-            --github-output
+    uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
+    with:
+      stage: version
 
+  # Linux builds in the callee's build stage, so pull requests skip this job.
   desktop:
+    if: github.event_name != 'pull_request'
     needs: version
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.version.outputs.desktop_matrix) }}
+      matrix:
+        include:
+          - platform: mac
+            target: dmg
+            arch: arm64
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+          - platform: win
+            target: nsis
+            arch: x64
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
     steps:
       - name: Checkout
         shell: bash
@@ -95,12 +70,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
-
-      - name: Install Linux desktop build libraries
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
 
       - name: Install Spectre-mitigated MSVC libs
         if: matrix.platform == 'win'
@@ -213,142 +182,26 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
-  android:
-    if: github.event_name != 'pull_request'
+  linux:
     needs: version
-    runs-on: ubuntu-24.04
-    env:
-      APP_VARIANT: preview
-      T3CODE_MOBILE_UPDATE_CHANNEL: fork
-      T3CODE_MOBILE_VERSION: ${{ needs.version.outputs.version }}
-      EXPO_NO_GIT_STATUS: "1"
-    steps:
-      - name: Checkout
-        run: |
-          set -euo pipefail
-          git init .
-          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
-          git sparse-checkout set --no-cone '/*' '!/.repos/'
-          git -c checkout.workers=0 checkout --detach FETCH_HEAD
-
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: false
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: gradle/actions/setup-gradle@v5
-
-      - name: Install dependencies
-        run: vp install
-
-      # Current Android phones are arm64; each extra ABI recompiles every native library.
-      - name: Build APK
-        working-directory: apps/mobile
-        run: |
-          node_modules/.bin/expo prebuild --clean --platform android
-          cd android
-          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
-            "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
-
-      # Android installs an update only when it is signed with the installed
-      # app's key, so every release APK is re-signed with the fork release key.
-      - name: Sign APK with the fork release key
-        env:
-          KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
-          KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.p12"
-          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
-          mkdir -p release-android
-          apk="release-android/T3-Code-${{ needs.version.outputs.version }}-android.apk"
-          "$apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-pass env:KEYSTORE_PASSWORD \
-            --ks-key-alias t3code-fork --out "$apk" \
-            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          rm "$RUNNER_TEMP/release.p12"
-          "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
-          grep -q "SHA-256 digest: 1efbb2ba4b48bd062959684e8bf4b955576e16b907f8853e0490d289a5cf0d22" "$RUNNER_TEMP/certs.txt"
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: android-apk
-          path: release-android/*.apk
-          if-no-files-found: error
+    uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
+    with:
+      stage: build
+      version: ${{ needs.version.outputs.version }}
+    secrets:
+      FORK_ANDROID_KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
+      FORK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
 
   publish:
     if: github.event_name != 'pull_request'
-    needs: [version, desktop, android]
-    runs-on: ubuntu-24.04
+    needs: [version, desktop, linux]
+    uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     permissions:
       contents: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: desktop-*
-          merge-multiple: true
-          path: release-assets
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: android-apk
-          path: release-assets
-      - name: Publish prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ls release-assets/nightly-mac.yml release-assets/nightly-linux.yml release-assets/nightly.yml
-          (cd release-assets && sha256sum t3-*.tar.gz t3-*.zip > SHA256SUMS && cat SHA256SUMS)
-          gh release create "${{ needs.version.outputs.tag }}" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "${{ needs.version.outputs.name }}" \
-            --notes "Fork nightly built from $GITHUB_SHA." \
-            --prerelease
-
-  # Ships JavaScript to installed Android builds whose native fingerprint
-  # matches this commit. After a native change the fingerprint differs, and
-  # those phones take the release APK instead.
-  mobile-update:
-    needs: [version, publish]
-    runs-on: ubuntu-24.04
-    env:
-      APP_VARIANT: preview
-      T3CODE_MOBILE_UPDATE_CHANNEL: fork
-      T3CODE_MOBILE_VERSION: ${{ needs.version.outputs.version }}
-      EXPO_NO_GIT_STATUS: "1"
-    steps:
-      - name: Checkout
-        run: |
-          set -euo pipefail
-          git init .
-          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
-          git sparse-checkout set --no-cone '/*' '!/.repos/'
-          git -c checkout.workers=0 checkout --detach FETCH_HEAD
-
-      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: false
-
-      - name: Install dependencies
-        run: vp install
-
-      - name: Publish over-the-air update
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          npx --yes eas-cli@latest update \
-            --channel fork \
-            --platform android \
-            --message "${{ needs.version.outputs.name }}" \
-            --non-interactive
+    with:
+      stage: publish
+      version: ${{ needs.version.outputs.version }}
+      tag: ${{ needs.version.outputs.tag }}
+      name: ${{ needs.version.outputs.name }}
+    secrets:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
