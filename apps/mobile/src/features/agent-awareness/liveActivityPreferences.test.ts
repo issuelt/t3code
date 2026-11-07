@@ -2,6 +2,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
@@ -51,6 +52,7 @@ const connection: SavedRemoteConnection = {
 };
 
 const layerTest = Layer.mergeAll(
+  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, null as never),
   Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
   Layer.succeed(
     HttpClient.HttpClient,
@@ -134,6 +136,42 @@ describe("liveActivityPreferences", () => {
         connection,
         liveActivitiesEnabled: true,
       });
+    }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("updates directly paired DPoP environments and skips relay-managed ones", () => {
+    const directDpopConnection: SavedRemoteConnection = {
+      ...connection,
+      environmentId: "direct-dpop" as EnvironmentId,
+      bearerToken: null,
+    };
+    const relayConnection: SavedRemoteConnection = {
+      ...connection,
+      environmentId: "relay" as EnvironmentId,
+      bearerToken: null,
+      authenticationMethod: "dpop",
+      relayManaged: true,
+    };
+
+    return Effect.gen(function* () {
+      yield* setLiveActivityUpdatesEnabled({
+        enabled: true,
+        previousEnabled: false,
+        clerkToken: "clerk-token",
+        connections: [relayConnection, directDpopConnection, connection],
+        canConfigureEnvironment: () => true,
+      });
+
+      expect(vi.mocked(linkEnvironmentToCloudWithPreference).mock.calls).toEqual([
+        [
+          {
+            clerkToken: "clerk-token",
+            connection: directDpopConnection,
+            liveActivitiesEnabled: true,
+          },
+        ],
+        [{ clerkToken: "clerk-token", connection, liveActivitiesEnabled: true }],
+      ]);
     }).pipe(Effect.provide(layerTest));
   });
 

@@ -3,7 +3,11 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  authScopeResponse,
+  type AuthGrantScope,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
@@ -11,9 +15,12 @@ import {
 } from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -109,6 +116,18 @@ const makeDpopKey = () => {
     },
   };
 };
+
+const pairDevice = (scopes: ReadonlyArray<AuthGrantScope>, proofKeyThumbprint?: string) =>
+  Effect.gen(function* () {
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const pairing = yield* serverAuth.issuePairingCredential({ scopes });
+    return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+      pairing.credential,
+      undefined,
+      requestMetadata,
+      proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+    );
+  });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
   "EnvironmentAuth.layer",
@@ -243,7 +262,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         );
         expect(dpop.access_token).not.toBe(token);
         expect(dpop.access_token).not.toBe(exchanged.access_token);
-        expect(dpop.token_type).toBe("DPoP");
+        // The dev token can't renew a DPoP session, so a proof still gets a bearer.
+        expect(dpop.token_type).toBe("Bearer");
         expect(dpop.scope).toBe("orchestration:read");
 
         const secondBearer = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
@@ -544,6 +564,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("pairs a startup link with a 30-day bearer even when a proof is sent", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairingUrl = yield* serverAuth.issueStartupPairingUrl("http://127.0.0.1:3773");
+        const token = new URLSearchParams(new URL(pairingUrl).hash.slice(1)).get("token") ?? "";
+
+        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          token,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: makeDpopKey().thumbprint },
+        );
+
+        expect(exchanged.token_type).toBe("Bearer");
+        expect(exchanged.expires_in).toBe(Duration.toSeconds(Duration.days(30)));
+        const verified = yield* serverAuth.authenticateHttpRequest(
+          makeBearerRequest(exchanged.access_token),
+        );
+        expect(verified.subject).toBe("administrative-bootstrap");
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
+    );
+
     it.effect(
       "lists pairing links and revokes other sessions while keeping the administrative session",
       () =>
@@ -720,12 +762,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const sessions = yield* SessionStore.SessionStore;
         const key = makeDpopKey();
         const other = makeDpopKey();
-        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-          "desktop-bootstrap-token",
-          ["orchestration:read"],
-          requestMetadata,
-          { proofKeyThumbprint: key.thumbprint },
-        );
+        const exchanged = yield* pairDevice(["orchestration:read"], key.thumbprint);
         const session = yield* sessions.verify(exchanged.access_token);
         const host = "192.168.1.50:3773";
         const socketUrl = `http://${host}/ws`;
@@ -791,13 +828,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
           const key = makeDpopKey();
-          const { access_token: token } =
-            yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              "desktop-bootstrap-token",
-              ["orchestration:read"],
-              requestMetadata,
-              { proofKeyThumbprint: key.thumbprint },
-            );
+          const { access_token: token } = yield* pairDevice(["orchestration:read"], key.thumbprint);
           const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
           const request = {
             method: "GET",
@@ -824,17 +855,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         ),
     );
 
+    it.effect("accepts a DPoP proof for the public URL behind a proxy that rewrites Host", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const key = makeDpopKey();
+        const { access_token: token } = yield* pairDevice(["orchestration:read"], key.thumbprint);
+        const iat = Math.floor((yield* DateTime.now).epochMilliseconds / 1_000);
+        const authenticate = (proofUrl: string, forwardedHost?: string) =>
+          serverAuth.authenticateHttpRequest(
+            HttpServerRequest.fromWeb(
+              new Request("http://127.0.0.1:3773/api/x", {
+                headers: {
+                  host: "127.0.0.1:3773",
+                  "x-forwarded-proto": "https",
+                  ...(forwardedHost ? { "x-forwarded-host": forwardedHost } : {}),
+                  authorization: `DPoP ${token}`,
+                  dpop: key.sign({ method: "GET", url: proofUrl, token, iat }),
+                },
+              }),
+            ),
+          );
+
+        const forwarded = yield* authenticate("https://public.example/api/x", "public.example");
+        expect(forwarded.sessionId).toBeTypeOf("string");
+        for (const forwardedHost of ["public.example", undefined]) {
+          const other = yield* Effect.flip(
+            authenticate("https://other.example/api/x", forwardedHost),
+          );
+          expect(other._tag).toBe("ServerAuthInvalidCredentialError");
+        }
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
     it.effect("rejects a replayed proof on a bound RPC socket ticket", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const key = makeDpopKey();
-        const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-          "desktop-bootstrap-token",
-          ["orchestration:read"],
-          requestMetadata,
-          { proofKeyThumbprint: key.thumbprint },
-        );
+        const exchanged = yield* pairDevice(["orchestration:read"], key.thumbprint);
         const session = yield* sessions.verify(exchanged.access_token);
         const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
         const request = {
@@ -859,6 +917,299 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         }
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+      ),
+    );
+
+    it.effect("renews a DPoP pairing with its subject and scopes, never wider", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const paired = yield* pairDevice(["orchestration:read", "filesystem:read"], key.thumbprint);
+        const renewed = yield* serverAuth.exchangeAccessTokenForDpopSession(
+          paired.access_token,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        expect(renewed).toMatchObject({ token_type: "DPoP", expires_in: 3600 });
+        const session = yield* sessions.verify(renewed.access_token);
+        expect(session).toMatchObject({
+          subject: "one-time-token",
+          method: "dpop-access-token",
+          scopes: ["orchestration:read", "filesystem:read"],
+          proofKeyThumbprint: key.thumbprint,
+        });
+
+        const narrowed = yield* serverAuth.exchangeAccessTokenForDpopSession(
+          renewed.access_token,
+          ["orchestration:read", "terminal:operate"],
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        expect((yield* sessions.verify(narrowed.access_token)).scopes).toEqual([
+          "orchestration:read",
+        ]);
+        const widened = yield* Effect.flip(
+          serverAuth.exchangeAccessTokenForDpopSession(
+            narrowed.access_token,
+            ["filesystem:read"],
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          ),
+        );
+        expect(widened._tag).toBe("ServerAuthScopeNotGrantedError");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect(
+      "refuses renewal with another key, without a proof, after a family revoke, or for a subject no direct pairing created",
+      () =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const sessions = yield* SessionStore.SessionStore;
+          const key = makeDpopKey();
+          const renew = (token: string, proofKeyThumbprint?: string) =>
+            serverAuth
+              .exchangeAccessTokenForDpopSession(
+                token,
+                undefined,
+                requestMetadata,
+                proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              )
+              .pipe(
+                Effect.flip,
+                Effect.map((error) => error._tag),
+              );
+          const paired = yield* pairDevice(["orchestration:read"], key.thumbprint);
+
+          expect(yield* renew(paired.access_token, makeDpopKey().thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          expect(yield* renew(paired.access_token)).toBe("ServerAuthInvalidCredentialError");
+
+          const mcp = yield* sessions.issue({
+            subject: "mcp-client",
+            method: "dpop-access-token",
+            scopes: ["orchestration:read", "orchestration:operate"],
+            proofKeyThumbprint: key.thumbprint,
+            runtimeModeCeiling: "auto-accept-edits",
+            ttl: Duration.hours(1),
+          });
+          expect(yield* renew(mcp.token, key.thumbprint)).toBe("ServerAuthInvalidCredentialError");
+
+          // Only a direct pairing renews here. T3 Connect and dev tokens keep their own authority.
+          for (const subject of [
+            "cloud-connect",
+            "reusable-dev-token-child",
+            "desktop-bootstrap",
+          ]) {
+            const other = yield* sessions.issue({
+              subject,
+              method: "dpop-access-token",
+              scopes: ["orchestration:read"],
+              proofKeyThumbprint: key.thumbprint,
+              ttl: Duration.hours(1),
+            });
+            expect(yield* renew(other.token, key.thumbprint)).toBe(
+              "ServerAuthInvalidCredentialError",
+            );
+          }
+
+          const renewed = yield* serverAuth.exchangeAccessTokenForDpopSession(
+            paired.access_token,
+            undefined,
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          );
+          const original = yield* sessions.verify(paired.access_token);
+          yield* serverAuth.revokeSession(original.sessionId);
+          expect(yield* renew(renewed.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+
+          // A revoked family must not block the same device from pairing again.
+          const repaired = yield* pairDevice(["orchestration:read"], key.thumbprint);
+          const renewedAgain = yield* serverAuth.exchangeAccessTokenForDpopSession(
+            repaired.access_token,
+            undefined,
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          );
+          expect(renewedAgain.token_type).toBe("DPoP");
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("retires the old chain when a device pairs again with the same key", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const renew = (token: string) =>
+          serverAuth.exchangeAccessTokenForDpopSession(token, undefined, requestMetadata, {
+            proofKeyThumbprint: key.thumbprint,
+          });
+        const first = yield* pairDevice(["orchestration:read", "filesystem:read"], key.thumbprint);
+        const firstRenewed = yield* renew(first.access_token);
+        yield* TestClock.adjust(Duration.minutes(5));
+
+        const repaired = yield* pairDevice(["orchestration:read"], key.thumbprint);
+        expect((yield* Effect.flip(renew(firstRenewed.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        yield* TestClock.adjust(Duration.minutes(5));
+        const renewed = yield* renew(repaired.access_token);
+        const renewedSession = yield* sessions.verify(renewed.access_token);
+        const listed = (yield* sessions.listActive()).filter(
+          (session) => session.subject === "one-time-token",
+        );
+        expect(listed.map((session) => [session.sessionId, session.scopes])).toEqual([
+          [renewedSession.sessionId, ["orchestration:read"]],
+        ]);
+
+        yield* serverAuth.revokeSession(renewedSession.sessionId);
+        expect((yield* Effect.flip(renew(renewed.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect((yield* Effect.flip(renew(repaired.access_token)))._tag).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        expect(yield* sessions.listActive()).toEqual([]);
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
+    );
+
+    it.effect("renews an expired DPoP token only inside the renewal window", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const inside = makeDpopKey();
+        const outside = makeDpopKey();
+        const pairedInside = yield* pairDevice(["orchestration:read"], inside.thumbprint);
+        const pairedOutside = yield* pairDevice(["orchestration:read"], outside.thumbprint);
+
+        yield* TestClock.adjust(Duration.sum(Duration.hours(1), Duration.days(30)));
+        const renewed = yield* serverAuth.exchangeAccessTokenForDpopSession(
+          pairedInside.access_token,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: inside.thumbprint },
+        );
+        expect(renewed.expires_in).toBe(3600);
+
+        yield* TestClock.adjust(Duration.millis(1));
+        const refused = yield* Effect.flip(
+          serverAuth.exchangeAccessTokenForDpopSession(
+            pairedOutside.access_token,
+            undefined,
+            requestMetadata,
+            { proofKeyThumbprint: outside.thumbprint },
+          ),
+        );
+        expect(refused._tag).toBe("ServerAuthInvalidCredentialError");
+      }).pipe(Effect.provide(Layer.merge(layerEnvironmentAuth(), TestClock.layer()))),
+    );
+
+    it.effect("converts a one-time-token bearer once and repeats it only for the same key", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const bearer = yield* pairDevice(["orchestration:read"]);
+        expect(bearer.token_type).toBe("Bearer");
+
+        const converted = yield* serverAuth.exchangeAccessTokenForDpopSession(
+          bearer.access_token,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        expect(converted).toMatchObject({ token_type: "DPoP", expires_in: 3600 });
+        expect(yield* sessions.verify(converted.access_token)).toMatchObject({
+          subject: "one-time-token",
+          scopes: ["orchestration:read"],
+          proofKeyThumbprint: key.thumbprint,
+        });
+        expect((yield* Effect.flip(sessions.verify(bearer.access_token)))._tag).toBe(
+          "SessionTokenRevokedError",
+        );
+        const convert = (token: string, proofKeyThumbprint: string) =>
+          serverAuth.exchangeAccessTokenForDpopSession(token, undefined, requestMetadata, {
+            proofKeyThumbprint,
+          });
+        const refusal = (token: string, proofKeyThumbprint: string) =>
+          convert(token, proofKeyThumbprint).pipe(
+            Effect.flip,
+            Effect.map((error) => error._tag),
+          );
+        expect(yield* refusal(bearer.access_token, makeDpopKey().thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        // A lost response: the same key may convert again into the same family.
+        const retried = yield* convert(bearer.access_token, key.thumbprint);
+        expect(yield* sessions.verify(retried.access_token)).toMatchObject({
+          subject: "one-time-token",
+          scopes: ["orchestration:read"],
+          proofKeyThumbprint: key.thumbprint,
+        });
+        yield* serverAuth.revokeSession((yield* sessions.verify(retried.access_token)).sessionId);
+        expect(yield* refusal(bearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        const revokedBearer = yield* pairDevice(["orchestration:read"]);
+        yield* serverAuth.revokeSession(
+          (yield* sessions.verify(revokedBearer.access_token)).sessionId,
+        );
+        expect(yield* refusal(revokedBearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("refuses to convert an expired bearer or one not from a pairing link", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const key = makeDpopKey();
+        const convert = (token: string) =>
+          serverAuth
+            .exchangeAccessTokenForDpopSession(token, undefined, requestMetadata, {
+              proofKeyThumbprint: key.thumbprint,
+            })
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
+
+        const cli = yield* serverAuth.issueSession({ scopes: ["orchestration:read"] });
+        const cliPairing = yield* Effect.flip(
+          serverAuth.issueSession({ scopes: ["orchestration:read"], subject: "one-time-token" }),
+        );
+        expect(cliPairing._tag).toBe("ServerAuthReservedSubjectError");
+        const mcp = yield* serverAuth.issueMcpClientSession({
+          label: "Agent",
+          access: "read-only",
+          peerLink: false,
+          client: { deviceType: "bot" },
+        });
+        const desktop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          "desktop-bootstrap-token",
+          ["orchestration:read"],
+          requestMetadata,
+        );
+        for (const token of [cli.token, mcp.token, desktop.access_token]) {
+          expect(yield* convert(token)).toBe("ServerAuthInvalidCredentialError");
+        }
+
+        const expiring = yield* pairDevice(["orchestration:read"]);
+        yield* TestClock.adjust(Duration.days(31));
+        expect(yield* convert(expiring.access_token)).toBe("ServerAuthInvalidCredentialError");
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" }),
+            TestClock.layer(),
+          ),
+        ),
       ),
     );
   },

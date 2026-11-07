@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthSessionId, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -204,6 +204,94 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
       yield* sessions.revoke(first.sessionId);
       yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("revokes a renewed DPoP family as one client and closes its socket", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      const other = yield* sessions.issue({ ...relaySessionInput, subject: "one-time-token" });
+      yield* TestClock.adjust(Duration.minutes(30));
+      const renewal = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const listed = (yield* sessions.listActive()).filter(
+        (session) => session.subject === relaySessionInput.subject,
+      );
+      expect(listed.map((session) => [session.sessionId, session.connected])).toEqual([
+        [renewal.sessionId, true],
+      ]);
+
+      // Revoking the visible row must not leave the earlier one able to renew or connect.
+      yield* sessions.revoke(renewal.sessionId);
+      expect((yield* Effect.flip(sessions.verify(client.token)))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
+      yield* Fiber.join(watcher);
+      expect((yield* sessions.verify(other.token)).sessionId).toBe(other.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("lists an idle direct DPoP family until its renewal window closes", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const direct = yield* sessions.issue({ ...relaySessionInput, subject: "one-time-token" });
+      const revokedLater = yield* sessions.issue({
+        ...relaySessionInput,
+        subject: "one-time-token",
+        proofKeyThumbprint: "other-key",
+      });
+      const connect = yield* sessions.issue(relaySessionInput);
+      const listedIds = Effect.map(sessions.listActive(), (listed) =>
+        listed.map((session) => session.sessionId),
+      );
+
+      yield* TestClock.adjust(Duration.hours(2));
+      // Only a direct pairing renews after expiry, so only it stays listed.
+      expect((yield* listedIds).toSorted()).toEqual(
+        [revokedLater.sessionId, direct.sessionId].toSorted(),
+      );
+      expect(yield* listedIds).not.toContain(connect.sessionId);
+      yield* sessions.revoke(revokedLater.sessionId);
+      expect(yield* listedIds).toEqual([direct.sessionId]);
+
+      yield* TestClock.adjust(Duration.sum(Duration.days(30), Duration.minutes(-61)));
+      expect(yield* listedIds).toEqual([direct.sessionId]);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* listedIds).toEqual([]);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps both sockets when a direct and a Connect chain share one key", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const direct = { ...relaySessionInput, subject: "one-time-token" };
+      const watch = (sessionId: AuthSessionId) =>
+        Effect.gen(function* () {
+          const invalidated = yield* Deferred.make<void>();
+          yield* sessions
+            .awaitInvalidation(sessionId, relaySessionInput.proofKeyThumbprint)
+            .pipe(
+              Effect.andThen(Deferred.succeed(invalidated, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+          return invalidated;
+        });
+      const directClosed = yield* watch((yield* sessions.issue(direct)).sessionId);
+      const relayClosed = yield* watch((yield* sessions.issue(relaySessionInput)).sessionId);
+      yield* TestClock.adjust(Duration.minutes(59));
+      yield* sessions.issue(direct);
+      yield* sessions.issue(relaySessionInput);
+      yield* TestClock.adjust(Duration.minutes(2));
+      expect(yield* Deferred.isDone(directClosed)).toBe(false);
+      expect(yield* Deferred.isDone(relayClosed)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

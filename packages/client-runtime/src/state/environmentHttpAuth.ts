@@ -91,9 +91,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
 );
 
 /**
- * A DPoP request is T3 Connect work, so its span starts an exported trace that
- * the environment continues; its local caller's span would leave that trace
- * without a root.
+ * A T3 Connect request's span starts an exported trace that the environment
+ * continues; its local caller's span would leave that trace without a root.
+ * A paired DPoP credential is direct work and stays local.
  */
 export const executeAuthenticatedEnvironmentHttpRequest = <
   Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1],
@@ -103,7 +103,8 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
 >(
   input: Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
 ) =>
-  input.prepared.httpAuthorization?._tag === "Dpop"
+  input.prepared.httpAuthorization?._tag === "Dpop" &&
+  input.prepared.httpAuthorization.credentialId === undefined
     ? executeEnvironmentRequest(input).pipe(
         Effect.withSpan(ENVIRONMENT_REQUEST_SPAN, { root: true }),
         withRelayClientTracing,
@@ -192,6 +193,15 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           .authorizeDpopHttp({
             expectedEnvironmentId: input.prepared.environmentId,
             ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+            ...(authorization.credentialId === undefined
+              ? {}
+              : {
+                  direct: {
+                    credentialId: authorization.credentialId,
+                    httpBaseUrl: input.prepared.httpBaseUrl,
+                    label: input.prepared.label,
+                  },
+                }),
           })
           .pipe(
             Effect.mapError(

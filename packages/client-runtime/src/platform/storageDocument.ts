@@ -1,27 +1,43 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
+  BearerConnectionCredential,
+  type ConnectionCredential,
   type ConnectionRegistration,
-  ConnectionCredential,
   ConnectionProfile,
+  DpopConnectionCredential,
+  sameConnectionCredential,
 } from "../connection/catalog.ts";
-import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import * as CredentialStore from "../connection/credentialStore.ts";
+import {
+  type ConnectionAttemptError,
+  type ConnectionTarget,
+  PersistedConnectionTarget,
+} from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
-export const StoredConnectionCredential = Schema.Struct({
+const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
-  credential: ConnectionCredential,
+  credential: BearerConnectionCredential,
 });
-export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
+
+const StoredDpopConnectionCredential = Schema.Struct({
+  connectionId: Schema.String,
+  credential: DpopConnectionCredential,
+});
 
 export const ConnectionCatalogDocument = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   targets: Schema.Array(PersistedConnectionTarget),
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
+  // Kept apart from `credentials`: older builds decode that list as bearer only,
+  // and a catalog they cannot decode is discarded.
+  dpopCredentials: Schema.optionalKey(Schema.Array(StoredDpopConnectionCredential)),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
   // Pull request routing grants. The field name predates the rename and stays, so older and
   // newer clients sharing this document keep reading and revoking the same grants.
@@ -58,6 +74,78 @@ export function removeCatalogValue<A>(
   return values.filter((value) => key(value) !== removedKey);
 }
 
+export function catalogCredential(
+  document: ConnectionCatalogDocument,
+  connectionId: string,
+): ConnectionCredential | undefined {
+  return (
+    document.credentials.find((value) => value.connectionId === connectionId)?.credential ??
+    document.dpopCredentials?.find((value) => value.connectionId === connectionId)?.credential
+  );
+}
+
+function removeCatalogCredential(
+  document: ConnectionCatalogDocument,
+  connectionId: string,
+): ConnectionCatalogDocument {
+  return removeCatalogCredentials(document, new Set([connectionId]));
+}
+
+function removeCatalogCredentials(
+  document: ConnectionCatalogDocument,
+  connectionIds: ReadonlySet<string>,
+): ConnectionCatalogDocument {
+  const { dpopCredentials, ...rest } = document;
+  const keptDpop = dpopCredentials?.filter((value) => !connectionIds.has(value.connectionId));
+  return {
+    ...rest,
+    credentials: document.credentials.filter((value) => !connectionIds.has(value.connectionId)),
+    ...(keptDpop === undefined || keptDpop.length === 0 ? {} : { dpopCredentials: keptDpop }),
+  };
+}
+
+export function putCatalogCredential(
+  document: ConnectionCatalogDocument,
+  connectionId: string,
+  credential: ConnectionCredential,
+): ConnectionCatalogDocument {
+  const next = removeCatalogCredential(document, connectionId);
+  switch (credential._tag) {
+    case "BearerConnectionCredential":
+      return { ...next, credentials: [...next.credentials, { connectionId, credential }] };
+    case "DpopConnectionCredential":
+      return {
+        ...next,
+        dpopCredentials: [...(next.dpopCredentials ?? []), { connectionId, credential }],
+      };
+  }
+}
+
+/** The credential store over a saved catalog, shared by the web and mobile clients. */
+export function makeCatalogCredentialStore<E extends ConnectionAttemptError>(catalog: {
+  readonly read: Effect.Effect<ConnectionCatalogDocument, E>;
+  readonly update: (
+    transform: (document: ConnectionCatalogDocument) => ConnectionCatalogDocument,
+  ) => Effect.Effect<void, E>;
+}) {
+  return CredentialStore.make({
+    get: (connectionId) =>
+      catalog.read.pipe(
+        Effect.map((document) => Option.fromUndefinedOr(catalogCredential(document, connectionId))),
+      ),
+    put: (connectionId, credential, replaces) =>
+      catalog.update((document) => {
+        const current = catalogCredential(document, connectionId);
+        return replaces !== undefined &&
+          (current === undefined || !sameConnectionCredential(current, replaces))
+          ? document
+          : putCatalogCredential(document, connectionId, credential);
+      }),
+    remove: (connectionId) =>
+      catalog.update((document) => removeCatalogCredential(document, connectionId)),
+  });
+}
+
 function connectionIdOf(target: ConnectionTarget): string | null {
   switch (target._tag) {
     case "PrimaryConnectionTarget":
@@ -81,9 +169,8 @@ function removeRouteMetadata(
   const relayRemoved = removed.some((target) => target._tag === "RelayConnectionTarget");
   const environmentIds = new Set(removed.map((target) => target.environmentId));
   return {
-    ...document,
+    ...removeCatalogCredentials(document, connectionIds),
     profiles: document.profiles.filter((value) => !connectionIds.has(value.connectionId)),
-    credentials: document.credentials.filter((value) => !connectionIds.has(value.connectionId)),
     remoteDpopTokens: relayRemoved
       ? document.remoteDpopTokens.filter((value) => !environmentIds.has(value.environmentId))
       : document.remoteDpopTokens,
@@ -137,16 +224,12 @@ export function registerConnectionInCatalog(
     case "BearerConnectionRegistration":
     case "SshConnectionRegistration":
       return {
-        ...next,
+        ...putCatalogCredential(next, registration.target.connectionId, registration.credential),
         profiles: replaceCatalogValue(
           next.profiles,
           (value) => value.connectionId,
           registration.profile,
         ),
-        credentials: replaceCatalogValue(next.credentials, (value) => value.connectionId, {
-          connectionId: registration.target.connectionId,
-          credential: registration.credential,
-        }),
       };
   }
 }

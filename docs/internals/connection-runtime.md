@@ -56,6 +56,36 @@ DPoP key, subject, and scopes
 ([`SessionStore.awaitInvalidation`](../../apps/server/src/auth/SessionStore.ts)).
 If renewal fails, the socket closes at expiry and the supervisor reconnects.
 
+A server that advertises `auth.dpopRenewal` pairs with the device's T3 Connect
+DPoP key, and its one-hour sessions renew through `/oauth/token` with the
+current access token as the subject, even after the token expired. A
+reconnect after sleep renews first. Each successor is saved so a restart
+starts from it. The server may already have revoked its predecessor, so a
+successor whose save fails stays in use and the save is retried on the next
+connect. A refused renewal blocks with an authentication failure, which offers
+Pair again. On such a server, a bearer from a pairing link converts once
+through the same grant, and the server revokes the bearer. When a conversion
+fails as transient, such as a lost response or a proxy error, the client tries
+the bearer. If the server still accepts it, the client connects with it and
+offers the conversion again on the next connect. If the server rejects it, the
+lost response may have revoked it, so the attempt fails as transient and the
+retry sends the same bearer and key. The server answers that with a new session
+in the same DPoP family. The client cannot tell which pairing produced a bearer,
+so a refusal keeps the bearer, and the client does not ask again for that bearer
+until the app restarts. Pairing again stores a new bearer, which the client
+offers again. A server that advertises `auth.dpopRenewal` still issues a bearer
+to a pairing that cannot renew directly, such as the `t3 serve` startup link or
+the reusable dev token. A device that
+cannot sign, such as a web page on a plain-HTTP LAN address without
+`crypto.subtle`, pairs with a bearer and never converts. Paired DPoP
+credentials live in the catalog's `dpopCredentials`, apart from `credentials`,
+because older builds decode that list as bearer only and discard a catalog
+they cannot decode. Web tabs and desktop windows each cache the catalog, so a
+write reads the saved document first and tells the others to drop their cache.
+A renewal or conversion saves its successor only while the saved credential is
+still the one it replaced, so a late save cannot restore a removed or re-paired
+connection.
+
 Session listings must retain unrevoked connected sessions after credential expiry
 so an open connection does not disappear from connection management. This does
 not extend the credential's lifetime. New HTTP requests and socket upgrades still

@@ -2,10 +2,21 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
+import { RemoteEnvironmentAuthorization } from "@t3tools/client-runtime/authorization";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient, type RpcSession } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/http";
 
 import * as MobileStorage from "../../persistence/mobile-storage";
@@ -59,6 +70,84 @@ const savedConnection = {
   bearerToken: "local-bearer",
 };
 
+const directDpopConnection = {
+  ...savedConnection,
+  environmentId: EnvironmentId.make("env-direct"),
+  bearerToken: null,
+};
+
+const DIRECT_DPOP_CREDENTIAL_ID = "dpop:env-direct";
+const directDpopAuthorization = {
+  _tag: "Dpop",
+  accessToken: "direct-access-token",
+  expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+  credentialId: DIRECT_DPOP_CREDENTIAL_ID,
+} satisfies PreparedHttpAuthorization;
+
+const preparedAuthorizations = new Map<string, PreparedHttpAuthorization>([
+  [savedConnection.environmentId, { _tag: "Bearer", token: "local-bearer" }],
+  [directDpopConnection.environmentId, directDpopAuthorization],
+]);
+
+function preparedConnection(environmentId: EnvironmentId): PreparedConnection {
+  const target = new BearerConnectionTarget({
+    environmentId,
+    label: savedConnection.environmentLabel,
+    connectionId: `bearer:${environmentId}`,
+  });
+  return {
+    environmentId,
+    label: target.label,
+    httpBaseUrl: savedConnection.httpBaseUrl,
+    socketUrl: savedConnection.wsBaseUrl,
+    httpAuthorization: preparedAuthorizations.get(environmentId) ?? null,
+    target,
+  };
+}
+
+const layerTestRegistry = Layer.succeed(
+  EnvironmentRegistry.EnvironmentRegistry,
+  EnvironmentRegistry.EnvironmentRegistry.of({
+    run: <A, E, R>(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
+      Effect.gen(function* () {
+        const prepared = preparedConnection(environmentId);
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: prepared.target,
+          state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+          prepared: yield* SubscriptionRef.make(Option.some(prepared)),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        return yield* Effect.provideService(
+          effect,
+          EnvironmentSupervisor.EnvironmentSupervisor,
+          supervisor,
+        );
+      }),
+  } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+);
+
+const layerTestRemoteAuthorization = Layer.succeed(
+  RemoteEnvironmentAuthorization,
+  RemoteEnvironmentAuthorization.of({
+    authorizeBearer: () => Effect.die("unexpected bearer preparation"),
+    authorizeDirect: () => Effect.die("unexpected direct preparation"),
+    authorizeDpop: () => Effect.die("unexpected socket preparation"),
+    authorizeDpopHttp: (input) =>
+      input.direct?.credentialId === DIRECT_DPOP_CREDENTIAL_ID
+        ? Effect.succeed({
+            environmentId: input.expectedEnvironmentId,
+            label: input.direct.label,
+            httpBaseUrl: input.direct.httpBaseUrl,
+            httpAuthorization: directDpopAuthorization,
+          })
+        : Effect.die("unexpected DPoP authorization"),
+    renewDpopBeforeExpiry: () => Effect.die("unexpected socket renewal"),
+  }),
+);
+
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
@@ -75,6 +164,8 @@ function layerCloudClient() {
   const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     layerHttpClient,
+    layerTestRegistry,
+    layerTestRemoteAuthorization,
     Layer.succeed(
       MobileStorage.MobileStorage,
       MobileStorage.MobileStorage.of({
@@ -98,6 +189,7 @@ const withCloudServices = <A, E>(
   effect: Effect.Effect<
     A,
     E,
+    | EnvironmentRegistry.EnvironmentRegistry
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
@@ -263,6 +355,55 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
+    }),
+  );
+  it.effect("links a directly paired DPoP environment with its own proof", () =>
+    Effect.gen(function* () {
+      const environmentRequests: Array<{ readonly url: string; readonly headers: Headers }> = [];
+      const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
+        const requestUrl = String(url);
+        if (requestUrl.endsWith("/v1/client/environment-link-challenges")) {
+          return Promise.resolve(Response.json(validLinkChallengeResponse()));
+        }
+        if (requestUrl.endsWith("/v1/client/environment-links")) {
+          return Promise.resolve(Response.json(validLinkResponse("env-direct")));
+        }
+        environmentRequests.push({ url: requestUrl, headers: new Headers(init?.headers) });
+        if (requestUrl.endsWith("/api/connect/link-proof")) {
+          return Promise.resolve(Response.json(validLinkProof()));
+        }
+        return Promise.resolve(
+          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withCloudServices(
+        linkEnvironmentToCloudWithPreference({
+          clerkToken: "clerk-token",
+          connection: directDpopConnection,
+          liveActivitiesEnabled: true,
+        }),
+      );
+
+      expect(
+        environmentRequests.map((request) => ({
+          url: request.url,
+          authorization: request.headers.get("authorization"),
+          dpop: request.headers.get("dpop"),
+        })),
+      ).toEqual([
+        {
+          url: "https://desktop.example.test/api/connect/link-proof",
+          authorization: "DPoP direct-access-token",
+          dpop: "dpop:POST:https://desktop.example.test/api/connect/link-proof",
+        },
+        {
+          url: "https://desktop.example.test/api/connect/relay-config",
+          authorization: "DPoP direct-access-token",
+          dpop: "dpop:POST:https://desktop.example.test/api/connect/relay-config",
+        },
+      ]);
     }),
   );
 });

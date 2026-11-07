@@ -9,6 +9,7 @@ import {
   decodeOrDiscardOrchestrationCache,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
+  makeCatalogCredentialStore,
   removeCatalogValue,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
@@ -35,7 +36,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -526,69 +526,124 @@ interface CatalogStore {
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
+  /** Drops the cached document after another tab or window saved the catalog. */
+  readonly invalidate: () => void;
 }
 
+/**
+ * Every tab and desktop window keeps its own store over one saved document.
+ * `update` reads the saved document before it writes, so a write from another
+ * tab, such as a converted credential, is merged rather than overwritten.
+ */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
+  options: {
+    readonly onWrite?: () => void;
+    /** Serializes read-change-write with other tabs and windows of this origin. */
+    readonly exclusive?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  } = {},
 ) {
-  const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
+  let cached: ConnectionCatalogDocumentType | undefined;
+  let generation = 0;
   const lock = yield* Semaphore.make(1);
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
-      return cached.value;
-    }
+  const readStored = Effect.fn("web.connectionStorage.readCatalog")(function* () {
     const raw = yield* backend.read;
-    let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
-    if (raw !== null && raw.trim() !== "") {
-      catalog = yield* decodeCatalog(raw).pipe(
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
-              error: error.message,
-            });
-            if (backend.quarantine !== undefined) {
-              yield* backend.quarantine(raw).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Could not quarantine the corrupt web connection catalog.", {
-                    error: cause.message,
-                  }),
-                ),
-              );
-            }
-            const encoded = yield* encodeCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT);
-            yield* backend.write(encoded).pipe(
+    if (raw === null || raw.trim() === "") return EMPTY_CONNECTION_CATALOG_DOCUMENT;
+    return yield* decodeCatalog(raw).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
+            error: error.message,
+          });
+          if (backend.quarantine !== undefined) {
+            yield* backend.quarantine(raw).pipe(
               Effect.catch((cause) =>
-                Effect.logWarning("Could not persist the recovered web connection catalog.", {
+                Effect.logWarning("Could not quarantine the corrupt web connection catalog.", {
                   error: cause.message,
                 }),
               ),
             );
-            return EMPTY_CONNECTION_CATALOG_DOCUMENT;
-          }),
-        ),
-      );
-    }
-    yield* Ref.set(state, Option.some(catalog));
+          }
+          const encoded = yield* encodeCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT);
+          yield* backend.write(encoded).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not persist the recovered web connection catalog.", {
+                error: cause.message,
+              }),
+            ),
+          );
+          return EMPTY_CONNECTION_CATALOG_DOCUMENT;
+        }),
+      ),
+    );
+  });
+
+  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+    if (cached !== undefined) return cached;
+    const loadedGeneration = generation;
+    const catalog = yield* readStored();
+    // An invalidation during the read means the document may already be stale.
+    if (loadedGeneration === generation) cached = catalog;
     return catalog;
   });
 
   const read = lock.withPermits(1)(loadUnlocked());
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
+      const exclusive = options.exclusive ?? ((effect) => effect);
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
-          yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
-        }),
+        exclusive(
+          Effect.gen(function* () {
+            const next = transform(yield* readStored());
+            yield* backend.write(yield* encodeCatalog(next));
+            generation++;
+            cached = next;
+            options.onWrite?.();
+          }),
+        ),
       );
     },
   );
+  const invalidate = () => {
+    generation++;
+    cached = undefined;
+  };
 
-  return { read, update } satisfies CatalogStore;
+  return { read, update, invalidate } satisfies CatalogStore;
 });
+
+const CATALOG_CHANGED_CHANNEL = "t3code:connection-catalog-changed";
+const CATALOG_LOCK = "t3code:connection-catalog";
+
+/** Holds a Web Lock shared by every tab and desktop window of this origin while the effect runs. */
+const withCatalogLock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  typeof navigator === "undefined" || navigator.locks === undefined
+    ? effect
+    : Effect.acquireUseRelease(
+        Effect.promise(
+          (signal) =>
+            new Promise<() => void>((granted, refused) => {
+              navigator.locks
+                .request(
+                  CATALOG_LOCK,
+                  { signal },
+                  () => new Promise<void>((release) => granted(release)),
+                )
+                .catch(refused);
+            }),
+        ),
+        () => effect,
+        (release) => Effect.sync(release),
+      );
+
+/** Tells other tabs and desktop windows of this origin when the catalog changes. */
+const makeCatalogChangeChannel = Effect.acquireRelease(
+  Effect.sync(() =>
+    typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(CATALOG_CHANGED_CHANNEL),
+  ),
+  (channel) => Effect.sync(() => channel?.close()),
+);
 
 // The stored names predate the rename and stay, so a tab still on an older version and an
 // updated one read and revoke the same grants.
@@ -717,7 +772,12 @@ export const layer = Layer.effectContext(
       makeDatabaseHandle(),
       (owned) => owned.close,
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const catalogChanges = yield* makeCatalogChangeChannel;
+    const catalog = yield* makeCatalogStore(makeCatalogBackend(database), {
+      onWrite: () => catalogChanges?.postMessage(null),
+      exclusive: withCatalogLock,
+    });
+    if (catalogChanges !== null) catalogChanges.onmessage = catalog.invalidate;
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
@@ -786,33 +846,7 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const credentialStore = CredentialStore.make({
-      get: (connectionId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.credentials.find((entry) => entry.connectionId === connectionId)?.credential,
-            ),
-          ),
-        ),
-      put: (connectionId, credential) =>
-        catalog.update((document) => ({
-          ...document,
-          credentials: replaceCatalogValue(document.credentials, (value) => value.connectionId, {
-            connectionId,
-            credential,
-          }),
-        })),
-      remove: (connectionId) =>
-        catalog.update((document) => ({
-          ...document,
-          credentials: removeCatalogValue(
-            document.credentials,
-            (value) => value.connectionId,
-            connectionId,
-          ),
-        })),
-    });
+    const credentialStore = makeCatalogCredentialStore(catalog);
     const remoteTokenStore = TokenStore.make({
       get: (environmentId) =>
         catalog.read.pipe(

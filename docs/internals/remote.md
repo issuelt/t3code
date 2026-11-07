@@ -48,7 +48,7 @@ A connected server reports the LAN and tailnet addresses it is bound to, and the
 client saves them as learned routes. A learned route reuses the credential of
 the route it was learned over: the T3 Connect access token, which is not bound
 to an origin because each DPoP proof names the URL it signs, or the paired
-bearer token. A paired token only learns a plain HTTP address off the tailnet
+bearer or DPoP token. A paired token only learns a plain HTTP address off the tailnet
 when it was itself paired over plain HTTP, so a token paired over HTTPS never
 starts travelling unencrypted. Learned routes the server stops reporting are
 dropped, which is how a changed LAN address replaces the old one; routes the

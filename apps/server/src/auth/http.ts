@@ -1,5 +1,6 @@
 import {
   authScopeRequiredResponse,
+  AuthAccessTokenType,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
   AuthGrantScope,
@@ -381,7 +382,11 @@ export const layer = HttpApiBuilder.group(
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+            const exchange =
+              args.payload.subject_token_type === AuthAccessTokenType
+                ? serverAuth.exchangeAccessTokenForDpopSession
+                : serverAuth.exchangeBootstrapCredentialForAccessToken;
+            return yield* exchange(
               args.payload.subject_token,
               requestedScopes,
               deriveAuthClientMetadata({

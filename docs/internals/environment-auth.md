@@ -27,6 +27,37 @@ model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
+A DPoP session lasts an hour. A direct client renews it at `/oauth/token` by
+presenting the access token with a proof from the same key. Only subjects that a
+direct pairing creates may renew there, which today means `one-time-token`
+(`DIRECT_PAIRING_SUBJECTS` in `SessionStore.ts`). The rule is an allowlist.
+A bootstrap exchange issues a DPoP session only to such a subject or to a grant
+bound to the client's key, as T3 Connect's are. Any other grant, such as the
+`t3 serve` startup link, gets a bearer with the normal lifetime even when the
+client sent a proof, because a one-hour session it cannot renew would end the
+link after an hour.
+T3 Connect, dev-token, and desktop sessions renew through the authority that
+issued them, so unlinking or rotating that authority still ends them. The server
+accepts a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link
+in use never expires and an idle one pairs again. Renewal copies the subject,
+never widens scopes, and stops when the managed policy disallows remote clients.
+The rows that share a key and a subject form one family. Revoking any row revokes
+the whole family. A device that pairs again with the same key starts a new chain,
+and the pairing revokes the older rows at the new row's issue time. The family
+check refuses only revocations after a row was issued, so the new chain renews. A row revoked alone would leave its predecessors able to
+renew. Sharing & access lists a family by its newest row while that row's
+`expires_at` plus the renewal window is still in the future, because the device
+can renew until then. A policy rollout revokes disallowed subjects in SQL with no
+expiry filter for the same reason.
+
+A bearer session from a pairing link converts to DPoP. The conversion revokes the
+bearer in the same transaction and records it as the successor's predecessor.
+If the response is lost, the same bearer may convert again with the same proof
+key while a successor it created is unrevoked. Any other key, a bearer revoked
+for another reason, and a revoked family stay refused. Expired bearers cannot
+convert. `t3 auth session issue` refuses the pairing subjects, so a CLI bearer
+cannot convert.
+
 ### Guest links are not sessions
 
 A [guest link](../user/guest-links.md) gives one browser read access to one
@@ -68,7 +99,10 @@ parameters only pick targets; see
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
 T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header
-breaks sign-in.
+breaks sign-in. A DPoP proof may also name the URL rebuilt from the first
+`X-Forwarded-Host`, so a proxy that rewrites Host, as nginx does by default, keeps
+direct DPoP links working. Trusting that header is safe there because `ath` binds
+the proof to a token this server signed and `jti` still blocks replay.
 
 Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
 HTTP so long-lived tokens stay out of socket URLs. A ticket names the route it

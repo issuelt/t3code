@@ -732,7 +732,10 @@ export const make = Effect.gen(function* () {
                   state.lastFailure.reason === "authentication")
               ) {
                 yield* scope.supervisor.retryNow;
-              } else if (state.phase === "connected") {
+              } else if (
+                state.phase === "connected" &&
+                registration.credential._tag === "BearerConnectionCredential"
+              ) {
                 const token = registration.credential.token;
                 yield* SubscriptionRef.updateSome(scope.supervisor.prepared, (current) =>
                   Option.isSome(current) &&
