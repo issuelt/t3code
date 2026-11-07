@@ -521,6 +521,7 @@ it.effect("requires operation-specific permissions for Home and ordinary desktop
     );
     const reads = [
       ["orchestrator_capabilities", {}],
+      ["list_scheduled_tasks", {}],
       ["t3_project_list", {}],
       ["t3_project_read", {}],
       ["t3_thread_search", {}],
