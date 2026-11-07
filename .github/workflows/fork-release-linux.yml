@@ -1,0 +1,392 @@
+name: Fork Release Linux
+
+# Linux and Android stages of Fork Release. Callers use this file at @main so
+# the runner group can allowlist it. The runner choice reads only the github
+# context, which a pull request cannot edit.
+#   stage version: resolves the nightly version, tag, and name.
+#   stage build: builds the Linux desktop artifact, plus the APK outside PRs.
+#   stage publish: publishes the prerelease and the over-the-air update.
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: version, build, or publish
+        required: true
+        type: string
+      version:
+        required: false
+        type: string
+        default: ""
+      tag:
+        required: false
+        type: string
+        default: ""
+      name:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      FORK_ANDROID_KEYSTORE:
+        required: false
+      FORK_ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      EXPO_TOKEN:
+        required: false
+    outputs:
+      version:
+        value: ${{ jobs.version.outputs.version }}
+      tag:
+        value: ${{ jobs.version.outputs.tag }}
+      name:
+        value: ${{ jobs.version.outputs.name }}
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    if: inputs.stage == 'version'
+    runs-on: >-
+      ${{ fromJSON(
+        github.repository == 'issuelt/t3code' && (
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        )
+        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        || '"ubuntu-24.04"') }}
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      name: ${{ steps.meta.outputs.name }}
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - id: meta
+        run: |
+          node scripts/resolve-nightly-release.ts \
+            --date "$(date -u +%Y%m%d)" \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --github-output
+
+  desktop-linux:
+    if: inputs.stage == 'build'
+    name: Build linux-x64
+    runs-on: >-
+      ${{ fromJSON(
+        github.repository == 'issuelt/t3code' && (
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        )
+        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        || '"ubuntu-24.04"') }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      # The self-hosted image carries these libraries, and its runner has no sudo.
+      - name: Install Linux desktop build libraries
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      # Limits from ubuntu-runner-build.yml, which fit the runner's 4 GiB job cgroup.
+      - name: Bound build parallelism
+        if: runner.environment != 'github-hosted'
+        run: |
+          {
+            echo "CARGO_BUILD_JOBS=2"
+            echo "XZ_OPT=-T1"
+            echo "NODE_OPTIONS=--max-old-space-size=3072"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: vp install
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      - name: Build desktop artifact
+        shell: bash
+        run: |
+          vp run dist:desktop:artifact \
+            --platform linux \
+            --target AppImage \
+            --arch x64 \
+            --build-version "$VERSION" \
+            --verbose
+
+      # setup-vp selects engines.node from package.json, the version the CLI executable embeds.
+      - name: Build CLI single-executable
+        shell: bash
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor"
+          mkdir -p "$monitor_dir/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$monitor_dir/linux-x64/t3-resource-monitor"
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "$VERSION" \
+            --resource-monitor-dir "$monitor_dir" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-publish
+          for file in release-cli/* release/*.AppImage release/*.deb release/*.blockmap release/*.yml; do
+            [[ "$file" == */builder-debug.yml ]] && continue
+            cp "$file" release-publish/
+          done
+          ls -la release-publish
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-linux-x64
+          path: release-publish/*
+          if-no-files-found: error
+
+  android:
+    if: inputs.stage == 'build' && github.event_name != 'pull_request'
+    runs-on: >-
+      ${{ fromJSON(
+        github.repository == 'issuelt/t3code' && (
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        )
+        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        || '"ubuntu-24.04"') }}
+    env:
+      APP_VARIANT: preview
+      T3CODE_MOBILE_UPDATE_CHANNEL: fork
+      T3CODE_MOBILE_VERSION: ${{ inputs.version }}
+      EXPO_NO_GIT_STATUS: "1"
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Install dependencies
+        run: vp install
+
+      # Current Android phones are arm64; each extra ABI recompiles every native library.
+      - name: Build APK
+        if: runner.environment == 'github-hosted'
+        working-directory: apps/mobile
+        run: |
+          node_modules/.bin/expo prebuild --clean --platform android
+          cd android
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
+            "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
+
+      # The android recipe from ubuntu-runner-build.yml, which fits the runner's 4 GiB job cgroup.
+      - name: Build APK with one worker
+        if: runner.environment != 'github-hosted'
+        working-directory: apps/mobile
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+          CMAKE_BUILD_PARALLEL_LEVEL: "1"
+          EXPO_NO_TELEMETRY: "1"
+        run: |
+          set -euo pipefail
+          node_modules/.bin/expo prebuild --clean --platform android --no-install
+          echo 'react { extraPackagerArgs = ["--max-workers", "1"] }' >> android/app/build.gradle
+          # Ninja pools still cap compilation when Gradle supplies an explicit -j.
+          cat > android/runner-pools.gradle <<'GRADLE'
+          subprojects { project ->
+              ["com.android.application", "com.android.library"].each { pluginId ->
+                  project.plugins.withId(pluginId) {
+                      project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                          android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                              "-DCMAKE_JOB_POOLS=runner_pool=1",
+                              "-DCMAKE_JOB_POOL_COMPILE=runner_pool",
+                              "-DCMAKE_JOB_POOL_LINK=runner_pool"
+                          ])
+                      }
+                  }
+              }
+          }
+          GRADLE
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("android/build.gradle")
+          text = path.read_text()
+          marker = 'apply plugin: "expo-root-project"'
+          if text.count(marker) != 1:
+              raise SystemExit("Expected one Expo root plugin application")
+          path.write_text(text.replace(marker, 'apply from: "runner-pools.gradle"\n\n' + marker))
+          PY
+          cd android
+          ./gradlew assembleRelease --no-daemon --no-parallel --max-workers=1 \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.builder.sdkDownload=false \
+            -Dorg.gradle.java.installations.auto-download=false \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError'
+
+      # Android installs an update only when it is signed with the installed
+      # app's key, so every release APK is re-signed with the fork release key.
+      - name: Sign APK with the fork release key
+        env:
+          KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.p12"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          mkdir -p release-android
+          apk="release-android/T3-Code-$VERSION-android.apk"
+          "$apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias t3code-fork --out "$apk" \
+            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          rm "$RUNNER_TEMP/release.p12"
+          "$apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          grep -q "SHA-256 digest: 1efbb2ba4b48bd062959684e8bf4b955576e16b907f8853e0490d289a5cf0d22" "$RUNNER_TEMP/certs.txt"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-apk
+          path: release-android/*.apk
+          if-no-files-found: error
+
+  # Stays hosted: it holds contents: write and runs gh, which the runner image lacks.
+  publish:
+    if: inputs.stage == 'publish' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: android-apk
+          path: release-assets
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          NAME: ${{ inputs.name }}
+        run: |
+          set -euo pipefail
+          ls release-assets/nightly-mac.yml release-assets/nightly-linux.yml release-assets/nightly.yml
+          (cd release-assets && sha256sum t3-*.tar.gz t3-*.zip > SHA256SUMS && cat SHA256SUMS)
+          gh release create "$TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$NAME" \
+            --notes "Fork nightly built from $GITHUB_SHA." \
+            --prerelease
+
+  # Ships JavaScript to installed Android builds whose native fingerprint
+  # matches this commit. After a native change the fingerprint differs, and
+  # those phones take the release APK instead.
+  mobile-update:
+    needs: publish
+    if: inputs.stage == 'publish'
+    runs-on: >-
+      ${{ fromJSON(
+        github.repository == 'issuelt/t3code' && (
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        )
+        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        || '"ubuntu-24.04"') }}
+    env:
+      APP_VARIANT: preview
+      T3CODE_MOBILE_UPDATE_CHANNEL: fork
+      T3CODE_MOBILE_VERSION: ${{ inputs.version }}
+      EXPO_NO_GIT_STATUS: "1"
+    steps:
+      - name: Checkout
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install dependencies
+        run: vp install
+
+      - name: Publish over-the-air update
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          NAME: ${{ inputs.name }}
+        run: |
+          npx --yes eas-cli@latest update \
+            --channel fork \
+            --platform android \
+            --message "$NAME" \
+            --non-interactive

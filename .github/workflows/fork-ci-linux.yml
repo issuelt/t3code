@@ -1,0 +1,75 @@
+name: Fork CI Linux
+
+# Callers use this file at @main so the runner group can allowlist it. The
+# runner choice reads only the github context, which a pull request cannot edit.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Fork changed-file checks
+    runs-on: >-
+      ${{ fromJSON(
+        github.repository == 'issuelt/t3code' && (
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        )
+        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
+        || '"ubuntu-24.04"') }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # A merge whose tree equals a pull request head that already passed was tested there.
+      - name: Skip a push whose tree already passed its pull request
+        id: gate
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          api() {
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$1"
+          }
+          tree="$(api "commits/$GITHUB_SHA" | jq -r .commit.tree.sha)" || exit 0
+          heads="$(api "commits/$GITHUB_SHA/pulls" | jq -r '.[] | select(.merged_at != null) | .head.sha')" || exit 0
+          for head in $heads; do
+            [[ "$(api "commits/$head" | jq -r .commit.tree.sha)" == "$tree" ]] || continue
+            passed="$(api "actions/workflows/fork-ci.yml/runs?event=pull_request&status=success&head_sha=$head" | jq -r .total_count)" || continue
+            if [[ "$passed" =~ ^[1-9] ]]; then
+              echo "Tree $tree already passed Fork CI at pull request head $head."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          fetch-depth: 0
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      # The self-hosted runner has no sudo, and its image carries the browser libraries.
+      - name: Install test browsers
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          WITH_DEPS: ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }}
+        run: |
+          # shellcheck disable=SC2086
+          node apps/web/node_modules/playwright/cli.js install $WITH_DEPS --only-shell chromium
+          node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+      - name: Check changed files
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        # Upstream syncs change hundreds of test files; the default 900s step limit cannot fit them.
+        run: vp run check:changed "$BASE_REF" --timeout 2400
