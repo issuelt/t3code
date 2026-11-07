@@ -205,6 +205,87 @@ describe("quietThreadAtom", () => {
 describe("timelineVisibleTurnItemsAtom", () => {
   const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
 
+  it("shows historical queued agent messages until a persisted item replaces them", () => {
+    const message = {
+      id: MessageId.make("queued-agent"),
+      threadId: v2ThreadId,
+      runId: RunId.make("queued-run"),
+      nodeId: null,
+      role: "user" as const,
+      text: "Review ready",
+      attachments: [],
+      streaming: false,
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+      senderThreadId: v2ThreadId,
+      createdAt: v2Now,
+      updatedAt: v2Now,
+    };
+    const run = {
+      id: RunId.make("queued-run"),
+      threadId: v2ThreadId,
+      ordinal: 2,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: message.id,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "queued" as const,
+      queueHeld: true,
+      requestedAt: v2Now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const initial = { ...withItem(assistant), messages: [message], runs: [run] };
+    const state = Atom.make(
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some<OrchestrationV2ThreadProjection>(initial),
+      }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    const timeline = details.timelineVisibleTurnItemsAtom(ref);
+    const quiet = details.quietVisibleTurnItemsAtom(ref);
+    registry.mount(timeline);
+    registry.mount(quiet);
+    expect(registry.get(timeline)).toHaveLength(2);
+    expect(registry.get(quiet)).toHaveLength(2);
+    expect(registry.get(timeline)[1]?.item).toMatchObject({
+      type: "user_message",
+      text: message.text,
+      status: "pending",
+      senderThreadId: v2ThreadId,
+    });
+    const pending = registry.get(timeline)[1];
+    if (pending === undefined) throw new Error("Missing pending agent row");
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some({
+          ...initial,
+          turnItems: [...initial.turnItems, pending.item],
+          visibleTurnItems: [...initial.visibleTurnItems, pending],
+        }),
+      }),
+    );
+    expect(registry.get(timeline)).toHaveLength(2);
+    registry.set(
+      state,
+      AsyncResult.success({
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        data: Option.some({ ...initial, runs: [{ ...run, status: "cancelled" as const }] }),
+      }),
+    );
+    expect(registry.get(timeline)).toHaveLength(1);
+    expect(registry.get(quiet)).toHaveLength(1);
+  });
+
   it("holds through streamed assistant text while the message reads its own text", () => {
     const stateAtom = Atom.make(
       AsyncResult.success({
