@@ -33,14 +33,17 @@ jobs:
         ) }}
     steps:
       # This file runs from main, so the router comes from main too, never from a pull request.
+      # A plain fetch: actions/checkout without persisted credentials trips on the .repos/ gitlinks.
       - name: Check out the router from main
         if: env.TRUSTED == 'true'
         continue-on-error: true
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
-        with:
-          ref: refs/heads/main
-          sparse-checkout: .github/scripts
-          persist-credentials: false
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
       - name: Decide
         id: decide
         if: env.TRUSTED == 'true'
