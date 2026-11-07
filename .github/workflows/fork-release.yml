@@ -201,6 +201,7 @@ jobs:
     secrets:
       FORK_ANDROID_KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
       FORK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
 
   publish:
     if: github.event_name != 'pull_request'
@@ -216,3 +217,4 @@ jobs:
       name: ${{ needs.version.outputs.name }}
     secrets:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
