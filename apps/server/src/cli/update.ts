@@ -181,8 +181,21 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) return Option.none<string>();
-  const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
+  // Fully resolved, through chained links and a symlinked T3 home alike. A dangling link keeps
+  // its first hop, since the runtime it names may already be pruned.
+  const launchedAs = input.launchedAs;
+  const resolvedTarget = yield* fs
+    .realPath(launchedAs)
+    .pipe(Effect.orElseSucceed(() => path.resolve(path.dirname(launchedAs), linkTarget.value)));
+  const realVersionsDir = yield* fs
+    .realPath(versionsDir)
+    .pipe(Effect.orElseSucceed(() => versionsDir));
+  if (
+    !ownsTarget(resolvedTarget) &&
+    !launcherOwnsVersionsDir(path, realVersionsDir, resolvedTarget)
+  ) {
+    return Option.none<string>();
+  }
   yield* remember(input.launchedAs);
   const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
   yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
@@ -202,8 +215,13 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 export const repointRecordedLaunchers = Effect.fn("cli.update.repoint_recorded_launchers")(
   function* (input: { readonly baseDir: string; readonly targetEntryPath: string }) {
     if ((yield* HostProcess.Platform) === "win32") return [];
+    const fs = yield* FileSystem.FileSystem;
+    const realTarget = yield* fs.realPath(input.targetEntryPath).pipe(Effect.option);
     const repointed: Array<string> = [];
     for (const launcher of yield* recordedPinnedRuntimeLaunchers(input.baseDir)) {
+      // An update to the version already running finds most launchers in place.
+      const current = yield* fs.realPath(launcher).pipe(Effect.option);
+      if (Option.isSome(current) && Option.getOrUndefined(realTarget) === current.value) continue;
       const result = yield* repointLauncher({ launchedAs: launcher, ...input }).pipe(
         Effect.catch((error) =>
           Effect.logWarning(error.reason).pipe(Effect.as(Option.none<string>())),
@@ -465,6 +483,21 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
         ? `t3 and its background service are already on ${targetVersion} (${targetChannel}).`
         : `t3 is already on ${targetVersion} (${targetChannel}).`,
     );
+    // Started from a versioned binary, so a recorded launcher may still name an older runtime.
+    const current = pinnedRuntimePaths(path, input.baseDir, targetVersion, platform);
+    const installed = yield* fs.readFileString(current.sentinelPath).pipe(
+      Effect.map((sentinel) => sentinel.trim() === targetVersion),
+      Effect.orElseSucceed(() => false),
+    );
+    if (installed) {
+      const moved = yield* repointRecordedLaunchers({
+        baseDir: input.baseDir,
+        targetEntryPath: current.entryPath,
+      });
+      for (const launcher of moved) {
+        yield* Console.log(`  Moved ${launcher} to ${targetVersion}.`);
+      }
+    }
     return;
   }
   if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, newestInstalled) < 0) {

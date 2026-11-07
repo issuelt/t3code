@@ -251,6 +251,35 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
+  it.effect("repoints a recorded launcher that reaches the runtime through another symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const realRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      // The T3 home is a symlink, so the fully resolved runtime path names the real directory.
+      const root = path.join(realRoot, "home-link");
+      yield* fs.makeDirectory(path.join(realRoot, "home"));
+      yield* fs.symlink(path.join(realRoot, "home"), root);
+      const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
+      const newExe = path.join(root, "runtime/versions/2.0.0/t3");
+      for (const file of [oldExe, newExe]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      const alias = path.join(root, "bin/alias-t3");
+      const launcher = path.join(root, "bin/t3");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.symlink(oldExe, alias);
+      yield* fs.symlink(alias, launcher);
+      yield* fs.writeFileString(path.join(root, "runtime/launchers"), `${launcher}\n`);
+
+      const repointed = yield* repointRecordedLaunchers({ baseDir: root, targetEntryPath: newExe });
+
+      assert.deepStrictEqual(repointed, [launcher]);
+      assert.equal(yield* fs.readLink(launcher), newExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
   it.effect.each([
     { name: "no launcher records", recorded: undefined },
     { name: "an empty launcher record", recorded: "" },
@@ -555,6 +584,72 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
         output,
         `Background service still running the version before ${version}. Run \`t3 service restart\` when you are ready to switch it to ${version}.`,
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
+  );
+
+  it.effect("moves recorded launchers when t3 and the service are already current", () =>
+    Effect.gen(function* () {
+      yield* withoutTerminals;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const version = packageJson.version;
+      const runtime = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const oldExe = path.join(baseDir, "runtime/versions/0.0.1/t3");
+      for (const file of [runtime.entryPath, oldExe]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+      // A launcher an earlier update recorded still points at the old runtime.
+      const launcher = path.join(baseDir, "bin/t3");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.symlink(oldExe, launcher);
+      yield* fs.writeFileString(path.join(baseDir, "runtime/launchers"), `${launcher}\n`);
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: true,
+          current: true,
+          installedVersion: version,
+          installedBaseDir: baseDir,
+          problems: [],
+          unitPath: path.join(baseDir, "t3code.service"),
+          logPath: path.join(baseDir, "boot-service.log"),
+        }),
+      });
+
+      const output = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: version,
+        allowDowngrade: false,
+        assumeYes: false,
+      }).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, unrelatedLsof),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      assert.include(output, "already on");
+      assert.equal(yield* fs.readLink(launcher), runtime.entryPath);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "linux"),
