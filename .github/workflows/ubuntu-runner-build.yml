@@ -1,0 +1,268 @@
+name: Ubuntu runner build proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build proof to run
+        required: true
+        type: choice
+        default: linux
+        options:
+          - linux
+          - android
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-runner-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'issuelt/t3code' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.target == 'linux' || inputs.target == 'android')
+    # Conf must restrict this group to this workflow at refs/heads/main.
+    runs-on:
+      group: conf-ubuntu-t3code
+      labels: issuelt-t3code-ubuntu24
+    timeout-minutes: ${{ inputs.target == 'linux' && 90 || 120 }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: "1"
+      VP_REMOTE_CACHE: "off"
+      NODE_OPTIONS: --max-old-space-size=1536
+      CARGO_BUILD_JOBS: "2"
+      RUST_TEST_THREADS: "1"
+      CMAKE_BUILD_PARALLEL_LEVEL: "1"
+      RAYON_NUM_THREADS: "1"
+      npm_config_jobs: "1"
+      npm_config_child_concurrency: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      PROOF_TARGET: ${{ inputs.target }}
+      PROOF_VERSION: 0.0.0-runner-proof
+    steps:
+      - name: Require provisioned tools and enforced runner limits
+        id: preflight
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$GITHUB_REPOSITORY" == issuelt/t3code && "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || fail 'Only issuelt/t3code main dispatch is supported'
+          [[ "$(uname -m)" == x86_64 && "$(uname -s)" == Linux ]] || fail 'Requires Linux x86_64'
+          # shellcheck source=/dev/null
+          . /etc/os-release
+          [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || fail 'Requires Ubuntu 24.04'
+          [[ "$EUID" != 0 ]] || fail 'Runner must be unprivileged'
+          for tool in node vp pnpm git python3 timeout sha256sum tar unzip zip xz make cc c++ pkg-config; do
+            command -v "$tool" >/dev/null || fail "Missing provisioned tool: $tool"
+          done
+          [[ -x /usr/bin/time ]] || fail 'Missing GNU time'
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          def require(ok, message):
+              if not ok:
+                  raise SystemExit(f"::error::{message}")
+
+          require("NoNewPrivs:\t1" in Path("/proc/self/status").read_text(), "Runner must enforce NoNewPrivileges")
+          entry = next((line[3:] for line in Path("/proc/self/cgroup").read_text().splitlines() if line.startswith("0::")), None)
+          require(entry is not None, "Requires cgroup v2")
+          root = Path("/sys/fs/cgroup")
+          current = root / entry.lstrip("/")
+          limits = {"memory.high": 4 * 1024**3, "memory.max": 4500 * 1024**2, "memory.swap.max": 8 * 1024**3}
+          bounded = None
+          for candidate in [current, *current.parents]:
+              if candidate == root or root not in candidate.parents:
+                  break
+              files = [candidate / name for name in [*limits, "cpu.max"]]
+              if not all(path.is_file() for path in files):
+                  continue
+              values = {name: (candidate / name).read_text().strip() for name in limits}
+              quota, period = (candidate / "cpu.max").read_text().split()
+              if not all(value.isdigit() and 0 < int(value) <= limits[name] for name, value in values.items()):
+                  continue
+              if quota == "max" or not 0 < int(quota) <= 4 * int(period):
+                  continue
+              require(not any(os.access(path, os.W_OK) for path in files), "Runner can change its own resource bounds")
+              bounded = candidate
+              print(f"Enforced cgroup: {candidate}, CPU {quota}/{period}, {values}")
+              break
+          require(bounded is not None, "Conf must enforce CPUQuota<=400%, MemoryHigh<=4G, MemoryMax<=4500M, MemorySwapMax<=8G on the runner service")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"PROOF_CGROUP={bounded}\n")
+          PY
+          if [[ "$PROOF_TARGET" == linux ]]; then
+            for tool in cargo rustc rustup patchelf; do
+              command -v "$tool" >/dev/null || fail "Missing provisioned tool: $tool"
+            done
+            command -v magick >/dev/null || command -v convert >/dev/null || fail 'Missing ImageMagick'
+            pkg-config --exists libsecret-1 || fail 'Missing libsecret development files'
+            rustup target list --installed | grep -Fx x86_64-unknown-linux-gnu
+          else
+            command -v java >/dev/null || fail 'Missing JDK 17'
+            java -version 2>&1 | grep -E 'version "17[.]' || fail 'Requires JDK 17'
+            [[ -n "${ANDROID_HOME:-}" && "${ANDROID_SDK_ROOT:-}" == "$ANDROID_HOME" ]] || fail 'Set both Android SDK paths to the provisioned SDK'
+            for file in platforms/android-37/android.jar build-tools/37.0.0/aapt ndk/27.1.12297006/source.properties cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja licenses/android-sdk-license; do
+              [[ -s "$ANDROID_HOME/$file" ]] || fail "Missing provisioned SDK component: $file"
+            done
+            for tool in build-tools/37.0.0/aapt cmake/3.22.1/bin/cmake cmake/3.22.1/bin/ninja; do
+              [[ -x "$ANDROID_HOME/$tool" ]] || fail "SDK tool is not executable: $tool"
+            done
+          fi
+          free -h
+          df -h . "$RUNNER_TEMP"
+
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        timeout-minutes: 5
+        with:
+          repository: issuelt/t3code
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Restore locked project dependencies
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          node --input-type=module - <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (process.versions.node !== pkg.engines.node) throw new Error(`Provision Node ${pkg.engines.node}`);
+          const pnpm = execFileSync('pnpm', ['--version'], { encoding: 'utf8' }).trim();
+          if (`pnpm@${pnpm}` !== pkg.packageManager) throw new Error(`Provision ${pkg.packageManager}`);
+          JS
+          [[ ! -e runner-proof ]] || { echo '::error::Proof output must be fresh'; exit 1; }
+          mkdir runner-proof
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 18m \
+            vp install --frozen-lockfile 2>&1 | tee runner-proof/dependencies.log
+          git diff --exit-code -- pnpm-lock.yaml
+
+      - name: Test and package Linux desktop
+        if: inputs.target == 'linux'
+        timeout-minutes: 65
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+          APP_VERSION: 0.0.0-runner-proof
+          # XZ_OPT overrides the packager's XZ_DEFAULTS=-T0.
+          XZ_OPT: -T1
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 63m bash -euo pipefail <<'BUILD' 2>&1 | tee runner-proof/linux.log
+          cargo test --locked --manifest-path native/resource-monitor/Cargo.toml --jobs 2 2>&1 | tee runner-proof/rust-tests.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' runner-proof/rust-tests.log
+          node scripts/update-release-package-versions.ts "$PROOF_VERSION"
+          vp run --concurrency-limit 1 --filter @t3tools/desktop --filter t3 build
+          vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 \
+            --build-version "$PROOF_VERSION" --skip-build --output-dir runner-proof/artifacts --verbose
+          shopt -s nullglob
+          artifacts=(runner-proof/artifacts/*.AppImage)
+          [[ ${#artifacts[@]} -gt 0 ]] || { echo '::error::No AppImage produced'; exit 1; }
+          for artifact in "${artifacts[@]}"; do test -s "$artifact"; done
+          (cd runner-proof/artifacts && sha256sum ./*.AppImage > SHA256SUMS && sha256sum --check SHA256SUMS)
+          BUILD
+
+      - name: Assemble and inspect unsigned Android APK
+        if: inputs.target == 'android'
+        timeout-minutes: 95
+        env:
+          APP_VARIANT: preview
+          T3CODE_MOBILE_UPDATE_CHANNEL: fork
+          T3CODE_MOBILE_VERSION: 0.0.0-runner-proof
+          EXPO_NO_GIT_STATUS: "1"
+          EXPO_NO_TELEMETRY: "1"
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v timeout --signal=TERM --kill-after=30s 93m bash -euo pipefail <<'BUILD' 2>&1 | tee runner-proof/android.log
+          cd apps/mobile
+          node_modules/.bin/expo prebuild --clean --platform android --no-install
+          cat >> android/app/build.gradle <<'GRADLE'
+          react { extraPackagerArgs = ["--max-workers", "1"] }
+          android.buildTypes.release.signingConfig = null
+          GRADLE
+          # Ninja pools still cap compilation when Gradle supplies an explicit -j.
+          cat >> android/build.gradle <<'GRADLE'
+          subprojects { project ->
+              ["com.android.application", "com.android.library"].each { pluginId ->
+                  project.plugins.withId(pluginId) {
+                      project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                          android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                              "-DCMAKE_JOB_POOLS=runner_proof=1",
+                              "-DCMAKE_JOB_POOL_COMPILE=runner_proof",
+                              "-DCMAKE_JOB_POOL_LINK=runner_proof"
+                          ])
+                      }
+                  }
+              }
+          }
+          GRADLE
+          cat > android/runner-proof.init.gradle <<'GRADLE'
+          gradle.settingsEvaluated {
+              def heap = Runtime.runtime.maxMemory()
+              assert heap > 2900L * 1024 * 1024 && heap <= 3072L * 1024 * 1024 : "Unexpected Gradle heap: ${heap}"
+              println "Runner proof Gradle max heap: ${heap}"
+          }
+          GRADLE
+          cp android/runner-proof.init.gradle ../../runner-proof/
+          cp android/gradle.properties ../../runner-proof/generated-gradle.properties
+          cp android/build.gradle ../../runner-proof/root-build.gradle
+          cp android/app/build.gradle ../../runner-proof/app-build.gradle
+          cd android
+          ./gradlew assembleRelease --no-daemon --no-parallel --max-workers=1 --info \
+            --init-script runner-proof.init.gradle \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.builder.sdkDownload=false \
+            -Dorg.gradle.java.installations.auto-download=false \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError'
+          cd ../../..
+          mkdir -p runner-proof/artifacts
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > runner-proof/apk-badging.txt
+          cat runner-proof/apk-badging.txt
+          grep -F "package: name='com.t3tools.t3code.preview'" runner-proof/apk-badging.txt
+          grep -F "versionName='$PROOF_VERSION'" runner-proof/apk-badging.txt
+          grep -Fx "native-code: 'arm64-v8a'" runner-proof/apk-badging.txt
+          unzip -t "$apk"
+          cp "$apk" runner-proof/artifacts/
+          (cd runner-proof/artifacts && sha256sum ./*.apk > SHA256SUMS && sha256sum --check SHA256SUMS)
+          BUILD
+
+      - name: Record final resource counters
+        if: always() && steps.preflight.outcome == 'success'
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          mkdir -p runner-proof
+          {
+            free -h
+            df -h . "$RUNNER_TEMP"
+            for counter in memory.peak memory.events memory.swap.peak cpu.stat; do
+              if [[ -r "$PROOF_CGROUP/$counter" ]]; then
+                echo "$counter"
+                cat "$PROOF_CGROUP/$counter"
+              fi
+            done
+          } | tee runner-proof/resources.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always() && steps.preflight.outcome == 'success'
+        timeout-minutes: 5
+        with:
+          name: ubuntu-runner-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: runner-proof/
+          if-no-files-found: error
+          retention-days: 7
