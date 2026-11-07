@@ -58,7 +58,8 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         with:
           node-version-file: package.json
-          cache: true
+          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
+          cache: ${{ runner.environment == 'github-hosted' }}
           run-install: true
       # The self-hosted runner has no sudo, and its image carries the browser libraries.
       - name: Install test browsers

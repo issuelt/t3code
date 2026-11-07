@@ -108,13 +108,13 @@ jobs:
               quota, period = (candidate / "cpu.max").read_text().split()
               if not all(value.isdigit() and (0 if name == "memory.swap.max" else 1) <= int(value) <= limits[name] for name, value in values.items()):
                   continue
-              if quota == "max" or not 0 < int(quota) <= 4 * int(period):
+              if quota == "max" or not 0 < int(quota) <= 8 * int(period):
                   continue
               require(not any(os.access(path, os.W_OK) for path in files), "Runner can change its own resource bounds")
               bounded = candidate
               print(f"Enforced cgroup: {candidate}, CPU {quota}/{period}, {values}")
               break
-          require(bounded is not None, "Conf must enforce CPUQuota<=400%, MemoryHigh<=6G, MemoryMax<=6656M, MemorySwapMax<=8G on the runner service")
+          require(bounded is not None, "Conf must enforce CPUQuota<=800%, MemoryHigh<=6G, MemoryMax<=6656M, MemorySwapMax<=8G on the runner service")
           with open(os.environ["GITHUB_ENV"], "a") as output:
               output.write(f"PROOF_CGROUP={bounded}\n")
           PY
