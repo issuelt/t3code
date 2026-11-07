@@ -5,6 +5,11 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  RpcScopeAuthorization,
+  ScheduledTask,
+  WS_METHODS,
   EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestrationV2Run,
@@ -50,6 +55,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -224,6 +230,8 @@ const boxProjects = (seen: Ref.Ref<Seen>) =>
  * OAuth. `linkSession` is filled in once A links, so B's fixture thread reads
  * as one that link started.
  */
+const decodeScheduledTask = Schema.decodeUnknownSync(ScheduledTask);
+
 const boxTools = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
   Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
@@ -255,7 +263,42 @@ const boxTools = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
         list: () => Effect.succeed([]),
       }),
     ),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+        list: () =>
+          Effect.succeed({
+            tasks: [
+              decodeScheduledTask({
+                id: "webhook-fixture",
+                title: "Webhook fixture",
+                prompt: "Run fixture",
+                enabled: true,
+                schedule: { type: "webhook", signature: null },
+                projectId: boxProject,
+                threadId: null,
+                workspaceStrategy: { type: "root" },
+                modelSelection: { instanceId: "codex", model: "fixture" },
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                createdBy: "user",
+                creationSource: "web",
+                createdAt: "2026-11-07T00:00:00.000Z",
+                updatedAt: "2026-11-07T00:00:00.000Z",
+                nextRunAt: null,
+                lastRunAt: null,
+                lastRunStatus: "never",
+                lastRunError: null,
+                runCount: 0,
+                webhook: {
+                  path: "/hooks/fixture",
+                  url: "https://example.invalid/hooks/fixture",
+                  hasSecret: false,
+                },
+              }),
+            ],
+          }),
+      }),
+    ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(ServerSettings.layerTest()),
@@ -1175,6 +1218,32 @@ it.effect("desktop calls retain ordinary caller permissions at both route bounda
         expect(Exit.isFailure(denied) && Cause.squash(denied.cause)).toMatchObject({
           code: "capability_denied",
         });
+      }
+      for (const [scopes, readOnly, exposesTrigger] of [
+        [[AuthOrchestrationReadScope], false, false],
+        [[AuthOrchestrationReadScope], true, false],
+        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], true, false],
+        [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], false, true],
+      ] as const) {
+        const input = {
+          mcp: {
+            tool: "list_scheduled_tasks",
+            arguments: {},
+            namespace: "ordinary-caller",
+            readOnly,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        } as const;
+        const authorize = yield* RpcScopeAuthorization.pipe(
+          Effect.provide(RpcAuthorization.layer(scopes)),
+        );
+        const result = yield* authorize(a.destination.invoke(input, "read-destination"), {
+          rpc: { _tag: WS_METHODS.fleetInvoke },
+          payload: input,
+        });
+        expect(result).toMatchObject({ tasks: [{ scheduledTaskId: "webhook-fixture" }] });
+        expect(JSON.stringify(result).includes("webhookUrl")).toBe(exposesTrigger);
       }
     }),
   ),
