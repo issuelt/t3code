@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { AsyncResult } from "effect/reactivity";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
@@ -59,6 +60,7 @@ import {
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
+  AuthOrchestrationOperateScope,
   isAgentDeliveredMessage,
   type ScheduledTaskId,
   type ScopedThreadRef,
@@ -249,7 +251,11 @@ import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  usePreparedConnection,
+} from "../../state/session";
 import { projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
@@ -1497,8 +1503,9 @@ function DiscardAgentMessageButton(props: {
     }),
   );
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "discard agent message");
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const [busy, setBusy] = useState(false);
-  if (workflow?.discardableAgentRunIds.has(props.runId) !== true) return null;
+  if (!canOperate || workflow?.discardableAgentRunIds.has(props.runId) !== true) return null;
   return (
     <Pressable
       accessibilityRole="button"
@@ -1508,11 +1515,17 @@ function DiscardAgentMessageButton(props: {
       className="self-start px-3.5 pb-2.5 active:opacity-70 disabled:opacity-40"
       onPress={async () => {
         setBusy(true);
-        await cancel({
+        const result = await cancel({
           environmentId: props.environmentId,
           input: { threadId: props.threadId, runId: props.runId },
         });
         setBusy(false);
+        if (AsyncResult.isFailure(result)) {
+          Dialog.alert(
+            "Could not discard the message",
+            "It is still queued and will reach the agent. Try again.",
+          );
+        }
       }}
     >
       <Text className="font-t3-medium text-xs text-danger-foreground">Discard</Text>

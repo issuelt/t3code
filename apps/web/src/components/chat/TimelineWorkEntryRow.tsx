@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/reactivity";
+import { toastManager } from "../ui/toast";
 import {
   watchReportHeading,
   watchReportMarkdown,
@@ -224,11 +226,18 @@ function DiscardAgentMessageButton({
       onClick={async (event) => {
         event.stopPropagation();
         setBusy(true);
-        await cancel({
+        const result = await cancel({
           environmentId: threadRef.environmentId,
           input: { threadId: threadRef.threadId, runId },
         });
         setBusy(false);
+        if (AsyncResult.isFailure(result)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not discard the message",
+            description: "It is still queued and will reach the agent. Try again.",
+          });
+        }
       }}
       onKeyDown={stopRowToggle}
     >
