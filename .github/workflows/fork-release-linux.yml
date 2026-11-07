@@ -191,6 +191,16 @@ jobs:
       - name: Install dependencies
         run: vp install
 
+      - name: Use VM104's warm Cargo targets
+        if: runner.environment != 'github-hosted'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cache in "$HOME"/.cache/ci-cargo-target/*/; do
+            crate=$(basename "$cache")
+            if [[ -f native/$crate/Cargo.toml ]]; then ln -sfn "${cache%/}" "native/$crate/target"; fi
+          done
+
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "$VERSION"
 
