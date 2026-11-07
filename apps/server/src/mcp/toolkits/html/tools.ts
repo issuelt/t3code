@@ -21,7 +21,7 @@ const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_0
 });
 
 const EMBED_RULE =
-  "The page is sandboxed with no cookies, storage, or frames, so third-party widgets and iframe embeds render blank. Fetch the data and draw charts in the page.";
+  "The page runs in a sandbox without cookies or storage, where hosted widgets such as embedded trading or social charts usually render blank. Do not embed them. Fetch the data and draw the chart in the page with a charting library.";
 const PAGE_RULES = `Inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is. ${EMBED_RULE}`;
 
 export const HtmlPreviewTool = Tool.make("html_preview", {
