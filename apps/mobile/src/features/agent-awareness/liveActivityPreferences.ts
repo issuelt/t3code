@@ -14,7 +14,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
     const linkedConnections = input.connections.filter(
-      (connection) => connection.bearerToken !== null,
+      (connection) => connection.relayManaged !== true,
     );
 
     const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (

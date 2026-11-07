@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  createRuntimeCommand,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
   settleAsyncResult,
@@ -40,6 +41,7 @@ import {
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -49,6 +51,12 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+
+const setLiveActivityUpdatesCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "settings:set-live-activity-updates",
+  execute: (input: Parameters<typeof setLiveActivityUpdatesEnabled>[0]) =>
+    setLiveActivityUpdatesEnabled(input),
+});
 
 /**
  * A policy that turns Connect off refuses relay links and preferences, which would fail the
@@ -289,17 +297,13 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       return;
     }
 
-    const updateResult = await settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
-          enabled: true,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: tokenResult.value,
-          connections,
-        }),
-      ),
-    );
+    const updateResult = await setLiveActivityUpdatesCommand.run(appAtomRegistry, {
+      canConfigureEnvironment: canLinkEnvironmentToConnect,
+      enabled: true,
+      previousEnabled: liveActivitiesPreferenceEnabled,
+      clerkToken: tokenResult.value,
+      connections,
+    });
     if (updateResult._tag === "Failure") {
       setLiveActivityStatus("disabled");
       if (!isAtomCommandInterrupted(updateResult)) {
@@ -367,17 +371,13 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       token = tokenResult.value;
     }
 
-    const updateResult = await settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
-          enabled: false,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: token,
-          connections,
-        }),
-      ),
-    );
+    const updateResult = await setLiveActivityUpdatesCommand.run(appAtomRegistry, {
+      canConfigureEnvironment: canLinkEnvironmentToConnect,
+      enabled: false,
+      previousEnabled: liveActivitiesPreferenceEnabled,
+      clerkToken: token,
+      connections,
+    });
     if (updateResult._tag === "Failure") {
       setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
       reportAtomCommandResult(updateResult, {
