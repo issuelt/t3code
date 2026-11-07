@@ -1673,7 +1673,9 @@ it.live("revoking a session ends the desktop relay connected with it", () =>
             Layer.mock(UsageLimitSources.UsageLimitSources)({}),
             Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
             Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/unused",
+            }),
             Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
             Layer.mock(ServerEnvironment.ServerEnvironment)({}),
             Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
@@ -1734,10 +1736,10 @@ it.live("revoking a session ends the desktop relay connected with it", () =>
 
     yield* sessions.revoke(desktop.sessionId);
 
-    const failure = yield* Fiber.join(pending).pipe(Effect.flip);
+    const failure = yield* Fiber.join(pending).pipe(Effect.asVoid, Effect.flip);
     assert.equal(failure.code, "environment_unavailable");
     assert.include(failure.message, "disconnected");
-    const after = yield* broker.invoke(relayed, invoke).pipe(Effect.flip);
+    const after = yield* broker.invoke(relayed, invoke).pipe(Effect.asVoid, Effect.flip);
     assert.include(after.message, "No desktop window");
     assert.isFalse((yield* broker.reach).hostConnected);
     assert.isTrue(Exit.isFailure(yield* Deferred.await(relayEnded)));
@@ -1753,8 +1755,10 @@ it.live("revoking a session ends the desktop relay connected with it", () =>
             }),
           ),
         ),
-        NodeHttpServer.layerTest,
-      ).pipe(Layer.provideMerge(Layer.fresh(layerConfigSources))),
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provideMerge(Layer.fresh(layerConfigSources)),
+      ),
     ),
     Effect.scoped,
   ),
