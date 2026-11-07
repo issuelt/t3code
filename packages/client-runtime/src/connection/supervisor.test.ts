@@ -1711,6 +1711,83 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect(
+    "blocks when a direct route refuses this device even if another direct route timed out",
+    () =>
+      Effect.gen(function* () {
+        const tailnetTarget = new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "bearer:tailnet",
+        });
+        // Away from home: the LAN address times out while the tailnet address refuses the expired pairing.
+        const entry: ConnectionCatalogEntry = {
+          ...LAN_THEN_RELAY_ENTRY,
+          alternateRoutes: [
+            {
+              target: tailnetTarget,
+              profile: Option.some(
+                new BearerConnectionProfile({
+                  connectionId: tailnetTarget.connectionId,
+                  environmentId: TARGET.environmentId,
+                  label: TARGET.label,
+                  httpBaseUrl: "http://100.100.1.2:3773/",
+                  wsBaseUrl: "ws://100.100.1.2:3773/",
+                  network: "tailscale",
+                }),
+              ),
+            },
+          ],
+        };
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "BearerConnectionTarget" &&
+            target.connectionId === tailnetTarget.connectionId
+              ? Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "T3 Code did not accept this device.",
+                    via: "direct",
+                  }),
+                )
+              : Effect.fail(transient("LAN address timed out.")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "blocked");
+        expect(state.lastFailure).toMatchObject({ reason: "authentication", via: "direct" });
+      }),
+  );
+
+  it.effect(
+    "keeps retrying T3 Connect when it timed out and a direct route refused this device",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.fail(transient("T3 Connect timed out."))
+              : Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "T3 Code did not accept this device.",
+                    via: "direct",
+                  }),
+                ),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "backoff");
+        expect(state.lastFailure?._tag).toBe("ConnectionTransientError");
+      }),
+  );
+
   it.effect("moves back to the LAN route when the network changes and it answers again", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);

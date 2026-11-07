@@ -46,6 +46,11 @@
       "reason": "Local-model composer dictation"
     },
     {
+      "number": 21709,
+      "takenSha": "a381ca2331281df2d77fcb0b5ce7fd4f75205116",
+      "reason": "Pair again reconnects a computer whose 30-day login expired (diff only, branch merged newer upstream main)"
+    },
+    {
       "number": 28719,
       "takenSha": "8dc3e6ff446dc1f1a714288091249ee86c91735b",
       "reason": "Desktop cache miss lets the server hydrate PATH before provider checks"
