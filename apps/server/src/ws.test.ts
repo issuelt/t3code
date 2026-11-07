@@ -1,8 +1,10 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -18,6 +20,10 @@ import {
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  type FleetInvokeInput,
+  type FleetHostRequest,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
@@ -36,8 +42,10 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Headers, HttpRouter, HttpServer } from "effect/http";
+import type * as NetAddress from "effect/net/NetAddress";
+import { RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
@@ -112,6 +120,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -144,6 +153,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
+  layer as layerWsRoute,
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
@@ -1623,4 +1633,129 @@ it.effect("thread resume at its own high-water below the pruned boundary skips t
     // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
     assert.isTrue(Exit.isSuccess(exit));
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+// Revocation reaches a relay only through the /ws route's race with SessionStore.awaitInvalidation.
+it.live("revoking a session ends the desktop relay connected with it", () =>
+  Effect.gen(function* () {
+    const sessions = yield* SessionStore.SessionStore;
+    const broker = yield* FleetBroker.FleetBroker;
+    const relayed = EnvironmentId.make("relayed-environment");
+    const invoke: FleetInvokeInput = {
+      actor: { environmentId: EnvironmentId.make("home"), threadId: ThreadId.make("home") },
+      request: { op: "requests.list", input: { threadId: ThreadId.make("thread") } },
+    };
+    const desktop = yield* sessions.issue({
+      subject: "relay-desktop",
+      scopes: [AuthOrchestrationOperateScope],
+    });
+
+    // The upgrade verifies the query token against the real store, so a revoked desktop
+    // cannot reconnect and register again.
+    const auth = Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      authenticateWebSocketUpgrade: (request) =>
+        sessions
+          .verify(new URL(request.url, "http://localhost").searchParams.get("token") ?? "")
+          .pipe(
+            Effect.mapError(
+              (cause) => new EnvironmentAuth.ServerAuthInvalidCredentialError({ cause }),
+            ),
+          ),
+    });
+    yield* Layer.build(
+      HttpRouter.serve(layerWsRoute, { disableLogger: true, disableListenLog: true }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerUnusedConfigRpcServices,
+            Layer.mock(VcsProcess.VcsProcess)({}),
+            Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+            Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+            Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+            Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({}),
+            Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+            Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+            Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+            auth,
+            Layer.succeed(SessionStore.SessionStore, sessions),
+            Layer.succeed(FleetBroker.FleetBroker, broker),
+            Layer.mock(AnalyticsService.AnalyticsService)({
+              recordOwners: () => Effect.void,
+              record: () => Effect.void,
+            }),
+            Layer.mock(ServerBrowser.ServerBrowser)({
+              profileReporter: Effect.succeed(() => Effect.void),
+            }),
+          ),
+        ),
+      ),
+    );
+    const address = (yield* HttpServer.HttpServer).address as NetAddress.InetAddress;
+    const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
+    url.searchParams.set(
+      ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+      String(ORCHESTRATION_PROTOCOL_VERSION),
+    );
+    url.searchParams.set("token", desktop.token);
+
+    // Built in the test scope so the socket outlives client construction.
+    const protocol = yield* Layer.build(
+      RpcClient.layerProtocolSocket().pipe(
+        Layer.provide(Socket.layerWebSocket(url.toString())),
+        Layer.provide(Socket.layerWebSocketConstructorGlobal),
+        Layer.provide(RpcSerialization.layerJson),
+      ),
+    );
+    const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+    const firstRequest = yield* Deferred.make<FleetHostRequest>();
+    const relayEnded = yield* Deferred.make<Exit.Exit<void, unknown>>();
+    yield* client[WS_METHODS.fleetConnect]({
+      clientId: "desktop",
+      mcpRelay: true,
+      environments: [{ environmentId: relayed, label: "Relayed", connected: true }],
+    }).pipe(
+      Stream.runForEach((request) => Deferred.succeed(firstRequest, request)),
+      Effect.exit,
+      Effect.flatMap((exit) => Deferred.succeed(relayEnded, exit)),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+
+    // The broker registers the host on the stream's first pull and offers no receipt for it,
+    // so retry only while it still reports no relay host. The relayed request is the receipt.
+    const pending = yield* broker
+      .invoke(relayed, invoke)
+      .pipe(
+        Effect.retry({ while: (failure) => failure.message.startsWith("No desktop window") }),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+    const request = yield* Deferred.await(firstRequest);
+    assert.equal(request.environmentId, relayed);
+
+    yield* sessions.revoke(desktop.sessionId);
+
+    const failure = yield* Fiber.join(pending).pipe(Effect.flip);
+    assert.equal(failure.code, "environment_unavailable");
+    assert.include(failure.message, "disconnected");
+    const after = yield* broker.invoke(relayed, invoke).pipe(Effect.flip);
+    assert.include(after.message, "No desktop window");
+    assert.isFalse((yield* broker.reach).hostConnected);
+    assert.isTrue(Exit.isFailure(yield* Deferred.await(relayEnded)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        FleetBroker.layer,
+        SessionStore.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(
+            Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+              getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-revocation-test")),
+            }),
+          ),
+        ),
+        NodeHttpServer.layerTest,
+      ).pipe(Layer.provideMerge(Layer.fresh(layerConfigSources))),
+    ),
+    Effect.scoped,
+  ),
 );
