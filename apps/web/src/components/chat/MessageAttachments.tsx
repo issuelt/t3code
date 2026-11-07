@@ -11,11 +11,7 @@ const IMAGE_FRAME =
   "aspect-[4/3] overflow-hidden rounded-lg border border-border/80 bg-background/70";
 const FILE_ROW = "flex min-w-0 items-center gap-2 py-1 text-sm";
 
-/**
- * A guest message's files, drawn like a sent message's: image thumbnails, then file rows. The
- * owner opens them in the app; the guest loads them from the guest route.
- */
-export function GuestMessageAttachments(props: {
+export function MessageAttachments(props: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   /** Where an image loads from; undefined while its URL is not ready. */
   readonly imageUrl: (attachment: ChatAttachment) => string | undefined;
@@ -27,7 +23,10 @@ export function GuestMessageAttachments(props: {
   const { resolvedTheme } = useTheme();
   const images = props.attachments.filter(isImageAttachment);
   const files = props.attachments.filter(isFileAttachment);
-  if (images.length === 0 && files.length === 0) return null;
+  const unknown = props.attachments.filter(
+    (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
+  );
+  if (props.attachments.length === 0) return null;
   return (
     <div className="flex flex-col items-end gap-2">
       {images.length > 0 ? (
@@ -98,6 +97,11 @@ export function GuestMessageAttachments(props: {
           </div>
         );
       })}
+      {unknown.map((attachment) => (
+        <div key={attachment.id} className={FILE_ROW}>
+          {attachment.name}
+        </div>
+      ))}
     </div>
   );
 }
