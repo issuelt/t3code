@@ -22,6 +22,8 @@ import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as Option from "effect/Option";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
@@ -93,6 +95,7 @@ export const remoteTarget = (scope: Scope, environmentId: EnvironmentId | undefi
 
 const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
+  const desktop = yield* Effect.serviceOption(FleetBroker.FleetBroker);
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -145,6 +148,30 @@ const make = Effect.gen(function* () {
     }
     if (typeof args.clientRequestId === "string") {
       args.clientRequestId = yield* scopedRequestId(scope.requestNamespace, args.clientRequestId);
+    }
+    // A stored peer link retains its own grant, expiry, and revocation behavior.
+    if (
+      Option.isNone(yield* links.get(environmentId).pipe(Effect.mapError(unavailable))) &&
+      Option.isSome(desktop)
+    ) {
+      const reach = yield* desktop.value.reach;
+      if (
+        reach.mcpRelay &&
+        reach.environments.some((entry) => entry.environmentId === environmentId)
+      ) {
+        const result = yield* desktop.value.invoke(environmentId, {
+          mcp: {
+            tool: toolName,
+            arguments: args,
+            namespace: `${scope.environmentId}:${scope.requestNamespace}`,
+            readOnly: scope.client?.access === "read-only",
+            ...limits,
+          },
+        });
+        return yield* Schema.decodeUnknownEffect(success as Schema.Decoder<A>)(result).pipe(
+          Effect.mapError(unavailable),
+        );
+      }
     }
     return yield* peers.call({
       environmentId,
@@ -236,7 +263,7 @@ const make = Effect.gen(function* () {
    * empty list reads as a dead end and agents go looking elsewhere.
    */
   const NOT_LISTED =
-    "Not listed: not linked yet. Call t3_environment_link with a hint from the user's words.";
+    "Not listed: no peer link or desktop connection is available. For a new connection, call t3_environment_link with a hint from the user's words.";
 
   const listLinks: PeerForwarding["Service"]["links"] = Effect.fn("PeerForwarding.listLinks")(
     function* (scope) {
@@ -248,16 +275,32 @@ const make = Effect.gen(function* () {
             new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
         ),
       );
+      const reach = Option.isSome(desktop) ? yield* desktop.value.reach : undefined;
+      const peerIds = new Set(listed.map((entry) => entry.environmentId));
+      const connected = (reach?.mcpRelay ? reach.environments : [])
+        .filter((entry) => !peerIds.has(entry.environmentId))
+        .map((entry) => ({
+          environmentId: entry.environmentId,
+          label: entry.label,
+          status: entry.connected ? ("reachable" as const) : ("unreachable" as const),
+          access: null,
+          expiresAt: null,
+          source: "desktop" as const,
+          lastError: null,
+        }));
       return {
         environmentId: scope.environmentId,
-        links: listed.map((link) => ({
-          environmentId: link.environmentId,
-          label: link.label,
-          status: link.status,
-          access: link.access,
-          expiresAt: DateTime.formatIso(link.expiresAt),
-          lastError: link.lastError,
-        })),
+        links: [
+          ...connected,
+          ...listed.map((link) => ({
+            environmentId: link.environmentId,
+            label: link.label,
+            status: link.status,
+            access: link.access,
+            expiresAt: DateTime.formatIso(link.expiresAt),
+            lastError: link.lastError,
+          })),
+        ],
         notListed: NOT_LISTED,
       };
     },

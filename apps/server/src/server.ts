@@ -843,6 +843,15 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
+  Layer.provide(
+    McpHttpServer.layerDesktopRelay(
+      Layer.mergeAll(
+        McpHttpServer.layerOrchestratorToolkit,
+        McpHttpServer.layerProjectRegistration,
+        McpHttpServer.layerThreadToolkit,
+      ),
+    ).pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
+  ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.

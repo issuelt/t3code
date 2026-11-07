@@ -43,6 +43,7 @@ import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReview
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import * as DesktopMcpRelay from "./DesktopMcpRelay.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -1484,4 +1485,60 @@ it.effect(
         expect(yield* start("root/default")).toBe(400);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("desktop relay calls cannot replace the HTTP server's toolkit handlers", () =>
+  Effect.gen(function* () {
+    const toolkit = Toolkit.make(
+      Tool.make("t3_project_list", {
+        parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
+        success: Schema.Struct({ registry: Schema.String }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+        dependencies: [McpInvocationContext.McpInvocationContext],
+      }),
+    );
+    const registrations = (registry: string) =>
+      McpHttpServer.toolkitRegistration(
+        toolkit,
+        McpToolAccess.toLayer(toolkit, {
+          t3_project_list: McpToolAccess.reads(() => Effect.succeed({ registry })),
+        }),
+      );
+    const context = yield* Layer.mergeAll(
+      registrations("http").pipe(Layer.provideMerge(McpHttpServer.layerInProcessMcpServer)),
+      McpHttpServer.layerDesktopRelay(registrations("relay")),
+    ).pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+      ),
+      Layer.build,
+    );
+    const http = Context.get(context, McpServer.McpServer);
+    const relay = Context.get(context, DesktopMcpRelay.DesktopMcpRelay);
+    const result = yield* relay.invoke(
+      {
+        mcp: {
+          tool: "t3_project_list",
+          arguments: {},
+          namespace: "caller",
+          readOnly: true,
+          runtimeMode: "approval-required",
+          interactionMode: "plan",
+        },
+      },
+      "desktop-session",
+    );
+    expect(result).toEqual({ registry: "relay" });
+    const ordinary = yield* http
+      .callTool({ name: "t3_project_list", arguments: {} })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(ordinary.structuredContent).toEqual({ registry: "http" });
+  }).pipe(Effect.scoped),
 );

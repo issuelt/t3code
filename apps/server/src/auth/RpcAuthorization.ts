@@ -274,7 +274,20 @@ const decodeFleetInvoke = Schema.decodeUnknownSync(FleetInvokeInput);
 
 /** A relayed operation needs the scopes its own RPC would. */
 const requiredScopesForFleetInvoke = (payload: unknown): ReadonlyArray<AuthEnvironmentScope> => {
-  const { request } = decodeFleetInvoke(payload);
+  const invoke = decodeFleetInvoke(payload);
+  if ("mcp" in invoke) {
+    const { tool, arguments: input } = invoke.mcp;
+    if (tool === "t3_project_clone")
+      return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
+    if (
+      (tool === "t3_project_create" || tool === "t3_project_update") &&
+      input.scripts !== undefined
+    ) {
+      return [AuthOrchestrationOperateScope, AuthSettingsWriteScope];
+    }
+    return [AuthOrchestrationOperateScope];
+  }
+  const { request } = invoke;
   if (request.op === "projects.clone") {
     return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   }

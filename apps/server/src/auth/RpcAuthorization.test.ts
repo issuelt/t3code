@@ -449,7 +449,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }).pipe(Effect.scoped),
 );
 
-it.effect("requires source-control permission before relaying a Home clone", () =>
+it.effect("requires operation-specific permissions for Home and ordinary desktop relays", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
@@ -485,6 +485,26 @@ it.effect("requires source-control permission before relaying a Home clone", () 
     expect(Exit.isFailure(clone) && Cause.squash(clone.cause)).toMatchObject({
       requiredPermission: AuthSourceControlWriteScope,
     });
+    const mcp = {
+      namespace: "session",
+      readOnly: false,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+    for (const [tool, arguments_, requiredPermission] of [
+      ["t3_project_clone", { destinationPath: "/srv/repo" }, AuthSourceControlWriteScope],
+      ["t3_project_create", { scripts: [] }, AuthSettingsWriteScope],
+      ["t3_project_update", { scripts: [] }, AuthSettingsWriteScope],
+    ] as const) {
+      const refused = yield* Effect.exit(
+        client[WS_METHODS.fleetInvoke]({
+          mcp: { ...mcp, tool, arguments: arguments_ },
+        }),
+      );
+      expect(Exit.isFailure(refused) && Cause.squash(refused.cause)).toMatchObject({
+        requiredPermission,
+      });
+    }
     expect(handled).toBe(1);
   }).pipe(Effect.scoped),
 );

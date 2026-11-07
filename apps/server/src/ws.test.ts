@@ -119,6 +119,7 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import { AutoFallbackCooldownTracker } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
 import * as Dictation from "./dictation/Dictation.ts";
+import * as DesktopMcpRelay from "./mcp/DesktopMcpRelay.ts";
 import * as FleetBroker from "./home/FleetBroker.ts";
 import * as FleetService from "./home/FleetService.ts";
 import * as HomeService from "./home/HomeService.ts";
@@ -848,6 +849,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AutoFallbackCooldownTracker)({ decorateProviders: Effect.succeed }),
   Layer.mock(Dictation.Dictation)({}),
   Layer.mock(FleetBroker.FleetBroker)({}),
+  Layer.mock(DesktopMcpRelay.DesktopMcpRelay)({}),
   Layer.mock(FleetService.FleetService)({}),
   Layer.mock(HomeService.HomeService)({ available: false }),
   Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home-test" }),

@@ -1,7 +1,7 @@
 /**
- * Relays Home's calls to other environments through the desktop renderer, the only holder of
+ * Relays agent calls to other environments through the desktop renderer, the only holder of
  * live connections to them. The newest `fleet.connect` registration wins; with no renderer,
- * Home can act only in its own environment.
+ * agents can use only peer links.
  */
 import {
   type EnvironmentId,
@@ -43,6 +43,7 @@ const CLONE_REQUEST_TIMEOUT = Duration.seconds(130);
 export interface FleetReach {
   /** Whether a desktop renderer is relaying. */
   readonly hostConnected: boolean;
+  readonly mcpRelay: boolean;
   readonly environments: ReadonlyArray<FleetEnvironment>;
 }
 
@@ -64,6 +65,7 @@ export class FleetBroker extends Context.Service<
 
 interface Host {
   readonly queue: Queue.Queue<FleetHostRequest, Cause.Done>;
+  readonly mcpRelay: boolean;
   readonly environments: ReadonlyArray<FleetEnvironment>;
 }
 
@@ -98,7 +100,7 @@ const make = Effect.gen(function* () {
           ([, entry]) =>
             Deferred.fail(
               entry.deferred,
-              unavailable("The desktop window relaying Home's calls disconnected."),
+              unavailable("The desktop window relaying agent calls disconnected."),
             ),
           { discard: true },
         );
@@ -112,7 +114,11 @@ const make = Effect.gen(function* () {
       current.host,
       {
         ...current,
-        host: { queue, environments: registration.environments },
+        host: {
+          queue,
+          environments: registration.environments,
+          mcpRelay: registration.mcpRelay === true,
+        },
       },
     ]);
     if (previous !== null) yield* retire(previous.queue);
@@ -149,6 +155,7 @@ const make = Effect.gen(function* () {
     reach: SynchronizedRef.get(state).pipe(
       Effect.map(({ host }) => ({
         hostConnected: host !== null,
+        mcpRelay: host?.mcpRelay ?? false,
         environments: host?.environments ?? [],
       })),
     ),
@@ -158,11 +165,11 @@ const make = Effect.gen(function* () {
       const deferred = yield* Deferred.make<unknown, OrchestratorMcpFailure>();
       const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
         const host = current.host;
-        if (host === null) {
+        if (host === null || ("mcp" in invoke && !host.mcpRelay)) {
           return Effect.succeed([
             Option.some(
               unavailable(
-                "No desktop window is relaying Home's calls. Open the T3 Code desktop app.",
+                "No desktop window is relaying agent calls. Open the T3 Code desktop app.",
               ),
             ),
             current,
@@ -192,7 +199,10 @@ const make = Effect.gen(function* () {
       if (Option.isSome(offered)) return yield* offered.value;
       const settled = yield* Deferred.await(deferred).pipe(
         Effect.timeoutOption(
-          invoke.request.op === "projects.clone" ? CLONE_REQUEST_TIMEOUT : REQUEST_TIMEOUT,
+          ("request" in invoke && invoke.request.op === "projects.clone") ||
+            ("mcp" in invoke && invoke.mcp.tool === "t3_project_clone")
+            ? CLONE_REQUEST_TIMEOUT
+            : REQUEST_TIMEOUT,
         ),
         Effect.ensuring(
           SynchronizedRef.update(state, (current) => {
@@ -206,6 +216,7 @@ const make = Effect.gen(function* () {
       if (Option.isNone(settled)) {
         return yield* unavailable("The other environment did not answer in time.");
       }
+      if ("mcp" in invoke) return settled.value;
       return yield* decodeResult[invoke.request.op](settled.value).pipe(
         Effect.mapError(() =>
           unavailable("The other environment answered in a shape this version cannot read."),
