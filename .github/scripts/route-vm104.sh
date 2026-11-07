@@ -76,7 +76,7 @@ for status in queued in_progress; do
 		((checked <= 10)) || decide false "more than 10 active runs to check"
 		waiting="$(call "$GH_TOKEN" "$api/repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" |
 			jq -er --arg label "$label" \
-				'[.jobs[] | select(.status == "queued" and any(.labels[]; . == $label))] | length' 2>/dev/null)" ||
+				'if (.total_count // 0) > 100 then error("over one page") else [.jobs[] | select(.status == "queued" and any(.labels[]; . == $label))] | length end' 2>/dev/null)" ||
 			decide false "could not list the jobs of run $run"
 		[[ "$waiting" =~ ^[0-9]+$ ]] || decide false "could not list the jobs of run $run"
 		((waiting == 0)) || decide false "run $run has a job queued for $label"

@@ -246,6 +246,20 @@ const table = [
     "more than 10 active runs",
   ],
   [
+    "more than one page of jobs in a run",
+    {
+      fixtures: {
+        ...routes(),
+        "/repos/issuelt/t3code/actions/runs/1/jobs?filter=latest&per_page=100": {
+          status: 200,
+          body: { total_count: 101, jobs: [] },
+        },
+      },
+    },
+    false,
+    "could not list the jobs of run 1",
+  ],
+  [
     "runner group answer is not JSON-shaped",
     {
       fixtures: {
