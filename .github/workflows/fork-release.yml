@@ -26,9 +26,10 @@ jobs:
   version:
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write. This is a ceiling: the callee's other jobs keep its top-level contents: read.
+    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
+      actions: read
     with:
       stage: version
 
@@ -190,15 +191,17 @@ jobs:
     needs: version
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write. This is a ceiling: the callee's other jobs keep its top-level contents: read.
+    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
+      actions: read
     with:
       stage: build
       version: ${{ needs.version.outputs.version }}
     secrets:
       FORK_ANDROID_KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
       FORK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
+      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
 
   publish:
     if: github.event_name != 'pull_request'
@@ -206,6 +209,7 @@ jobs:
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     permissions:
       contents: write
+      actions: read
     with:
       stage: publish
       version: ${{ needs.version.outputs.version }}
@@ -213,3 +217,4 @@ jobs:
       name: ${{ needs.version.outputs.name }}
     secrets:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}

@@ -1,9 +1,10 @@
 name: Fork Release Linux
 
 # Linux and Android stages of Fork Release. Callers use this file at @main so
-# the runner group can allowlist it. The runner choice reads only the github
-# context, which a pull request cannot edit.
-#   stage version: resolves the nightly version, tag, and name.
+# the runner group can allowlist it. The runner choice reads the github
+# context, which a pull request cannot edit, and the route job below, whose
+# script also comes from main.
+#   stage version: resolves the nightly version, tag, and name, on a hosted runner.
 #   stage build: builds the Linux desktop artifact, plus the APK outside PRs.
 #   stage publish: publishes the prerelease and the over-the-air update.
 
@@ -33,6 +34,8 @@ on:
         required: false
       EXPO_TOKEN:
         required: false
+      CI_ROUTER_APP_KEY:
+        required: false
     outputs:
       version:
         value: ${{ jobs.version.outputs.version }}
@@ -56,16 +59,10 @@ jobs:
           echo "Unknown stage: $STAGE. Use version, build, or publish." >&2
           exit 1
 
+  # About a minute of work, so it never waits for a VM104 cycle.
   version:
     if: inputs.stage == 'version'
-    runs-on: >-
-      ${{ fromJSON(
-        github.repository == 'issuelt/t3code' && (
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
-        )
-        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
-        || '"ubuntu-24.04"') }}
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
@@ -91,8 +88,53 @@ jobs:
             --sha "${{ github.sha }}" \
             --github-output
 
+  # Picks VM104 only when it is idle and nothing waits for it, so a busy or
+  # offline VM104 never queues a job. An untrusted event, such as a fork pull
+  # request, skips every step, so vm104 stays empty and the job runs hosted.
+  route:
+    if: ${{ !cancelled() && (inputs.stage == 'build' || inputs.stage == 'publish') }}
+    # In the publish stage this waits for publish, so mobile-update routes when it can start.
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      vm104: ${{ steps.decide.outputs.vm104 }}
+    env:
+      TRUSTED: >-
+        ${{ github.repository == 'issuelt/t3code' && (
+            (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+            ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
+        ) }}
+    steps:
+      # This file runs from main, so the router comes from main too, never from a pull request.
+      # A plain fetch: actions/checkout without persisted credentials trips on the .repos/ gitlinks.
+      - name: Check out the router from main
+        if: env.TRUSTED == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
+      - name: Decide
+        id: decide
+        if: env.TRUSTED == 'true'
+        continue-on-error: true
+        env:
+          APP_ID: ${{ vars.CI_ROUTER_APP_ID }}
+          APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/route-vm104.sh
+
+  # Shares one route answer with android; when Android takes VM104, this build runs hosted.
   desktop-linux:
-    if: inputs.stage == 'build'
+    needs: route
+    if: ${{ !cancelled() && inputs.stage == 'build' }}
     name: Build linux-x64
     runs-on: >-
       ${{ fromJSON(
@@ -100,6 +142,8 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
+        && needs.route.outputs.vm104 == 'true'
+        && (github.event_name == 'pull_request' || vars.ANDROID_ON_VM104 != 'true')
         && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
         || '"ubuntu-24.04"') }}
     env:
@@ -122,9 +166,10 @@ jobs:
           cache: ${{ runner.environment == 'github-hosted' }}
           run-install: false
 
+      # VM104's image installs 1.99.1; a floating stable makes rustup download it again.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
+          toolchain: 1.99.1
 
       # The self-hosted image carries these libraries, and its runner has no sudo.
       - name: Install Linux desktop build libraries
@@ -194,14 +239,19 @@ jobs:
           done
           ls -la release-publish
 
+      # Only publish reads this, in the same run, and publish never runs on pull requests.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: github.event_name != 'pull_request'
         with:
           name: desktop-linux-x64
           path: release-publish/*
           if-no-files-found: error
+          # A macOS capacity rerun can land a day later, and publish still needs this.
+          retention-days: 5
 
   android:
-    if: inputs.stage == 'build' && github.event_name != 'pull_request'
+    needs: route
+    if: ${{ !cancelled() && inputs.stage == 'build' && github.event_name != 'pull_request' }}
     # Android stays hosted until an APK build passes on the runner; an admin sets ANDROID_ON_VM104.
     runs-on: >-
       ${{ fromJSON(
@@ -209,6 +259,7 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
+        && needs.route.outputs.vm104 == 'true'
         && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
         || '"ubuntu-24.04"') }}
     env:
@@ -360,14 +411,15 @@ jobs:
   # matches this commit. After a native change the fingerprint differs, and
   # those phones take the release APK instead.
   mobile-update:
-    needs: publish
-    if: inputs.stage == 'publish'
+    needs: [publish, route]
+    if: ${{ !cancelled() && inputs.stage == 'publish' && needs.publish.result == 'success' }}
     runs-on: >-
       ${{ fromJSON(
         github.repository == 'issuelt/t3code' && (
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
+        && needs.route.outputs.vm104 == 'true'
         && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
         || '"ubuntu-24.04"') }}
     env:
