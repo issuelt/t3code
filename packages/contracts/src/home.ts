@@ -505,8 +505,12 @@ export const HomeWatchEvent = Schema.Struct({
   title: Schema.String.check(Schema.isMaxLength(300)),
   kind: HomeWatchEventKind,
   runId: Schema.optional(RunId),
-  /** When the completed run was requested; Home skips it if the thread messaged Home since. */
-  runRequestedAt: Schema.optional(IsoDateTime),
+  /**
+   * When the completed run started, not when it was queued. Home skips the completion if the
+   * thread messaged Home since then, because a send made while the run waited in the queue
+   * belongs to the run before it.
+   */
+  runStartedAt: Schema.optional(IsoDateTime),
   detail: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
 });
 export type HomeWatchEvent = typeof HomeWatchEvent.Type;

@@ -380,8 +380,8 @@ const make = Effect.gen(function* () {
       ): Effect.Effect<ReadonlySet<HomeWatchEvent>> => {
         const checked = candidates.flatMap((event) => {
           const since =
-            event.kind === "completed" && event.runRequestedAt !== undefined
-              ? Date.parse(event.runRequestedAt)
+            event.kind === "completed" && event.runStartedAt !== undefined
+              ? Date.parse(event.runStartedAt)
               : Number.NaN;
           return Number.isFinite(since) ? [{ event, since }] : [];
         });
