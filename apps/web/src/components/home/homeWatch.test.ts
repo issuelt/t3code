@@ -156,6 +156,89 @@ describe("diffWatchedThreads", () => {
     expect(run(live.next, settled, home).events).toEqual([]);
   });
 
+  it("reports a question once while it stays pending across runs, and a new question again", () => {
+    const home = watching("a");
+    const asking = (runId: string, pendingUserInputAt: string) =>
+      thread("a", {
+        hasPendingUserInput: true,
+        pendingUserInputAt,
+        latestRun: { runId, status: "running", completedAt: null },
+      } as Partial<EnvironmentThreadShell>);
+    const first = run(new Map(), [thread("a")], home);
+    const asked = run(first.next, [asking("run-1", "2026-10-03T10:00:00.000Z")], home);
+    expect(asked.events).toMatchObject([{ threadId: "a", kind: "question" }]);
+
+    const stillPending = run(asked.next, [asking("run-2", "2026-10-03T10:00:00.000Z")], home);
+    expect(stillPending.events).toEqual([]);
+
+    const newQuestion = run(stillPending.next, [asking("run-2", "2026-10-03T10:05:00.000Z")], home);
+    expect(newQuestion.events).toMatchObject([{ threadId: "a", kind: "question" }]);
+  });
+
+  it("reports a child's approval on its parent once across runs, and a new approval again", () => {
+    const home = watching("a");
+    const shells = (parentRunId: string, pendingApprovalAt: string) => [
+      thread("a", {
+        pendingSubagentRequest: "approval",
+        latestRun: { runId: parentRunId, status: "running", completedAt: null },
+      } as Partial<EnvironmentThreadShell>),
+      thread("a-child", {
+        lineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: "subagent" },
+        hasPendingApprovals: true,
+        pendingApprovalAt,
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    const first = run(new Map(), [thread("a")], home);
+    const asked = run(first.next, shells("run-1", "2026-10-03T10:00:00.000Z"), home);
+    expect(asked.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+
+    const stillPending = run(asked.next, shells("run-2", "2026-10-03T10:00:00.000Z"), home);
+    expect(stillPending.events).toEqual([]);
+
+    const newApproval = run(stillPending.next, shells("run-2", "2026-10-03T10:05:00.000Z"), home);
+    expect(newApproval.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+  });
+
+  it("reports a side chat's question on its parent once across runs", () => {
+    const home = watching("a");
+    const shells = (parentRunId: string) => [
+      thread("a", {
+        pendingSubagentRequest: "user_input",
+        latestRun: { runId: parentRunId, status: "running", completedAt: null },
+      } as Partial<EnvironmentThreadShell>),
+      thread("a-side", {
+        lineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: null, sideChat: true },
+        hasPendingUserInput: true,
+        pendingUserInputAt: "2026-10-03T10:00:00.000Z",
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    const first = run(new Map(), [thread("a")], home);
+    const asked = run(first.next, shells("run-1"), home);
+    expect(asked.events).toMatchObject([{ threadId: "a", kind: "question" }]);
+    expect(run(asked.next, shells("run-2"), home).events).toEqual([]);
+  });
+
+  it("does not report an older child approval again when a newer one resolves", () => {
+    const home = watching("a");
+    const child = (id: string, pendingApprovalAt: string) =>
+      thread(id, {
+        lineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: "subagent" },
+        hasPendingApprovals: true,
+        pendingApprovalAt,
+      } as Partial<EnvironmentThreadShell>);
+    const parent = thread("a", {
+      pendingSubagentRequest: "approval",
+    } as Partial<EnvironmentThreadShell>);
+    const olderChild = child("a-one", "2026-10-03T10:00:00.000Z");
+    const newerChild = child("a-two", "2026-10-03T10:05:00.000Z");
+    const first = run(new Map(), [thread("a")], home);
+    const one = run(first.next, [parent, olderChild], home);
+    expect(one.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+    const two = run(one.next, [parent, olderChild, newerChild], home);
+    expect(two.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+    expect(run(two.next, [parent, olderChild], home).events).toEqual([]);
+  });
+
   it("reports an agent run's completion but not one the user started in the thread", () => {
     const home = watching("a");
     const completed = (runId: string, requestedAt: string, completedAt: string) =>
