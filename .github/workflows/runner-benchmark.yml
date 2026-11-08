@@ -1,0 +1,324 @@
+name: Runner Benchmark
+
+# Times Fork Release's build recipes on GitHub-hosted and Blacksmith runners.
+# Each job copies its release job's steps from main and stops before signing,
+# collection, and upload. Nothing is signed, uploaded, or published.
+#   linux: fork-release-linux.yml desktop-linux, the hosted path.
+#   android: fork-release-linux.yml android, the hosted "Build APK" path, unsigned.
+#   windows: fork-release.yml desktop, the win matrix entry.
+# Blacksmith runners report runner.environment as self-hosted, so the copied
+# steps drop the release jobs' github-hosted conditions and always take the hosted path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Release recipe to time
+        required: true
+        type: choice
+        options: [linux, android, windows]
+      runner:
+        description: Runner to time it on
+        required: true
+        type: choice
+        options: [hosted, blacksmith-2vcpu, blacksmith-4vcpu, blacksmith-8vcpu]
+
+concurrency:
+  group: runner-benchmark-${{ inputs.target }}-${{ inputs.runner }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VERSION: 0.0.0-benchmark
+
+jobs:
+  plan:
+    if: github.repository == 'issuelt/t3code' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - name: Map target and runner to a runner label
+        id: pick
+        env:
+          TARGET: ${{ inputs.target }}
+          RUNNER: ${{ inputs.runner }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            linux|android) hosted=ubuntu-24.04; image=ubuntu-2404 ;;
+            windows) hosted=windows-2025; image=windows-2025 ;;
+            *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
+          esac
+          case "$RUNNER" in
+            hosted) label=$hosted ;;
+            blacksmith-2vcpu|blacksmith-4vcpu|blacksmith-8vcpu) label="$RUNNER-$image" ;;
+            *) echo "Unknown runner: $RUNNER" >&2; exit 1 ;;
+          esac
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "Timing $TARGET on $label" >> "$GITHUB_STEP_SUMMARY"
+
+  linux:
+    needs: plan
+    if: inputs.target == 'linux'
+    name: Build linux-x64
+    runs-on: ${{ needs.plan.outputs.label }}
+    steps:
+      - name: Report runner resources
+        run: |
+          echo "nproc: $(nproc)"
+          free -h
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.99.1
+
+      - name: Install Linux desktop build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      - name: Install dependencies
+        run: vp install
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      - name: Build desktop artifact
+        shell: bash
+        run: |
+          vp run dist:desktop:artifact \
+            --platform linux \
+            --target AppImage \
+            --arch x64 \
+            --build-version "$VERSION" \
+            --verbose
+
+      - name: Build CLI single-executable
+        shell: bash
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor"
+          mkdir -p "$monitor_dir/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$monitor_dir/linux-x64/t3-resource-monitor"
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "$VERSION" \
+            --resource-monitor-dir "$monitor_dir" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION"
+
+  android:
+    needs: plan
+    if: inputs.target == 'android'
+    name: Build Android APK
+    runs-on: ${{ needs.plan.outputs.label }}
+    env:
+      APP_VARIANT: preview
+      T3CODE_MOBILE_UPDATE_CHANNEL: fork
+      T3CODE_MOBILE_VERSION: 0.0.0-benchmark
+      EXPO_NO_GIT_STATUS: "1"
+    steps:
+      - name: Report runner resources
+        run: |
+          echo "nproc: $(nproc)"
+          free -h
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Checkout
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+
+      - name: Install dependencies
+        run: vp install
+
+      - name: Build APK
+        working-directory: apps/mobile
+        run: |
+          node_modules/.bin/expo prebuild --clean --platform android
+          cd android
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
+            "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
+
+  windows:
+    needs: plan
+    if: inputs.target == 'windows'
+    name: Build win-x64
+    runs-on: ${{ needs.plan.outputs.label }}
+    steps:
+      - name: Report runner resources
+        shell: pwsh
+        run: |
+          "nproc: $([Environment]::ProcessorCount)"
+          $os = Get-CimInstance Win32_OperatingSystem
+          "memory: {0:N1} GiB total, {1:N1} GiB free" -f ($os.TotalVisibleMemorySize / 1MB), ($os.FreePhysicalMemory / 1MB)
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='UsedGiB';e={[math]::Round($_.Used / 1GB, 1)}}, @{n='FreeGiB';e={[math]::Round($_.Free / 1GB, 1)}}
+
+      - name: Checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      # fork-release.yml runs Windows without the setup-vp cache.
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) { exit 1 }
+
+      - name: Install dependencies
+        run: vp install
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "$env:VERSION"
+
+      - name: Build desktop artifact
+        shell: bash
+        run: |
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "$VERSION" \
+            --verbose
+
+      - name: Build CLI single-executable
+        shell: bash
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor"
+          mkdir -p "$monitor_dir/win32-x64"
+          cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe "$monitor_dir/win32-x64/t3-resource-monitor.exe"
+          node scripts/build-cli-archive.ts \
+            --platform win \
+            --arch x64 \
+            --version "$VERSION" \
+            --resource-monitor-dir "$monitor_dir" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION"
+
+  # A hosted job reads the finished build job's step times, so the summary
+  # never depends on tools in a Blacksmith image.
+  report:
+    needs: [plan, linux, android, windows]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    steps:
+      - name: Write step durations to the summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ needs.plan.outputs.label }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --paginate --jq '.jobs[]' > "$RUNNER_TEMP/jobs.jsonl"
+          python3 - "$RUNNER_TEMP/jobs.jsonl" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, os, sys
+          from datetime import datetime
+
+          def secs(a, b):
+              if not a or not b:
+                  return None
+              return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds()
+
+          def fmt(s):
+              return "n/a" if s is None else f"{int(s) // 60}m {int(s) % 60}s"
+
+          label = os.environ["LABEL"]
+          decoder = json.JSONDecoder()
+          text = open(sys.argv[1]).read()
+          jobs, i = [], 0
+          while i < len(text):
+              if text[i].isspace():
+                  i += 1
+                  continue
+              job, i = decoder.raw_decode(text, i)
+              jobs.append(job)
+          for job in jobs:
+              if job["name"] in ("plan", "report") or job["conclusion"] == "skipped":
+                  continue
+              print(f"## {job['name']} on {label}: {job['conclusion']}\n")
+              print(f"Queued {fmt(secs(job['created_at'], job['started_at']))}, ran {fmt(secs(job['started_at'], job['completed_at']))}.\n")
+              print("| Step | Result | Duration |")
+              print("| --- | --- | --- |")
+              for step in job["steps"]:
+                  print(f"| {step['name']} | {step['conclusion']} | {fmt(secs(step.get('started_at'), step.get('completed_at')))} |")
+              print()
+          PY
