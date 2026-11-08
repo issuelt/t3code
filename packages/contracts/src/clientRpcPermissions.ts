@@ -3,9 +3,9 @@ import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./gi
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
-  AuthProvidersManageScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
@@ -19,6 +19,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerLoginWrite]: AuthProvidersManageScope,
   [WS_METHODS.providerLoginResize]: AuthProvidersManageScope,
   [WS_METHODS.providerLoginCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,

@@ -233,7 +233,16 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   const source = buildPiT3McpExtensionSource();
   if (existing !== source) {
-    yield* fs.writeFileString(dest, source);
+    // Concurrent pi launches read this file: stage it in a per-call directory
+    // and rename so readers and other writers never see a partial file.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
+        const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
+        yield* fs.writeFileString(staging, source);
+        yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
+      }),
+    );
   }
   return dest;
 });
