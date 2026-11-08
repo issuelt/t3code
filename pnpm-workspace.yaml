@@ -230,7 +230,8 @@ patchedDependencies:
   expo-network@58.0.3: patches/expo-network@58.0.3.patch
   # Queue notification responses before delivery and remove only the responses replayed.
   expo-notifications@58.1.5: patches/expo-notifications@58.1.5.patch
-  # Use the app's Android Gradle and Kotlin plugins for the local markdown tarball.
+  # Use the app's Android Gradle and Kotlin plugins for the local markdown tarball, and turn a
+  # newline in a copied table cell into <br> so Copy as Markdown keeps the row whole.
   react-native-enriched-markdown@1.2.0-t3.16: patches/react-native-enriched-markdown@1.2.0-t3.16.patch
   "@clerk/expo-native-components@0.4.0": patches/@clerk__expo-native-components@0.4.0.patch
   "@alchemy.run/test@2.0.0-beta.85": patches/@alchemy.run__test@2.0.0-beta.85.patch

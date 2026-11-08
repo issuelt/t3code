@@ -284,8 +284,10 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         onInput(mapOf("data" to "\r"))
       },
     )
+    val navigationKeys = TerminalNavigationKeyListener { onInput(mapOf("data" to it)) }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
+      if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       val controlByte = when (keyCode) {
         in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> keyCode - KeyEvent.KEYCODE_A + 1

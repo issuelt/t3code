@@ -439,9 +439,10 @@ export const make = Effect.gen(function* () {
   /**
    * Reads run concurrently, and the caller stores updates in walk order rather
    * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
+   * cache order, where the first copy of a duplicate wins. Untraced: a scan
+   * reads thousands of files, so scanTranscriptDir records the counts instead.
    */
-  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
+  const readFileRecords = Effect.fnUntraced(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
@@ -545,7 +546,6 @@ export const make = Effect.gen(function* () {
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
-    readonly action?: UsageSource["action"];
     readonly files:
       | readonly {
           readonly path: string;
@@ -597,6 +597,10 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
+    yield* Effect.annotateCurrentSpan({
+      "usage.files": files.length,
+      "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
+    });
     return {
       provider,
       dir,
@@ -611,48 +615,23 @@ export const make = Effect.gen(function* () {
     } satisfies ScannedDir;
   });
 
-  const prepareScans = (settings: ServerSettingsValue) =>
-    Effect.forEach(
-      scanReaders,
-      ({ driver, reader }) =>
-        usageInstances(driver, settings).pipe(
-          Effect.flatMap((instances) =>
-            (reader.prepare
-              ? reader.prepare({ instances, settings })
-              : Effect.succeed({ cacheKey: "", scan: reader.scan })
-            ).pipe(
-              Effect.map((snapshot) => ({
-                provider: reader.provider,
-                cacheKey: snapshot.cacheKey,
-                scan: (input: {
-                  windowStartMs: number;
-                  retentionCutoffMs: number;
-                  awaitRefresh: boolean;
-                }) => snapshot.scan({ ...input, instances, settings }),
-              })),
-            ),
-          ),
-          Effect.provideContext(readerContext),
-        ),
-      { concurrency: "unbounded" },
-    );
-  type PreparedScans = Effect.Success<ReturnType<typeof prepareScans>>;
-
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
     awaitRefresh: boolean,
-    preparedScans: PreparedScans,
   ) {
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideContext(readerContext),
     );
 
     const scans = Effect.forEach(
-      preparedScans,
-      ({ provider, scan }) =>
-        scan({ windowStartMs, retentionCutoffMs, awaitRefresh }).pipe(
+      scanReaders,
+      ({ driver, reader }) =>
+        usageInstances(driver, settings).pipe(
+          Effect.flatMap((instances) =>
+            reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
+          ),
           Effect.flatMap((sources) =>
             Effect.forEach(sources, ({ volumeId, ...source }) =>
               Effect.map(
@@ -662,7 +641,7 @@ export const make = Effect.gen(function* () {
                 (resolved): ScannedDir => ({
                   ...source,
                   files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
-                  provider,
+                  provider: reader.provider,
                   volumeId: resolved,
                 }),
               ),
@@ -685,8 +664,14 @@ export const make = Effect.gen(function* () {
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
-    preparedScans: PreparedScans,
   ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
     if (input.resolution === "hour") {
       const sinceTime =
@@ -729,13 +714,7 @@ export const make = Effect.gen(function* () {
     const [, scannedDirs] = yield* Effect.all(
       [
         ensureRates(false),
-        collectDirs(
-          windowStartMs,
-          settings,
-          retentionCutoffMs,
-          input.awaitRefresh === true,
-          preparedScans,
-        ),
+        collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
       ],
       { concurrency: 2 },
     );
@@ -822,7 +801,7 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      { provider, dir, volumeId, files, status, message, refreshing, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -886,7 +865,6 @@ export const make = Effect.gen(function* () {
                 .filter(Boolean)
                 .join(" ")
             : sourceMessage,
-        ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });
     }
@@ -930,22 +908,11 @@ export const make = Effect.gen(function* () {
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
     requested: UsageSummaryInput,
   ) {
-    if (requested.sinceDay > requested.untilDay) {
-      return yield* new UsageReadError({
-        reason: "invalidWindow",
-        detail: `sinceDay '${requested.sinceDay}' is after untilDay '${requested.untilDay}'`,
-      });
-    }
-
     const { modelFilter: requestedFilter, ...unfiltered } = requested;
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
-    const preparedScans = yield* prepareScans(settings);
-    const key = encodeUsageRecordKey([
-      scanKey(input, settings),
-      preparedScans.map((scan) => scan.cacheKey),
-    ]);
+    const key = scanKey(input, settings);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -956,7 +923,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* scanSummary(input, settings, preparedScans).pipe(
+        yield* scanSummary(input, settings).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

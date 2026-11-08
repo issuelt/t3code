@@ -5,17 +5,14 @@ import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
-import * as CursorKeychain from "./CursorKeychain.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -58,7 +55,8 @@ const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fi
 
 const textEncoder = new TextEncoder();
 
-const accountHash = Effect.fn("accountHash")(function* (value: string) {
+// Untraced: each usage scan hashes every billed event.
+const accountHash = Effect.fnUntraced(function* (value: string) {
   const digest = yield* Digest.Digest;
   return Hex.encode(yield* digest.digest(Digest.sha256, textEncoder.encode(value)));
 });
@@ -86,130 +84,25 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
-const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage-events";
-
-/** The session cookie must never follow a redirect off cursor.com. */
+/** Never forward the access token through a redirect. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
-export type CursorResolvedCredential =
-  | {
-      readonly kind: "token";
-      readonly accessToken: string;
-      readonly fingerprint: string;
-      /** API-key tokens read usage through Cursor's RPC API, not the web dashboard. */
-      readonly viaApiKey: boolean;
-    }
-  | { readonly kind: "unavailable"; readonly missing: boolean; readonly error: string | null };
-
-export const readCursorCredential = Effect.fn("readCursorCredential")(function* (
+export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
   credentialSource: CursorCredentialSource,
-  keychainToken: Effect.Effect<
-    string | null,
-    | CursorKeychain.CursorKeychainTimeoutError
-    | CursorKeychain.CursorKeychainReadError
-    | CursorAccountUsageInvalidError
-  > = invalid("No Keychain reader"),
-): Effect.fn.Return<
-  CursorResolvedCredential,
-  never,
-  FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
-> {
-  const fileSystem = yield* FileSystem.FileSystem;
+  sinceMs: number,
+  endDate: number,
+): Effect.fn.Return<CursorAccountUsageReadResult, never, Digest.Digest | HttpClient.HttpClient> {
   const httpClient = yield* HttpClient.HttpClient;
-  const credential = yield* Effect.result<
-    unknown,
-    | PlatformError.PlatformError
-    | Schema.SchemaError
-    | CursorKeychain.CursorKeychainTimeoutError
-    | CursorKeychain.CursorKeychainReadError
-    | CursorAccountUsageInvalidError,
-    never
-  >(
-    typeof credentialSource === "string"
-      ? fileSystem.readFileString(credentialSource).pipe(
-          Effect.flatMap(decodeJson),
-          Effect.map((credentials) => object(credentials).accessToken),
-        )
-      : credentialSource.kind === "apiKey"
-        ? exchangeCursorApiKey(credentialSource.apiKey).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.mapError(
-              () => new CursorAccountUsageInvalidError({ reason: "Invalid API key" }),
-            ),
-          )
-        : keychainToken,
-  );
+  const credential = yield* Effect.result(exchangeCursorApiKey(credentialSource.apiKey));
   if (Result.isFailure(credential)) {
-    const cause = credential.failure;
-    const missing =
-      typeof credentialSource === "string" &&
-      PlatformError.isPlatformError(cause) &&
-      cause.reason._tag === "NotFound";
     return {
-      kind: "unavailable",
-      missing,
-      error: missing
-        ? null
-        : typeof credentialSource === "string"
-          ? "Cursor credentials could not be read."
-          : credentialSource.kind === "apiKey"
-            ? "Cursor account usage could not be read."
-            : CursorKeychain.isCursorKeychainTimeoutError(cause)
-              ? "Allow Keychain access on the Mac running T3 Code, then refresh."
-              : "Cursor Keychain credentials could not be read.",
+      accountKey: null,
+      records: [],
+      missing: false,
+      error: "Cursor account usage could not be read.",
     };
   }
   const accessToken = credential.success;
-  if (typeof accessToken !== "string" || !accessToken) {
-    return {
-      kind: "unavailable",
-      missing: true,
-      error:
-        typeof credentialSource === "string"
-          ? null
-          : "Cursor account history needs a macOS Keychain CLI login on this server.",
-    };
-  }
-  const fingerprint = yield* Effect.result(accountHash(accessToken));
-  if (Result.isFailure(fingerprint))
-    return { kind: "unavailable", missing: false, error: "Cursor credentials could not be read." };
-  return {
-    kind: "token",
-    accessToken,
-    fingerprint: fingerprint.success,
-    viaApiKey: typeof credentialSource !== "string" && credentialSource.kind === "apiKey",
-  };
-});
-
-/**
- * Dashboard usage includes headless agents and reports fresh input separately
- * from cache reads. `keychainToken` is only run for a Keychain login.
- */
-export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
-  credentialSource: CursorCredentialSource | CursorResolvedCredential,
-  sinceMs: number,
-  endDate: number,
-  keychainToken: Effect.Effect<
-    string | null,
-    | CursorKeychain.CursorKeychainTimeoutError
-    | CursorKeychain.CursorKeychainReadError
-    | CursorAccountUsageInvalidError
-  > = invalid("No Keychain reader"),
-): Effect.fn.Return<
-  CursorAccountUsageReadResult,
-  never,
-  FileSystem.FileSystem | Digest.Digest | HttpClient.HttpClient
-> {
-  const httpClient = yield* HttpClient.HttpClient;
-  const resolved =
-    typeof credentialSource === "string" ||
-    credentialSource.kind === "keychain" ||
-    credentialSource.kind === "apiKey"
-      ? yield* readCursorCredential(credentialSource, keychainToken)
-      : credentialSource;
-  if (resolved.kind === "unavailable")
-    return { accountKey: null, records: [], missing: resolved.missing, error: resolved.error };
-  const accessToken = resolved.accessToken;
   let accountKey: string | null = null;
   const read = Effect.gen(function* () {
     const payload = Base64Url.decodeString(accessToken.split(".")[1] ?? "");
@@ -220,25 +113,15 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       ),
     ).sub;
     if (typeof subject !== "string" || !subject) return yield* invalid("Invalid authentication");
-    const userId = subject.split("|").at(-1);
-    if (!userId) return yield* invalid("Invalid authentication");
     accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
-    // The web dashboard rejects API-key tokens; Cursor's RPC API accepts them.
-    const pageRequest = resolved.viaApiKey
-      ? HttpClientRequest.post(
-          `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
-        ).pipe(
-          HttpClientRequest.bearerToken(accessToken),
-          HttpClientRequest.setHeader("connect-protocol-version", "1"),
-        )
-      : HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
-          HttpClientRequest.setHeaders({
-            Origin: "https://cursor.com",
-            Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-          }),
-        );
+    const pageRequest = HttpClientRequest.post(
+      `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+    ).pipe(
+      HttpClientRequest.bearerToken(accessToken),
+      HttpClientRequest.setHeader("connect-protocol-version", "1"),
+    );
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
