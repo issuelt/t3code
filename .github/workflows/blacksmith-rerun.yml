@@ -1,0 +1,40 @@
+name: Blacksmith rerun
+
+# Reruns a Fork CI or Fork Release run that a Blacksmith watchdog cancelled
+# because a job waited 5 minutes without a runner. The watchdog uploads
+# blacksmith-stalled-attempt-<n> before it cancels, and blacksmith-rerun.cjs
+# reruns only a cancelled same-repository run under attempt 3 that has that
+# artifact and no newer run. A person's cancel uploads no artifact. The rerun's
+# route jobs keep the stalled labels on hosted runners.
+
+on:
+  workflow_run:
+    workflows: [Fork CI, Fork Release]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  rerun:
+    if: >-
+      github.repository == 'issuelt/t3code'
+      && github.event.workflow_run.conclusion == 'cancelled'
+      && github.event.workflow_run.head_repository.full_name == 'issuelt/t3code'
+      && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # workflow_run uses the default branch's files; this fetch reads main's script without credentials.
+      - name: Check out the rerunner from main
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
+      - name: Rerun a run the watchdog cancelled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/blacksmith-rerun.cjs "$GITHUB_EVENT_PATH"

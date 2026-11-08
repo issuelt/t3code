@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { factor, jobUsage, candidateFiles, tally } = require("./blacksmith-usage.cjs");
+const { factor, jobUsage, stalledLabel, candidateFiles, tally } = require("./blacksmith-usage.cjs");
 
 const now = Date.UTC(2026, 10, 15, 12);
 const at = (minutesAgo, seconds = 0) =>
@@ -394,4 +394,107 @@ test("a run listing past 1,000 results marks the tally incomplete", async () => 
   const result = await tally({ request: fake.request, files, previous: null, now });
   assert.equal(result.complete, false);
   assert.equal(result.used, 20);
+});
+
+// A job that waited in the queue and ended without a runner, like a watchdog cancel.
+const waited = (overrides = {}) =>
+  job({
+    runner_name: null,
+    status: "completed",
+    conclusion: "cancelled",
+    started_at: at(10),
+    created_at: at(10),
+    completed_at: at(4),
+    labels: ["blacksmith-4vcpu-windows-2025"],
+    ...overrides,
+  });
+
+test("a job that ended without a runner after 5 minutes names its stalled label", () => {
+  assert.equal(stalledLabel(waited()), "blacksmith-4vcpu-windows-2025");
+  assert.equal(stalledLabel(waited({ conclusion: "failure" })), "blacksmith-4vcpu-windows-2025");
+  assert.equal(
+    stalledLabel(waited({ created_at: at(9), completed_at: at(4) })),
+    "blacksmith-4vcpu-windows-2025",
+  );
+});
+
+test("skipped, hosted, started, short, and running jobs are not stalled", () => {
+  assert.equal(stalledLabel(waited({ conclusion: "skipped" })), null);
+  assert.equal(stalledLabel(waited({ labels: ["windows-2025"] })), null);
+  assert.equal(stalledLabel(waited({ runner_name: "blacksmith-4vcpu-windows-2025-a" })), null);
+  // A person or a concurrency group cancelled it before the watchdog would have.
+  assert.equal(stalledLabel(waited({ created_at: at(9), completed_at: at(4, -1) })), null);
+  assert.equal(
+    stalledLabel(waited({ status: "queued", conclusion: null, completed_at: null })),
+    null,
+  );
+});
+
+test("the tally records each stalled label with its newest time and counts no minutes for it", async () => {
+  const fake = api({
+    runs: {
+      1: [{ id: 10, status: "completed", run_attempt: 1 }],
+      2: [{ id: 20, status: "completed", run_attempt: 2 }],
+    },
+    jobs: {
+      10: [
+        job(),
+        waited({ labels: ["blacksmith-4vcpu-ubuntu-2404"] }),
+        waited({ conclusion: "skipped" }),
+      ],
+      20: [
+        waited({ completed_at: at(30), created_at: at(40) }),
+        waited(),
+        job({
+          labels: ["blacksmith-4vcpu-windows-2025"],
+          runner_name: "blacksmith-4vcpu-windows-2025-a",
+        }),
+      ],
+    },
+  });
+  const result = await tally({ request: fake.request, files, previous: null, now });
+  assert.deepEqual(result.stalled, {
+    "blacksmith-4vcpu-ubuntu-2404": at(4).replace(/\.\d+Z$/, "Z"),
+    "blacksmith-4vcpu-windows-2025": at(4).replace(/\.\d+Z$/, "Z"),
+  });
+  assert.equal(result.used, 20 + 20);
+});
+
+test("stalled labels carry over from the previous tally, across months, for 24 hours", async () => {
+  const previous = {
+    month: "2026-10",
+    stalled: {
+      "blacksmith-4vcpu-windows-2025": at(23 * 60),
+      "blacksmith-8vcpu-ubuntu-2404": at(24 * 60 + 1),
+      "blacksmith-2vcpu-ubuntu-2404": "not a time",
+    },
+  };
+  const result = await tally({ request: api().request, files, previous, now });
+  assert.deepEqual(result.stalled, {
+    "blacksmith-4vcpu-windows-2025": at(23 * 60).replace(/\.\d+Z$/, "Z"),
+  });
+});
+
+test("a newer stall replaces the carried time, and an older one does not", async () => {
+  const previous = { month: "2026-11", stalled: { "blacksmith-4vcpu-windows-2025": at(60) } };
+  const fake = api({
+    runs: {
+      1: [
+        { id: 10, status: "completed", run_attempt: 1 },
+        { id: 11, status: "completed", run_attempt: 1 },
+      ],
+    },
+    jobs: { 10: [waited()], 11: [waited({ created_at: at(200), completed_at: at(120) })] },
+  });
+  const result = await tally({ request: fake.request, files, previous, now });
+  assert.deepEqual(result.stalled, {
+    "blacksmith-4vcpu-windows-2025": at(4).replace(/\.\d+Z$/, "Z"),
+  });
+});
+
+test("the rerun workflow is not a candidate", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blacksmith-usage-"));
+  fs.writeFileSync(path.join(dir, "blacksmith-rerun.yml"), "# blacksmith\nruns-on: ubuntu-24.04\n");
+  assert.deepEqual(candidateFiles(dir), []);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

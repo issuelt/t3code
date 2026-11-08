@@ -4,6 +4,8 @@ name: Blacksmith usage
 # them as the blacksmith-usage artifact. route-blacksmith.sh reads the newest
 # one from a successful main run and keeps jobs hosted when it is missing,
 # older than 90 minutes, incomplete, or from another month.
+# The tally also lists Blacksmith labels whose jobs ended without a runner,
+# and the router keeps those labels hosted for 6 hours.
 
 on:
   schedule:

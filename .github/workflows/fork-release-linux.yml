@@ -197,6 +197,52 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-blacksmith.sh
 
+  # GitHub has no queue timeout for a job. If desktop-linux or android waits 5
+  # minutes for a Blacksmith runner, this cancels the run, and
+  # blacksmith-rerun.yml reruns it with that label left hosted.
+  watchdog:
+    needs: route
+    if: >-
+      ${{ !cancelled() && inputs.stage == 'build'
+        && (needs.route.outputs.blacksmith_linux != '' || needs.route.outputs.blacksmith_android != '') }}
+    runs-on: ubuntu-24.04
+    # 5 minutes of queue, polls every 20 seconds, and up to 3 failed polls.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      # The script comes from main, like the router, never from a pull request.
+      - name: Check out the watchdog from main
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
+      - name: Wait for every Blacksmith job to get a runner
+        id: watch
+        env:
+          BLACKSMITH_LABELS: ${{ format('{0} {1}', needs.route.outputs.blacksmith_linux, needs.route.outputs.blacksmith_android) }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/blacksmith-watchdog.cjs watch stalled
+      # blacksmith-rerun.yml reruns a cancelled run only when this artifact exists.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.watch.outputs.stalled == 'true'
+        with:
+          name: blacksmith-stalled-attempt-${{ github.run_attempt }}
+          path: stalled/blacksmith-stalled.json
+          if-no-files-found: error
+          # Two watchdogs of one attempt can stall together; either marker is enough.
+          overwrite: true
+          retention-days: 2
+      - name: Cancel the run
+        if: steps.watch.outputs.stalled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/blacksmith-watchdog.cjs cancel
+
   # Shares one route answer with android; when Android takes VM104, this build
   # tries Blacksmith, then a hosted runner.
   desktop-linux:

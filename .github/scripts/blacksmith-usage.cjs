@@ -7,6 +7,9 @@ const path = require("node:path");
 
 const MAX_CALLS = 300;
 const MAX_LISTED = 1000;
+// blacksmith-watchdog.cjs cancels a run after this long; a shorter wait is a person's or a concurrency cancel.
+const STALL_MINUTES = 5;
+const STALLED_KEEP_HOURS = 24;
 const LABEL = /^blacksmith-(\d+)vcpu-(ubuntu|windows|macos)-\d+(-arm(?=$|-))?(?:$|-)/;
 
 // vCPU/2 for Ubuntu x64, times 2 for Windows, times 20 for macOS, times 0.625 for ARM.
@@ -32,6 +35,25 @@ function jobUsage(job, now) {
   return Math.max(1, Math.ceil(seconds / 60)) * f;
 }
 
+const isoSeconds = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
+
+// The stalled map's source: a job that ended without a runner after a real wait.
+// The router keeps its label hosted for 6 hours. Skipped jobs never queued.
+function stalledLabel(job) {
+  if (job.runner_name || !job.conclusion || job.conclusion === "skipped") return null;
+  const label = (job.labels ?? []).find((l) => l.startsWith("blacksmith-"));
+  if (!label) return null;
+  const waited = Date.parse(job.completed_at) - Date.parse(job.created_at);
+  return waited >= STALL_MINUTES * 60_000 ? label : null;
+}
+
+// Keeps the newer time per label, and drops entries older than STALLED_KEEP_HOURS.
+function mergeStalled(into, label, at, now) {
+  const time = Date.parse(at);
+  if (!Number.isFinite(time) || now - time > STALLED_KEEP_HOURS * 3_600_000) return;
+  if (!(label in into) || Date.parse(into[label]) < time) into[label] = isoSeconds(time);
+}
+
 function monthOf(now) {
   return new Date(now).toISOString().slice(0, 7);
 }
@@ -42,11 +64,11 @@ function previousMonthStart(month) {
 }
 
 // A workflow can use Blacksmith if its file names it or calls a file that does.
-// This tally names Blacksmith too but always runs hosted.
+// This tally and the rerunner name Blacksmith too but always run hosted.
+const HOSTED_ONLY = new Set(["blacksmith-usage.yml", "blacksmith-rerun.yml"]);
+
 function candidateFiles(dir) {
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => /\.ya?ml$/.test(f) && f !== "blacksmith-usage.yml");
+  const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f) && !HOSTED_ONLY.has(f));
   const text = Object.fromEntries(
     files.map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]),
   );
@@ -81,6 +103,10 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
 
   const runs = {};
   const workflows = {};
+  // Stalls are about runner capacity, not the month, so they carry over a month boundary.
+  const stalled = {};
+  for (const [label, at] of Object.entries(previous?.stalled ?? {}))
+    mergeStalled(stalled, label, at, now);
   let used = 0;
   let complete = true;
   try {
@@ -112,6 +138,8 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
                 `/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`,
               );
               for (const job of jobs.jobs) {
+                const label = stalledLabel(job);
+                if (label) mergeStalled(stalled, label, job.completed_at, now);
                 if (job.started_at && monthOf(Date.parse(job.started_at)) === month)
                   total += jobUsage(job, now);
               }
@@ -155,9 +183,10 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
     month,
     used: Math.ceil(used),
     complete,
-    computed_at: new Date(now).toISOString().replace(/\.\d+Z$/, "Z"),
+    computed_at: isoSeconds(now),
     calls,
     workflows,
+    stalled,
     runs: complete ? runs : { ...cached, ...runs },
   };
 }
@@ -189,9 +218,11 @@ async function main() {
     `Blacksmith ${result.month}: ${result.used} 2-vCPU minutes, ${result.calls} calls, complete: ${result.complete}.`,
   );
   for (const [file, total] of Object.entries(result.workflows)) console.log(`  ${file}: ${total}`);
+  for (const [label, at] of Object.entries(result.stalled))
+    console.log(`  stalled ${label} at ${at}`);
 }
 
-module.exports = { factor, jobUsage, candidateFiles, tally, MAX_CALLS };
+module.exports = { factor, jobUsage, stalledLabel, candidateFiles, tally, MAX_CALLS };
 
 if (require.main === module) {
   main().catch((error) => {

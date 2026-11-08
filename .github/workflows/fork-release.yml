@@ -27,11 +27,12 @@ permissions:
 jobs:
   version:
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
-    # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
+    # GitHub checks every nested job against each call, even a skipped one. The callee's hosted publish job needs
+    # contents: write, its route jobs actions: read, and its build-stage watchdog actions: write to cancel the run.
+    # These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
-      actions: read
+      actions: write
     with:
       stage: version
 
@@ -195,14 +196,61 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
+  # GitHub has no queue timeout for a job. If the Windows build waits 5 minutes
+  # for a Blacksmith runner, this cancels the run, and blacksmith-rerun.yml
+  # reruns it with the label left hosted.
+  watchdog-windows:
+    if: >-
+      ${{ github.event_name != 'pull_request' && github.repository == 'issuelt/t3code'
+        && github.ref == 'refs/heads/main' && needs.version.outputs.blacksmith_windows != '' }}
+    needs: version
+    runs-on: ubuntu-24.04
+    # 5 minutes of queue, polls every 20 seconds, and up to 3 failed polls.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      # The script comes from main, like the router, never from a pull request.
+      - name: Check out the watchdog from main
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch -q --no-tags --depth=1 origin refs/heads/main
+          git sparse-checkout set --no-cone '/.github/scripts/'
+          git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
+      - name: Wait for every Blacksmith job to get a runner
+        id: watch
+        env:
+          BLACKSMITH_LABELS: ${{ needs.version.outputs.blacksmith_windows }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/blacksmith-watchdog.cjs watch stalled
+      # blacksmith-rerun.yml reruns a cancelled run only when this artifact exists.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: steps.watch.outputs.stalled == 'true'
+        with:
+          name: blacksmith-stalled-attempt-${{ github.run_attempt }}
+          path: stalled/blacksmith-stalled.json
+          if-no-files-found: error
+          # Two watchdogs of one attempt can stall together; either marker is enough.
+          overwrite: true
+          retention-days: 2
+      - name: Cancel the run
+        if: steps.watch.outputs.stalled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/blacksmith-watchdog.cjs cancel
+
   linux:
     needs: version
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
     # GitHub checks every nested job against each call, and the callee's hosted publish job needs
-    # contents: write, and its route job needs actions: read. These are ceilings: the callee's other jobs keep its top-level contents: read.
+    # contents: write, its route job actions: read, and its watchdog actions: write to cancel the run.
+    # These are ceilings: the callee's other jobs keep its top-level contents: read.
     permissions:
       contents: write
-      actions: read
+      actions: write
     with:
       stage: build
       version: ${{ needs.version.outputs.version }}
@@ -215,9 +263,10 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [version, desktop, linux]
     uses: issuelt/t3code/.github/workflows/fork-release-linux.yml@main
+    # The same ceilings as the version call.
     permissions:
       contents: write
-      actions: read
+      actions: write
     with:
       stage: publish
       version: ${{ needs.version.outputs.version }}
