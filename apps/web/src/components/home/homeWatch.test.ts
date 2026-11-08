@@ -74,6 +74,9 @@ describe("diffWatchedThreads", () => {
           latestRun: {
             runId: "run-1",
             status: "completed",
+            // Queued at 09:55 behind another run, started at 09:58.
+            requestedAt: "2026-10-03T09:55:00.000Z",
+            startedAt: "2026-10-03T09:58:00.000Z",
             completedAt: "2026-10-03T10:00:00.000Z",
           },
           runtime: null,
@@ -81,7 +84,16 @@ describe("diffWatchedThreads", () => {
       ],
       home,
     );
-    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-1" }]);
+    expect(done.events).toMatchObject([
+      {
+        threadId: "a",
+        kind: "completed",
+        runId: "run-1",
+        runStartedAt: "2026-10-03T09:58:00.000Z",
+      },
+    ]);
+    // A queue wait is not part of the run, so Home must not count sends made during it.
+    expect(done.events[0]).not.toHaveProperty("runRequestedAt");
   });
 
   it("ignores unwatched threads and every Home thread, even when watching all", () => {

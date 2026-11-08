@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
@@ -18,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as HomeWorkspace from "./HomeWorkspace.ts";
@@ -40,6 +42,10 @@ const makeHome = (
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   // Threads with a running turn, to model a Home that is busy when it is replaced.
   const running = new Set<string>();
+  // Messages in Home's thread, by the thread that sent each one.
+  const homeMessages: Array<{ readonly senderThreadId?: ThreadId; readonly createdAt: string }> =
+    [];
+  const recordsFailure = { failing: false };
   const shell = (threadId: ThreadId) =>
     ({
       id: threadId,
@@ -81,6 +87,17 @@ const makeHome = (
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+          getThreadRecords: (threadId) =>
+            recordsFailure.failing
+              ? Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId }))
+              : Effect.succeed({
+                  thread: shell(threadId),
+                  messages: homeMessages.map((message) => ({
+                    ...message,
+                    role: "user",
+                    createdAt: DateTime.makeUnsafe(message.createdAt),
+                  })),
+                } as never),
           isCoordinationRun: (_threadId, runId) => Effect.succeed(runId === "coordination"),
           sendToThread: (input) => {
             if (sendFailures.remaining > 0) {
@@ -102,7 +119,16 @@ const makeHome = (
       ),
     ),
   );
-  return { layer, launched, sent, dispatched, sendFailures, running };
+  return {
+    layer,
+    launched,
+    sent,
+    dispatched,
+    sendFailures,
+    running,
+    homeMessages,
+    recordsFailure,
+  };
 };
 
 const event = (threadId: string, kind: HomeWatchEvent["kind"]): HomeWatchEvent => ({
@@ -347,5 +373,96 @@ it.effect("delivers healthy blockers and unresolved remote completions in the sa
     expect(sent).toHaveLength(1);
     for (const id of ["offline", "blocker", "approval"])
       expect(sent[0]?.text).toContain(`Thread ${id}`);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("skips a completion when the thread already messaged Home during that run", () => {
+  const { layer, sent, homeMessages } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    homeMessages.push({
+      senderThreadId: ThreadId.make("reported"),
+      createdAt: "2026-11-07T10:05:00.000Z",
+    });
+    yield* home.report({
+      events: [{ ...event("reported", "completed"), runStartedAt: "2026-11-07T10:00:00.000Z" }],
+    });
+    expect(sent).toHaveLength(0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("still reports a completion after a send from an earlier run", () => {
+  const { layer, sent, homeMessages } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    homeMessages.push(
+      { senderThreadId: ThreadId.make("earlier"), createdAt: "2026-11-07T09:55:00.000Z" },
+      { senderThreadId: ThreadId.make("someone-else"), createdAt: "2026-11-07T10:05:00.000Z" },
+    );
+    yield* home.report({
+      events: [{ ...event("earlier", "completed"), runStartedAt: "2026-11-07T10:00:00.000Z" }],
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toContain("Thread earlier");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "reports a queued run's completion when the thread messaged Home before it started",
+  () => {
+    const { layer, sent, homeMessages } = makeHome();
+    return Effect.gen(function* () {
+      const home = yield* HomeService.HomeService;
+      const enabled = yield* home.enable({ modelSelection });
+      yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+      // Run B was queued at 10:00 behind run A. Run A messaged Home at 10:05, then B started at 10:10.
+      homeMessages.push({
+        senderThreadId: ThreadId.make("queued"),
+        createdAt: "2026-11-07T10:05:00.000Z",
+      });
+      yield* home.report({
+        events: [{ ...event("queued", "completed"), runStartedAt: "2026-11-07T10:10:00.000Z" }],
+      });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.text).toContain("Thread queued");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("reports a completion when Home's messages cannot be read", () => {
+  const { layer, sent, homeMessages, recordsFailure } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    homeMessages.push({
+      senderThreadId: ThreadId.make("unreadable"),
+      createdAt: "2026-11-07T10:05:00.000Z",
+    });
+    recordsFailure.failing = true;
+    yield* home.report({
+      events: [{ ...event("unreadable", "completed"), runStartedAt: "2026-11-07T10:00:00.000Z" }],
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toContain("Thread unreadable");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reports a completion from an older client that sends no run start", () => {
+  const { layer, sent, homeMessages } = makeHome();
+  return Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const enabled = yield* home.enable({ modelSelection });
+    yield* home.updateWatches(enabled.threadId, (settings) => ({ ...settings, watchAll: true }));
+    homeMessages.push({
+      senderThreadId: ThreadId.make("old-client"),
+      createdAt: "2026-11-07T10:05:00.000Z",
+    });
+    yield* home.report({ events: [event("old-client", "completed")] });
+    expect(sent).toHaveLength(1);
   }).pipe(Effect.provide(layer));
 });
