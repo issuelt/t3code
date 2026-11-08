@@ -448,10 +448,20 @@ const layerBase: Layer.Layer<
             ["messages"],
             { messageRunIds: chain.runIds, messageRoles: ["user"] },
           );
+          const { turnItems: toolItems } = yield* projectionStore.getThreadRecords(
+            event.threadId,
+            ["turnItems"],
+            {
+              turnItemRunIds: chain.runIds,
+              turnItemTypes: ["dynamic_tool"],
+              turnItemStatuses: ["completed"],
+            },
+          );
           const results = requestResults({
             messages,
             sourceRunId: event.payload.id,
             text: event.payload.status,
+            toolItems,
           });
           if (results.length === 0) continue;
           const { messages: output } = yield* projectionStore.getThreadRecords(

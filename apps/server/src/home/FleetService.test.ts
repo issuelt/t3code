@@ -468,6 +468,7 @@ it("routes each request to its own environment and thread without replying to re
     messages,
     sourceRunId: RunId.make("finished"),
     text: "The dependency is pinned.",
+    toolItems: [],
   };
   expect(requestResults(input)).toEqual([
     {
@@ -494,6 +495,55 @@ it("routes each request to its own environment and thread without replying to re
   expect(
     requestResults({ ...input, messages: nudges }).map((result) => result.requestMessageId),
   ).toEqual([MessageId.make("a-third"), MessageId.make("b")]);
+});
+
+it("skips the automatic result for a requester the run already messaged", () => {
+  const remote = { environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("other") };
+  const input = {
+    messages: [
+      { id: MessageId.make("a"), coordination: { kind: "request", requester: actor } },
+    ] satisfies Parameters<typeof requestResults>[0]["messages"],
+    sourceRunId: RunId.make("finished"),
+    text: "The dependency is pinned.",
+  };
+  const send = (
+    target: { readonly threadId: ThreadId; readonly environmentId?: EnvironmentId },
+    status: "completed" | "failed" | "cancelled" = "completed",
+    toolName = "mcp__t3-code__t3_thread_send",
+  ) => ({
+    type: "dynamic_tool" as const,
+    toolName,
+    status,
+    input: { ...target, message: "Pinned to 4.2." },
+  });
+  const requesters = (toolItems: Parameters<typeof requestResults>[0]["toolItems"]) =>
+    requestResults({ ...input, toolItems }).map((result) => result.requester);
+
+  expect(requesters([send({ threadId: actor.threadId })])).toEqual([]);
+  expect(requesters([send({ ...actor }, "completed", "t3-code.t3_thread_send")])).toEqual([]);
+  expect(requesters([send({ threadId: ThreadId.make("elsewhere") })])).toEqual([actor]);
+  expect(requesters([send({ threadId: actor.threadId }, "failed")])).toEqual([actor]);
+  expect(requesters([send({ threadId: actor.threadId }, "cancelled")])).toEqual([actor]);
+  expect(
+    requesters([send({ threadId: actor.threadId }, "completed", "mcp__t3-code__t3_thread_read")]),
+  ).toEqual([actor]);
+  // A send that names another environment does not answer a requester here.
+  expect(
+    requesters([send({ threadId: actor.threadId, environmentId: remote.environmentId })]),
+  ).toEqual([actor]);
+
+  const twoRequesters = {
+    ...input,
+    messages: [
+      ...input.messages,
+      { id: MessageId.make("b"), coordination: { kind: "request", requester: remote } },
+    ] satisfies Parameters<typeof requestResults>[0]["messages"],
+  };
+  expect(
+    requestResults({ ...twoRequesters, toolItems: [send(remote)] }).map(
+      (result) => result.requestMessageId,
+    ),
+  ).toEqual([MessageId.make("a")]);
 });
 
 it.effect(

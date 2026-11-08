@@ -2,8 +2,10 @@ import {
   type MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   RunId,
 } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Schema from "effect/Schema";
 
 export class CoordinationResultDeferred extends Schema.TaggedError<CoordinationResultDeferred>()(
@@ -35,15 +37,42 @@ export function restartChain(
 }
 
 type Message = Pick<OrchestrationV2ConversationMessage, "id" | "coordination">;
+type ToolItem = Pick<OrchestrationV2TurnItem, "type" | "status"> & {
+  readonly toolName?: string | null;
+  readonly input?: unknown;
+};
+
+/**
+ * Whether the run chain reached the requester with a completed `t3_thread_send`. A send that
+ * names no environment acts in the run's own; its thread id stands for the requester there.
+ */
+function messagedRequester(
+  toolItems: ReadonlyArray<ToolItem>,
+  requester: { readonly environmentId: string; readonly threadId: string },
+) {
+  return toolItems.some(({ type, status, toolName, input }) => {
+    if (type !== "dynamic_tool" || status !== "completed") return false;
+    if (resolveT3McpToolId(toolName) !== "t3_thread_send") return false;
+    if (typeof input !== "object" || input === null) return false;
+    const target = input as { readonly threadId?: unknown; readonly environmentId?: unknown };
+    return (
+      target.threadId === requester.threadId &&
+      (target.environmentId === undefined || target.environmentId === requester.environmentId)
+    );
+  });
+}
 
 /**
  * One result per requester: a run that took in several requests from the same thread answers
- * them together, so the requester receives that answer once, for its latest request.
+ * them together, so the requester receives that answer once, for its latest request. A
+ * requester the run chain already messaged with `t3_thread_send` has its answer and gets none.
  */
 export function requestResults(input: {
   readonly messages: ReadonlyArray<Message>;
   readonly sourceRunId: RunId;
   readonly text: string;
+  /** The run chain's turn items; only completed `t3_thread_send` calls count. */
+  readonly toolItems: ReadonlyArray<ToolItem>;
 }) {
   const latestByRequester = new Map<
     string,
@@ -62,12 +91,14 @@ export function requestResults(input: {
       requestMessageId: message.id,
     });
   }
-  return [...latestByRequester.values()].map(({ requester, requestMessageId }) => ({
-    requester,
-    requestMessageId,
-    sourceRunId: input.sourceRunId,
-    text: input.text,
-  }));
+  return [...latestByRequester.values()]
+    .filter(({ requester }) => !messagedRequester(input.toolItems, requester))
+    .map(({ requester, requestMessageId }) => ({
+      requester,
+      requestMessageId,
+      sourceRunId: input.sourceRunId,
+      text: input.text,
+    }));
 }
 
 export function isCoordinationRun(
