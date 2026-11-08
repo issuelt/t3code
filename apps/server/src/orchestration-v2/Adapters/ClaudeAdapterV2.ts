@@ -4333,8 +4333,12 @@ interface ClaudeWakeTurnHold {
   awaitsCurrentTurn: boolean;
   // A turn-start frame arrived after the notification, which cancels the deadline.
   turnStarted: boolean;
-  // The hold ends if no turn-start frame arrives within CLAUDE_WAKE_TURN_START_DEADLINE.
-  deadlineArmed: boolean;
+  // The armed deadline. The hold ends if no turn-start frame arrives within
+  // CLAUDE_WAKE_TURN_START_DEADLINE. A turn start clears it, and re-arming replaces it.
+  deadline: object | undefined;
+  // The notification's run_id. Its wake turn's result carries it as origin.runId.
+  // Absent from CLIs that predate it.
+  readonly runId: string | undefined;
 }
 
 interface ActiveClaudeTurnContext {
@@ -8788,7 +8792,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             const heldTask = heldForWakeTurn ? undefined : input.wakeTurnHoldTask;
             if (heldTask !== undefined) {
-              yield* holdTaskForWakeTurn(input.nativeThreadId, heldTask);
+              yield* holdTaskForWakeTurn(input.nativeThreadId, heldTask, message.run_id);
             }
             const removed = heldForWakeTurn
               ? false
@@ -8876,14 +8880,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           taskId: string,
           hold: ClaudeWakeTurnHold,
         ) {
-          if (hold.deadlineArmed) return;
-          hold.deadlineArmed = true;
+          if (hold.deadline !== undefined) return;
+          const deadline = {};
+          hold.deadline = deadline;
           yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE).pipe(
             Effect.andThen(
               sdkMessageLock.withPermits(1)(
                 Effect.gen(function* () {
                   if (
-                    hold.turnStarted ||
+                    hold.deadline !== deadline ||
                     (yield* Ref.get(wakeTurnHoldsByNativeThread))
                       .get(nativeThreadId)
                       ?.get(taskId) !== hold
@@ -8906,13 +8911,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const holdTaskForWakeTurn = Effect.fnUntraced(function* (
           nativeThreadId: string,
           task: OrchestrationV2PendingBackgroundTask,
+          runId: string | undefined,
         ) {
           const awaitsCurrentTurn =
             openNativeTurns.has(nativeThreadId) || (yield* Ref.get(activeTurn)) !== null;
           const hold: ClaudeWakeTurnHold = {
             awaitsCurrentTurn,
             turnStarted: false,
-            deadlineArmed: false,
+            deadline: undefined,
+            runId,
           };
           yield* Ref.update(wakeTurnHoldsByNativeThread, (current) =>
             new Map(current).set(
@@ -8932,10 +8939,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!awaitsCurrentTurn) yield* armWakeTurnDeadline(nativeThreadId, task.taskId, hold);
         });
 
-        // Runs on live frames only: a drained wake replays its init and result.
-        // A turn start begins the wake turn of every task held before it, and the next root result
-        // ends those holds. A task notified inside an open turn stays held past that turn's result
-        // for a wake turn of its own.
+        // Live frames only. A turn start marks every hold started. With run ids, a root result ends
+        // only the hold matching its origin.runId and returns the rest to awaiting a turn start;
+        // without them it ends every started hold. A task notified inside an open turn stays held
+        // past that turn's result.
         const advanceWakeTurnHolds = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           message: SDKMessage,
@@ -8949,20 +8956,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ?.values() ?? []) {
               hold.awaitsCurrentTurn = false;
               hold.turnStarted = true;
+              hold.deadline = undefined;
             }
             return;
           }
           if (message.type !== "result") return;
           openNativeTurns.delete(nativeThreadId);
+          const origin = message.origin;
+          const resultRunId =
+            origin?.kind === "task-notification" && typeof origin.runId === "string"
+              ? origin.runId
+              : undefined;
           const ended: Array<string> = [];
           for (const [taskId, hold] of (yield* Ref.get(wakeTurnHoldsByNativeThread)).get(
             nativeThreadId,
           ) ?? []) {
-            if (!hold.awaitsCurrentTurn) {
+            const answered = hold.awaitsCurrentTurn
+              ? false
+              : resultRunId !== undefined || hold.runId !== undefined
+                ? hold.runId === resultRunId
+                : true;
+            if (answered) {
               ended.push(taskId);
               continue;
             }
             hold.awaitsCurrentTurn = false;
+            hold.turnStarted = false;
             yield* armWakeTurnDeadline(nativeThreadId, taskId, hold);
           }
           // An active turn publishes its roster when it finalizes on this result.
@@ -11012,15 +11031,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live: ClaudeLiveQueryContext,
           options?: { readonly forGoalCheck?: boolean },
         ) {
-          // A task held for its wake turn has already finished, so a replacement kills no work.
-          // Only T3's wake buffer carries over to the next process. The CLI's own queued
-          // notification dies with the old one.
-          const heldTaskIds = yield* wakeTurnTaskIds(live.nativeThreadId);
+          // A task held for its wake turn has already finished, so a replacement kills no work
+          // until that wake turn starts. Only T3's wake buffer carries over to the next process.
+          // The CLI's own queued notification dies with the old one.
+          const holds = (yield* Ref.get(wakeTurnHoldsByNativeThread)).get(live.nativeThreadId);
           for (const taskId of rosterForNativeThread(
             yield* Ref.get(pendingBackgroundTasksByNativeThread),
             live.nativeThreadId,
           ).keys()) {
-            if (!heldTaskIds.has(taskId)) return true;
+            const hold = holds?.get(taskId);
+            if (hold === undefined || hold.turnStarted) return true;
           }
           const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
