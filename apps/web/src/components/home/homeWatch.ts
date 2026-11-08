@@ -26,6 +26,32 @@ export const homeWatchKey = (environmentId: string, threadId: string) =>
 
 const UNSEEN = { attention: null, completion: null, ended: false };
 
+/** The user already watched a run they started inside the thread, so its end is not news to Home. */
+function startedByUser(thread: EnvironmentThreadShell): boolean {
+  const authoredAt = Date.parse(thread.latestUserAuthoredMessageAt ?? "");
+  const requestedAt = Date.parse(thread.latestRun?.requestedAt ?? "");
+  return Number.isFinite(authoredAt) && Number.isFinite(requestedAt) && authoredAt >= requestedAt;
+}
+
+/**
+ * Drops buffered completions whose thread has since started a newer run, such
+ * as a child's result starting its parent's next run. Called at send time with
+ * the current shells.
+ */
+export function dropSupersededCompletions(
+  events: ReadonlyArray<HomeWatchEvent>,
+  shells: ReadonlyArray<EnvironmentThreadShell>,
+): Array<HomeWatchEvent> {
+  const latestRuns = new Map(
+    shells.map((shell) => [homeWatchKey(shell.environmentId, shell.id), shell.latestRun?.runId]),
+  );
+  return events.filter((event) => {
+    if (event.kind !== "completed" || event.runId === undefined) return true;
+    const latest = latestRuns.get(homeWatchKey(event.environmentId, event.threadId));
+    return latest === undefined || latest === event.runId;
+  });
+}
+
 /**
  * First sight of a thread only sets a baseline, except threads launched after
  * start (not in `knownWatchKeys`), which compare against empty state. Only live
@@ -109,7 +135,8 @@ export function diffWatchedThreads(input: {
       events.push({ ...eventBase(state), kind: attentionKind });
     } else if (
       completion !== null &&
-      (prior.completion === null || completion > prior.completion)
+      (prior.completion === null || completion > prior.completion) &&
+      !startedByUser(thread)
     ) {
       events.push({
         ...eventBase(state),
