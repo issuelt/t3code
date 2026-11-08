@@ -6,6 +6,7 @@ import {
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
+  buildPiT3McpExtensionSource,
 } from "./mcpExtensionSource.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -18,7 +19,6 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -167,6 +167,8 @@ describe("materializePiT3McpExtension", () => {
       const path = yield* NodePath.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-atomic-" });
       const anomalies: Array<string> = [];
+      // The fork writes runtime instructions into the extension, so compare against the built source.
+      const expectedLength = buildPiT3McpExtensionSource().length;
       const stopAfter = 120;
       const writer = yield* Effect.forkChild(
         Effect.gen(function* () {
@@ -192,10 +194,8 @@ describe("materializePiT3McpExtension", () => {
             // partial read means the writer truncated the file mid-write.
             if (text.value.length === 0) {
               anomalies.push("empty: truncated mid-write");
-            } else if (text.value.length !== PI_T3_MCP_EXTENSION_SOURCE.length) {
-              anomalies.push(
-                `partial: ${text.value.length} of ${PI_T3_MCP_EXTENSION_SOURCE.length} chars`,
-              );
+            } else if (text.value.length !== expectedLength) {
+              anomalies.push(`partial: ${text.value.length} of ${expectedLength} chars`);
             }
           }),
         ),
