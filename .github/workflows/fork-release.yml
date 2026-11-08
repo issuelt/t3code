@@ -6,7 +6,9 @@ name: Fork Release
 # disabled here.
 # Pull requests only build Linux as a packaging canary; main builds every
 # platform before it publishes. Linux and Android stages live in
-# fork-release-linux.yml, which picks VM104 for trusted events.
+# fork-release-linux.yml, which picks VM104 or Blacksmith for trusted events.
+# Windows uses the Blacksmith label from the version stage while this month's
+# Blacksmith tally leaves room; macOS stays hosted.
 
 on:
   push:
@@ -38,7 +40,12 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: version
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
+    # The version stage writes blacksmith_windows only for trusted events, from a validated variable.
+    runs-on: >-
+      ${{ matrix.platform == 'win' && github.repository == 'issuelt/t3code' && github.ref == 'refs/heads/main'
+        && needs.version.outputs.blacksmith_windows || matrix.runner }}
+    # route-blacksmith.sh reserves Windows's 60 minutes; macOS keeps the default.
+    timeout-minutes: ${{ matrix.timeout_minutes || 360 }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +60,7 @@ jobs:
             target: nsis
             arch: x64
             runner: windows-2025
+            timeout_minutes: 60
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
     steps:
