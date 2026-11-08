@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
-import { requestResults, restartChain } from "./CoordinationDelivery.ts";
+import { coordinationToolItemTypes, requestResults, restartChain } from "./CoordinationDelivery.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectStoredEventForWire } from "./WireProjection.ts";
@@ -453,7 +453,7 @@ const layerBase: Layer.Layer<
             ["turnItems"],
             {
               turnItemRunIds: chain.runIds,
-              turnItemTypes: ["dynamic_tool"],
+              turnItemTypes: coordinationToolItemTypes,
               turnItemStatuses: ["completed"],
             },
           );
