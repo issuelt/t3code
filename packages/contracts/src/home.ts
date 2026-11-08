@@ -505,6 +505,8 @@ export const HomeWatchEvent = Schema.Struct({
   title: Schema.String.check(Schema.isMaxLength(300)),
   kind: HomeWatchEventKind,
   runId: Schema.optional(RunId),
+  /** When the completed run was requested; Home skips it if the thread messaged Home since. */
+  runRequestedAt: Schema.optional(IsoDateTime),
   detail: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
 });
 export type HomeWatchEvent = typeof HomeWatchEvent.Type;

@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -371,12 +372,49 @@ const make = Effect.gen(function* () {
           { concurrency: "unbounded" },
         ),
       );
+      // A thread that already messaged Home during the run has reported it. Its sends land in
+      // Home's own thread even when it lives on another environment, so only local messages count.
+      const alreadyReported = (
+        homeThread: ThreadId,
+        candidates: ReadonlyArray<HomeWatchEvent>,
+      ): Effect.Effect<ReadonlySet<HomeWatchEvent>> => {
+        const checked = candidates.flatMap((event) => {
+          const since =
+            event.kind === "completed" && event.runRequestedAt !== undefined
+              ? Date.parse(event.runRequestedAt)
+              : Number.NaN;
+          return Number.isFinite(since) ? [{ event, since }] : [];
+        });
+        if (checked.length === 0) return Effect.succeed(new Set());
+        return threads.getThreadRecords(homeThread, ["messages"], { messageRoles: ["user"] }).pipe(
+          Effect.map(({ messages }) => {
+            const latestSend = new Map<ThreadId, number>();
+            for (const message of messages) {
+              if (message.senderThreadId === undefined) continue;
+              const at = DateTime.toEpochMillis(message.createdAt);
+              if (at > (latestSend.get(message.senderThreadId) ?? -Infinity))
+                latestSend.set(message.senderThreadId, at);
+            }
+            return new Set(
+              checked
+                .filter(
+                  ({ event, since }) => (latestSend.get(event.threadId) ?? -Infinity) >= since,
+                )
+                .map(({ event }) => event),
+            );
+          }),
+          Effect.tapError((cause) =>
+            Effect.logWarning("Could not read Home's messages; reporting completions", { cause }),
+          ),
+          Effect.orElseSucceed(() => new Set<HomeWatchEvent>()),
+        );
+      };
       return yield* withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
           if (home.threadId === null) return;
           const watched = new Set(home.watches.map(watchKey));
-          const filtered = events.filter(
+          const candidates = events.filter(
             (event) =>
               event.kind !== "ended" &&
               event.threadId !== home.threadId &&
@@ -386,6 +424,8 @@ const make = Effect.gen(function* () {
                   (watch) => watchKey(watch) === watchKey(event) && watch.reason === "requested",
                 )),
           );
+          const reported = yield* alreadyReported(home.threadId, candidates);
+          const filtered = candidates.filter((event) => !reported.has(event));
           if (filtered.length > 0) yield* deliver(home.threadId, filtered);
           // Watches end only after delivery, so a retried batch is still eligible.
           const ended = new Set(

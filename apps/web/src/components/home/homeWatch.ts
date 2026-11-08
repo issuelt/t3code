@@ -115,6 +115,9 @@ export function diffWatchedThreads(input: {
         ...eventBase(state),
         kind: "completed",
         ...(thread.latestRun === null ? {} : { runId: RunId.make(thread.latestRun.runId) }),
+        ...(thread.latestRun?.requestedAt == null
+          ? {}
+          : { runRequestedAt: thread.latestRun.requestedAt }),
       });
     }
   }

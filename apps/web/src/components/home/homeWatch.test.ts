@@ -69,6 +69,7 @@ describe("diffWatchedThreads", () => {
           latestRun: {
             runId: "run-1",
             status: "completed",
+            requestedAt: "2026-10-03T09:55:00.000Z",
             completedAt: "2026-10-03T10:00:00.000Z",
           },
           runtime: null,
@@ -76,7 +77,14 @@ describe("diffWatchedThreads", () => {
       ],
       home,
     );
-    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-1" }]);
+    expect(done.events).toMatchObject([
+      {
+        threadId: "a",
+        kind: "completed",
+        runId: "run-1",
+        runRequestedAt: "2026-10-03T09:55:00.000Z",
+      },
+    ]);
   });
 
   it("ignores unwatched threads and every Home thread, even when watching all", () => {
