@@ -150,4 +150,47 @@ describe("diffWatchedThreads", () => {
     expect(live.events).toMatchObject([{ threadId: "a", kind: "ended" }]);
     expect(run(live.next, settled, home).events).toEqual([]);
   });
+
+  it("reports a question once while it stays pending across runs, and a new question again", () => {
+    const home = watching("a");
+    const asking = (runId: string, pendingUserInputAt: string) =>
+      thread("a", {
+        hasPendingUserInput: true,
+        pendingUserInputAt,
+        latestRun: { runId, status: "running", completedAt: null },
+      } as Partial<EnvironmentThreadShell>);
+    const first = run(new Map(), [thread("a")], home);
+    const asked = run(first.next, [asking("run-1", "2026-10-03T10:00:00.000Z")], home);
+    expect(asked.events).toMatchObject([{ threadId: "a", kind: "question" }]);
+
+    const stillPending = run(asked.next, [asking("run-2", "2026-10-03T10:00:00.000Z")], home);
+    expect(stillPending.events).toEqual([]);
+
+    const newQuestion = run(stillPending.next, [asking("run-2", "2026-10-03T10:05:00.000Z")], home);
+    expect(newQuestion.events).toMatchObject([{ threadId: "a", kind: "question" }]);
+  });
+
+  it("reports a child's approval on its parent once across runs, and a new approval again", () => {
+    const home = watching("a");
+    const shells = (parentRunId: string, pendingApprovalAt: string) => [
+      thread("a", {
+        pendingSubagentRequest: "approval",
+        latestRun: { runId: parentRunId, status: "running", completedAt: null },
+      } as Partial<EnvironmentThreadShell>),
+      thread("a-child", {
+        lineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: "subagent" },
+        hasPendingApprovals: true,
+        pendingApprovalAt,
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    const first = run(new Map(), [thread("a")], home);
+    const asked = run(first.next, shells("run-1", "2026-10-03T10:00:00.000Z"), home);
+    expect(asked.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+
+    const stillPending = run(asked.next, shells("run-2", "2026-10-03T10:00:00.000Z"), home);
+    expect(stillPending.events).toEqual([]);
+
+    const newApproval = run(stillPending.next, shells("run-2", "2026-10-03T10:05:00.000Z"), home);
+    expect(newApproval.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
+  });
 });

@@ -27,6 +27,41 @@ export const homeWatchKey = (environmentId: string, threadId: string) =>
 const UNSEEN = { attention: null, completion: null, ended: false };
 
 /**
+ * Each thread's newest approval request among its subagent and side-chat
+ * children, keyed by `homeWatchKey`, so a child's approval that rolls up to its
+ * parent keeps one identity across the parent's runs.
+ */
+function childApprovalsByParent(shells: ReadonlyArray<EnvironmentThreadShell>) {
+  const byKey = new Map(
+    shells.map((shell) => [homeWatchKey(shell.environmentId, shell.id), shell]),
+  );
+  const approvals = new Map<string, { readonly request: string; readonly at: string }>();
+  for (const child of shells) {
+    const at = child.pendingApprovalAt;
+    if (at == null) continue;
+    let current = child;
+    const seen = new Set<string>();
+    while (
+      current.lineage.relationshipToParent === "subagent" ||
+      current.lineage.sideChat === true
+    ) {
+      const parentId = current.lineage.parentThreadId;
+      if (parentId === null) break;
+      const key = homeWatchKey(current.environmentId, parentId);
+      if (seen.has(key)) break;
+      seen.add(key);
+      const known = approvals.get(key);
+      if (known === undefined || known.at < at)
+        approvals.set(key, { request: `${child.id}@${at}`, at });
+      const parent = byKey.get(key);
+      if (parent === undefined) break;
+      current = parent;
+    }
+  }
+  return approvals;
+}
+
+/**
  * First sight of a thread only sets a baseline, except threads launched after
  * start (not in `knownWatchKeys`), which compare against empty state. Only live
  * lists count: cached ones keep last state, and in a live list a missing or
@@ -55,6 +90,7 @@ export function diffWatchedThreads(input: {
       ...(label === undefined ? {} : { environmentLabel: label.slice(0, 200) }),
     };
   };
+  let childApprovals: ReturnType<typeof childApprovalsByParent> | undefined;
   for (const thread of input.shells) {
     const key = homeWatchKey(thread.environmentId, thread.id);
     present.add(key);
@@ -77,7 +113,19 @@ export function diffWatchedThreads(input: {
           : status === "failed" || status === "limited"
             ? "failed"
             : null;
-    const attention = attentionKind === null ? null : `${thread.latestRun?.runId ?? ""}:${status}`;
+    // A request that stays pending across runs reports once; failures report per run.
+    const request =
+      attentionKind === "question"
+        ? thread.pendingUserInputAt
+        : attentionKind === "approval"
+          ? thread.hasPendingApprovals
+            ? thread.pendingApprovalAt
+            : (childApprovals ??= childApprovalsByParent(input.shells)).get(key)?.request
+          : undefined;
+    const attention =
+      attentionKind === null
+        ? null
+        : `${request == null ? (thread.latestRun?.runId ?? "") : request}:${status}`;
     const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
     const completion =
       status === "ready" && thread.latestRun?.status === "completed" && Number.isFinite(completedAt)
