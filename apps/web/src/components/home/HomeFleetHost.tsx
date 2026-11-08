@@ -18,7 +18,12 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { homeEnvironment, liveShellEnvironmentIdsAtom } from "../../state/home";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { diffWatchedThreads, homeWatchKey, type WatchedThreadState } from "./homeWatch";
+import {
+  diffWatchedThreads,
+  dropSupersededCompletions,
+  homeWatchKey,
+  type WatchedThreadState,
+} from "./homeWatch";
 
 /** How long watched events gather before Home is woken with all of them. */
 const WATCH_REPORT_DELAY_MS = 1_500;
@@ -185,6 +190,7 @@ function HomeWatchReporter({
   );
   const report = useAtomCommand(homeEnvironment.reportWatchEvents, { reportFailure: false });
   const previous = useRef<ReadonlyMap<string, WatchedThreadState>>(new Map());
+  const latestShells = useRef(shells);
   const pending = useRef<Array<HomeWatchEvent>>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failures = useRef(0);
@@ -202,6 +208,7 @@ function HomeWatchReporter({
       labelFor: (id) => labels.get(id),
     });
     previous.current = next;
+    latestShells.current = shells;
     pending.current.push(...events);
     // Queued events also restart here after an effect replay cleared the timer.
     if (pending.current.length === 0 || timer.current !== null || sending.current) return;
@@ -210,9 +217,13 @@ function HomeWatchReporter({
     // batch about the same thread.
     const send = async () => {
       timer.current = null;
-      sending.current = true;
-      const batch = pending.current;
+      const batch = dropSupersededCompletions(pending.current, latestShells.current);
       pending.current = [];
+      if (batch.length === 0) {
+        failures.current = 0;
+        return;
+      }
+      sending.current = true;
       const result = await report({ environmentId, input: { events: batch } });
       sending.current = false;
       if (stopped.current) return;

@@ -2,7 +2,12 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { EnvironmentId, type HomeSettings, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { diffWatchedThreads, homeWatchKey, type WatchedThreadState } from "./homeWatch";
+import {
+  diffWatchedThreads,
+  dropSupersededCompletions,
+  homeWatchKey,
+  type WatchedThreadState,
+} from "./homeWatch";
 
 const studio = EnvironmentId.make("studio");
 
@@ -232,5 +237,64 @@ describe("diffWatchedThreads", () => {
     const two = run(one.next, [parent, olderChild, newerChild], home);
     expect(two.events).toMatchObject([{ threadId: "a", kind: "approval" }]);
     expect(run(two.next, [parent, olderChild], home).events).toEqual([]);
+  });
+
+  it("reports an agent run's completion but not one the user started in the thread", () => {
+    const home = watching("a");
+    const completed = (runId: string, requestedAt: string, completedAt: string) =>
+      thread("a", {
+        latestRun: { runId, status: "completed", requestedAt, completedAt },
+        latestUserAuthoredMessageAt: "2026-10-03T10:00:00.000Z",
+        runtime: null,
+      } as Partial<EnvironmentThreadShell>);
+    const first = run(new Map(), [thread("a")], home);
+
+    const userRun = run(
+      first.next,
+      [completed("run-1", "2026-10-03T10:00:00.000Z", "2026-10-03T10:01:00.000Z")],
+      home,
+    );
+    expect(userRun.events).toEqual([]);
+
+    const agentRun = run(
+      userRun.next,
+      [completed("run-2", "2026-10-03T10:02:00.000Z", "2026-10-03T10:03:00.000Z")],
+      home,
+    );
+    expect(agentRun.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-2" }]);
+  });
+});
+
+describe("dropSupersededCompletions", () => {
+  it("drops a buffered completion once its thread has started a newer run", () => {
+    const home = watching("a");
+    const first = run(new Map(), [thread("a")], home);
+    const done = run(
+      first.next,
+      [
+        thread("a", {
+          latestRun: {
+            runId: "run-1",
+            status: "completed",
+            requestedAt: "2026-10-03T10:00:00.000Z",
+            completedAt: "2026-10-03T10:01:00.000Z",
+          },
+          runtime: null,
+        } as Partial<EnvironmentThreadShell>),
+      ],
+      home,
+    );
+    expect(done.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-1" }]);
+
+    // Run 2 is queued before the buffered batch is sent.
+    const queued = [
+      thread("a", {
+        latestRun: { runId: "run-2", status: "queued", completedAt: null },
+        runtime: { status: "queued", lastErrorClass: null },
+      } as Partial<EnvironmentThreadShell>),
+    ];
+    expect(dropSupersededCompletions(done.events, queued)).toEqual([]);
+    // Still the latest run: the completion goes out.
+    expect(dropSupersededCompletions(done.events, [thread("a")])).toEqual(done.events);
   });
 });
