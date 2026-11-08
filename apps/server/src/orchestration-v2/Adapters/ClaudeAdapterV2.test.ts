@@ -10439,6 +10439,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({ uuid: nextUuid(), result: "Watching." }),
         );
         yield* harness.awaitTerminal(1);
+        // Monitors that ended mid-turn stay held for a wake turn until the turn-start deadline.
+        yield* TestClock.adjust("2 minutes");
+        yield* harness.until(
+          () =>
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks
+              ?.length === 1,
+        );
 
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
@@ -12488,6 +12495,210 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+    ),
+  );
+
+  const WAKE_HOLD_LAYERS = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
+  );
+  const emptyBackgroundRoster = (uuid: string) =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const startBackgroundBuildTurn = (
+    harness: Effect.Success<typeof makeWakeHarness>,
+    attemptId: string,
+  ) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(attemptId),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+    });
+  const startWakeContinuation = (
+    harness: Effect.Success<typeof makeWakeHarness>,
+    attemptId: string,
+  ) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(attemptId),
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+    });
+  const latestWakeRoster = (harness: Effect.Success<typeof makeWakeHarness>) =>
+    providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks ?? [];
+
+  // The CLI can drop the task from the roster before it sends the notification.
+  it.effect("holds a wake turn whose empty roster arrives before the notification", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-empty-first-1");
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(emptyBackgroundRoster("00000000-0000-4000-8000-000000000901"));
+        yield* harness.offerAndWait(wakeNotification);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork, "no hold after the notification");
+        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
+
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.awaitContinuation(1);
+        yield* startWakeContinuation(harness, "attempt-claude-wake-empty-first-2");
+        yield* harness.offerAndWait(wakeAssistant);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.awaitTerminal(2);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.until(() => latestWakeRoster(harness).length === 0);
+      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
+    ),
+  );
+
+  it.effect("ends a wake turn hold when no turn starts by the deadline", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-deadline-1");
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(emptyBackgroundRoster("00000000-0000-4000-8000-000000000902"));
+        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
+
+        yield* TestClock.adjust("1 minute");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork, "hold ended before the deadline");
+        yield* TestClock.adjust("1 minute");
+        yield* harness.until(() => !backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
+    ),
+  );
+
+  // Claude runs a notification that lands mid-turn as its own turn after that turn's result.
+  it.effect("holds a task notified during a user turn past that turn's result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-mid-turn-1");
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        // The wake turn's init has not arrived yet.
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "the user turn's result released it",
+        );
+        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
+
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.awaitContinuation(1);
+        yield* startWakeContinuation(harness, "attempt-claude-wake-mid-turn-2");
+        yield* harness.offerAndWait(wakeAssistant);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.awaitTerminal(2);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.until(() => latestWakeRoster(harness).length === 0);
+      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
+    ),
+  );
+
+  // A task notified during a wake turn gets a wake turn of its own after that turn's result.
+  it.effect("keeps a task notified during a wake turn held for its own wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const secondStarted = claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "review-task-2",
+          tool_use_id: "toolu_review_2",
+          description: "second",
+          is_backgrounded: true,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000911",
+          session_id: WAKE_NATIVE_SESSION,
+        });
+        const secondNotification = claudeSdkFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "review-task-2",
+          tool_use_id: "toolu_review_2",
+          status: "completed",
+          output_file: "/tmp/claude-replay/tasks/review-task-2.output",
+          summary: "second done",
+          uuid: "00000000-0000-4000-8000-000000000912",
+          session_id: WAKE_NATIVE_SESSION,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-second-1"),
+            text: "Run two builds in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, secondStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(secondNotification);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        // The first result ends only the hold its turn started for. Drain the first wake run.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-second-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+        // The CLI now opens a second wake turn for review-task-2. Its init has not arrived.
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "second task released before its own wake turn",
+        );
+      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
     ),
   );
 
