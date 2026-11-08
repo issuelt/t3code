@@ -61,6 +61,8 @@ jobs:
         continue-on-error: true
         env:
           BLACKSMITH_ROUTING: ${{ vars.BLACKSMITH_ROUTING }}
+          BLACKSMITH_RESERVE_KINDS: linux
+          BLACKSMITH_KINDS: linux
           BLACKSMITH_LINUX_LABEL: ${{ vars.BLACKSMITH_LINUX_LABEL }}
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-blacksmith.sh

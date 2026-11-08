@@ -171,7 +171,13 @@ test("the tally sums candidate workflows in any state and caches completed runs"
     ".github/workflows/fork-release.yml": 40,
     ".github/workflows/release.yml": 0,
   });
-  assert.deepEqual(result.runs, { 10: { attempt: 1, used: 20 }, 20: { attempt: 2, used: 40 } });
+  const ci = ".github/workflows/fork-ci.yml";
+  const release = ".github/workflows/fork-release.yml";
+  assert.deepEqual(result.runs, {
+    10: { workflow: ci, attempt: 1, completed: true, used: 20 },
+    11: { workflow: ci, attempt: 1, completed: false, used: 4 },
+    20: { workflow: release, attempt: 2, completed: true, used: 40 },
+  });
   assert.equal(result.calls, 7);
 
   // The next hour reuses runs 10 and 20, and fetches run 11 again because it was still running.
@@ -207,7 +213,9 @@ test("a re-run attempt is counted again", async () => {
   });
   const result = await tally({ request: fake.request, files, previous, now });
   assert.equal(result.used, 40);
-  assert.deepEqual(result.runs, { 10: { attempt: 2, used: 40 } });
+  assert.deepEqual(result.runs, {
+    10: { workflow: ".github/workflows/fork-ci.yml", attempt: 2, completed: true, used: 40 },
+  });
 });
 
 test("last month's cache is ignored", async () => {
@@ -307,6 +315,53 @@ test("a workflow the API no longer lists keeps its recorded usage", async () => 
   const result = await tally({ request: api().request, files, previous, now });
   assert.equal(result.used, 12);
   assert.equal(result.workflows[".github/workflows/gone.yml"], 12);
+});
+
+test("a deleted run keeps the minutes an earlier tally counted", async () => {
+  const first = await tally({
+    request: api({
+      runs: {
+        1: [
+          { id: 10, status: "completed", run_attempt: 1 },
+          { id: 11, status: "in_progress", run_attempt: 1 },
+        ],
+      },
+      jobs: { 10: [job()], 11: [job({ started_at: at(2), completed_at: null })] },
+    }).request,
+    files,
+    previous: null,
+    now,
+  });
+  assert.equal(first.used, 20 + 8);
+
+  // An admin deletes both runs; the workflow is still listed, with no runs.
+  const next = api();
+  const result = await tally({ request: next.request, files, previous: first, now });
+  assert.equal(result.used, 20 + 8);
+  assert.equal(result.workflows[".github/workflows/fork-ci.yml"], 28);
+  assert.deepEqual(Object.keys(result.runs).sort(), ["10", "11"]);
+  assert.ok(!next.calls.some((url) => url.startsWith("/actions/runs/")));
+
+  // The month's total still holds an hour later.
+  const later = await tally({ request: api().request, files, previous: result, now });
+  assert.equal(later.used, 28);
+});
+
+test("a listed run never counts fewer minutes than an earlier tally recorded", async () => {
+  const previous = {
+    month: "2026-11",
+    workflows: { ".github/workflows/fork-ci.yml": 40 },
+    runs: {
+      10: { workflow: ".github/workflows/fork-ci.yml", attempt: 1, completed: false, used: 40 },
+    },
+  };
+  // The jobs API now returns only one of the run's two jobs.
+  const fake = api({
+    runs: { 1: [{ id: 10, status: "completed", run_attempt: 1 }] },
+    jobs: { 10: [job()] },
+  });
+  const result = await tally({ request: fake.request, files, previous, now });
+  assert.equal(result.used, 40);
 });
 
 test("last month's per-workflow usage is not carried over", async () => {

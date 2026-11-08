@@ -127,6 +127,11 @@ jobs:
         continue-on-error: true
         env:
           BLACKSMITH_ROUTING: ${{ vars.BLACKSMITH_ROUTING }}
+          # Reserves the build stage's Linux and Android jobs too, with the same list the route job passes.
+          BLACKSMITH_RESERVE_KINDS: linux android windows
+          BLACKSMITH_KINDS: windows
+          BLACKSMITH_LINUX_LABEL: ${{ vars.BLACKSMITH_LINUX_LABEL }}
+          BLACKSMITH_ANDROID_LABEL: ${{ vars.BLACKSMITH_ANDROID_LABEL }}
           BLACKSMITH_WINDOWS_LABEL: ${{ vars.BLACKSMITH_WINDOWS_LABEL }}
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-blacksmith.sh
@@ -183,8 +188,12 @@ jobs:
         continue-on-error: true
         env:
           BLACKSMITH_ROUTING: ${{ vars.BLACKSMITH_ROUTING }}
+          # Outside pull requests, route-windows reserved the same three kinds. Pull requests build only Linux.
+          BLACKSMITH_RESERVE_KINDS: ${{ github.event_name == 'pull_request' && 'linux' || 'linux android windows' }}
+          BLACKSMITH_KINDS: ${{ github.event_name == 'pull_request' && 'linux' || 'linux android' }}
           BLACKSMITH_LINUX_LABEL: ${{ vars.BLACKSMITH_LINUX_LABEL }}
           BLACKSMITH_ANDROID_LABEL: ${{ vars.BLACKSMITH_ANDROID_LABEL }}
+          BLACKSMITH_WINDOWS_LABEL: ${{ vars.BLACKSMITH_WINDOWS_LABEL }}
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-blacksmith.sh
 

@@ -1,7 +1,7 @@
 // Sums this UTC month's Blacksmith use by this repository in 2-vCPU x64 minutes
-// for route-blacksmith.sh. It reuses the previous tally's completed runs and
-// writes complete: false at MAX_CALLS or past the API's 1,000-run listing
-// limit; the router refuses an incomplete tally.
+// for route-blacksmith.sh. It reuses the previous tally's runs, keeps deleted
+// runs' minutes, and writes complete: false at MAX_CALLS or past the API's
+// 1,000-run listing limit; the router refuses an incomplete tally.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -101,7 +101,9 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
           const key = String(run.id);
           const hit = cached[key];
           let total;
-          if (run.status === "completed" && hit && hit.attempt === run.run_attempt) {
+          // Entries from before the completed flag cached only completed runs.
+          const done = hit && hit.completed !== false && hit.attempt === run.run_attempt;
+          if (run.status === "completed" && done) {
             total = hit.used;
           } else {
             total = 0;
@@ -116,12 +118,28 @@ async function tally({ request, files, previous, now, maxCalls = MAX_CALLS }) {
               if (jobPage * 100 >= (jobs.total_count ?? 0)) break;
             }
           }
-          if (run.status === "completed") runs[key] = { attempt: run.run_attempt, used: total };
+          // Minutes already spent never go back, even if a later listing reports fewer.
+          total = Math.max(total, hit?.used ?? 0);
+          runs[key] = {
+            workflow: workflow.path,
+            attempt: run.run_attempt,
+            completed: run.status === "completed",
+            used: total,
+          };
           workflows[workflow.path] += total;
           used += total;
         }
         if (page * 100 >= Math.min(body.total_count ?? 0, MAX_LISTED)) break;
       }
+    }
+    // A listed workflow's run that the listing no longer returns, such as a deleted
+    // one, keeps the minutes an earlier tally recorded. Runs of unlisted workflows
+    // are covered by that workflow's total below.
+    for (const [key, hit] of Object.entries(cached)) {
+      if (key in runs || !(hit.workflow in workflows) || !(hit.used > 0)) continue;
+      runs[key] = hit;
+      workflows[hit.workflow] += hit.used;
+      used += hit.used;
     }
     // A workflow the API no longer lists keeps the usage the previous tally recorded.
     for (const [file, total] of Object.entries(spent)) {

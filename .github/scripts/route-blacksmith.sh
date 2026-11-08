@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 # Writes blacksmith_linux, blacksmith_android, and blacksmith_windows to
-# GITHUB_OUTPUT. Each holds the job's Blacksmith label only when the event is
-# trusted, BLACKSMITH_ROUTING is not off, the label matches its kind's pattern,
-# and this month's tally leaves room for that job's timeout plus the kinds
-# allowed before it, in the order linux, android, windows:
-#   used + 600 (other repositories) + sum of timeout-minutes * factor <= 2400.
-# Every other case, including any failed call or missing data, writes an empty
-# value so the job keeps its VM104 or hosted runner. This never reads VM104.
+# GITHUB_OUTPUT. BLACKSMITH_RESERVE_KINDS names every kind the calling run will
+# use, and BLACKSMITH_KINDS names the ones this call decides. A run that routes
+# more than once passes the same BLACKSMITH_RESERVE_KINDS and labels to every
+# call, so the reservations add up across calls.
 #
-# Inputs: TRUSTED, BLACKSMITH_ROUTING, BLACKSMITH_LINUX_LABEL,
-# BLACKSMITH_ANDROID_LABEL, BLACKSMITH_WINDOWS_LABEL, GH_TOKEN (actions: read),
-# GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_OUTPUT. Tests set ROUTE_NOW
-# (epoch seconds) to fix the clock.
+# The router walks the reserved kinds in the order linux, android, windows. A
+# kind with a valid label reserves its timeout-minutes * factor when it fits:
+#   used + 600 (other repositories) + reservations so far + its own <= 2400.
+# A kind gets its label only when it is in BLACKSMITH_KINDS and was reserved,
+# the event is trusted, and BLACKSMITH_ROUTING is not off. Every other case,
+# including any failed call or missing data, writes an empty value so the job
+# keeps its VM104 or hosted runner. This never reads VM104.
+#
+# Two calls of one run can read different tallies if the hourly tally refreshes
+# between them. The later tally is the same or higher, so the later call can
+# only approve fewer minutes, and the run stays within the earlier call's check.
+#
+# Inputs: TRUSTED, BLACKSMITH_ROUTING, BLACKSMITH_KINDS,
+# BLACKSMITH_RESERVE_KINDS, BLACKSMITH_LINUX_LABEL, BLACKSMITH_ANDROID_LABEL,
+# BLACKSMITH_WINDOWS_LABEL, GH_TOKEN (actions: read), GITHUB_API_URL,
+# GITHUB_REPOSITORY, GITHUB_OUTPUT. Both kind lists are space-separated. Tests
+# set ROUTE_NOW (epoch seconds) to fix the clock.
 set -uo pipefail
 
 budget=2400
@@ -27,6 +37,8 @@ declare -A pattern=(
 api="${GITHUB_API_URL:-https://api.github.com}"
 kinds=(linux android windows)
 declare -A labels=()
+declare -A asked=()
+declare -A reserve=()
 
 finish() {
 	local kind
@@ -51,7 +63,25 @@ call() {
 		"$@"
 }
 
+# Reads a space-separated kind list into the named set; fails on an unknown or repeated kind.
+read_kinds() {
+	local -n set="$1"
+	local kind
+	for kind in $2; do
+		[[ " ${kinds[*]} " == *" $kind "* && -z "${set[$kind]:-}" ]] || return 1
+		set["$kind"]=1
+	done
+	((${#set[@]} > 0))
+}
+
+read_kinds reserve "${BLACKSMITH_RESERVE_KINDS:-}" || deny "BLACKSMITH_RESERVE_KINDS is not valid"
+read_kinds asked "${BLACKSMITH_KINDS:-}" || deny "BLACKSMITH_KINDS is not valid"
+for kind in "${!asked[@]}"; do
+	[[ -n "${reserve[$kind]:-}" ]] || deny "BLACKSMITH_KINDS has $kind, which BLACKSMITH_RESERVE_KINDS lacks"
+done
+
 for kind in "${kinds[@]}"; do
+	[[ -n "${reserve[$kind]:-}" ]] || continue
 	var="BLACKSMITH_${kind^^}_LABEL"
 	value="${!var:-}"
 	if [[ -z "$value" ]]; then
@@ -65,7 +95,9 @@ done
 
 [[ "${TRUSTED:-}" == true ]] || deny "untrusted event"
 [[ "${BLACKSMITH_ROUTING:-}" != off ]] || deny "BLACKSMITH_ROUTING is off"
-((${#labels[@]} > 0)) || deny "no valid label"
+asked_label=false
+for kind in "${!asked[@]}"; do [[ -z "${labels[$kind]:-}" ]] || asked_label=true; done
+[[ "$asked_label" == true ]] || deny "no valid label"
 [[ -n "${GH_TOKEN:-}" ]] || deny "no GITHUB_TOKEN"
 
 now="${ROUTE_NOW:-$(date +%s)}"
@@ -89,7 +121,7 @@ call -L "$api/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" >"$work/
 unzip -p "$work/usage.zip" blacksmith-usage.json >"$work/usage.json" 2>/dev/null ||
 	deny "artifact $artifact has no blacksmith-usage.json"
 
-# Prints one "kind label" line for each kind that fits, or fails on any data problem.
+# Prints one "kind label" line for each reserved kind, or fails on any data problem.
 fits="$(jq -er --arg month "$month" --argjson now "$now" --argjson max_age "$max_age" \
 	--argjson budget "$budget" --argjson others "$others" \
 	--arg linux "${labels[linux]:-}" --arg android "${labels[android]:-}" --arg windows "${labels[windows]:-}" \
@@ -121,8 +153,10 @@ done <<<"$fits"
 for kind in "${kinds[@]}"; do
 	if [[ -n "${labels[$kind]:-}" && -z "${allowed[$kind]:-}" ]]; then
 		echo "Blacksmith $kind: none (${timeout[$kind]} minutes of ${labels[$kind]} on top of the kinds before it would pass the budget)."
+	elif [[ -n "${allowed[$kind]:-}" && -z "${asked[$kind]:-}" ]]; then
+		echo "Blacksmith $kind: reserved for another job of this run."
 	fi
 done
 labels=()
-for kind in "${!allowed[@]}"; do labels[$kind]="${allowed[$kind]}"; done
+for kind in "${!asked[@]}"; do [[ -z "${allowed[$kind]:-}" ]] || labels[$kind]="${allowed[$kind]}"; done
 finish

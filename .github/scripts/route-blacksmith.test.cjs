@@ -88,6 +88,8 @@ function route({
   trusted = "true",
   routing = "",
   labels = { linux, android, windows },
+  kinds = "linux android windows",
+  reserve = "linux android windows",
   token = githubToken,
 } = {}) {
   const output = path.join(work, `output-${Math.random().toString(36).slice(2)}`);
@@ -100,6 +102,8 @@ function route({
       PATH: `${bin}:${process.env.PATH}`,
       TRUSTED: trusted,
       BLACKSMITH_ROUTING: routing,
+      BLACKSMITH_KINDS: kinds,
+      BLACKSMITH_RESERVE_KINDS: reserve,
       BLACKSMITH_LINUX_LABEL: labels.linux ?? "",
       BLACKSMITH_ANDROID_LABEL: labels.android ?? "",
       BLACKSMITH_WINDOWS_LABEL: labels.windows ?? "",
@@ -181,6 +185,22 @@ const table = [
   ["BLACKSMITH_ROUTING=off", { routing: "off" }, none, "BLACKSMITH_ROUTING is off"],
   ["BLACKSMITH_ROUTING=on", { routing: "on" }, all, "used 0"],
   ["no labels", { labels: {} }, none, "no valid label"],
+  [
+    "a label only for a kind this call does not decide",
+    { labels: { windows }, kinds: "linux" },
+    none,
+    "no valid label",
+  ],
+  ["an unknown kind", { kinds: "linux macos" }, none, "BLACKSMITH_KINDS is not valid"],
+  ["a repeated kind", { reserve: "linux linux" }, none, "BLACKSMITH_RESERVE_KINDS is not valid"],
+  ["no reserved kinds", { reserve: "" }, none, "BLACKSMITH_RESERVE_KINDS is not valid"],
+  ["no kinds to decide", { kinds: "" }, none, "BLACKSMITH_KINDS is not valid"],
+  [
+    "a kind to decide that is not reserved",
+    { kinds: "linux android", reserve: "linux" },
+    none,
+    "BLACKSMITH_KINDS has android, which BLACKSMITH_RESERVE_KINDS lacks",
+  ],
   [
     "only the Windows label",
     { labels: { windows } },
@@ -354,10 +374,61 @@ for (const [name, options, expected, reason] of table) {
   });
 }
 
-test("an untrusted event, routing off, or no label makes no API call", () => {
+test("an untrusted event, routing off, no label, or bad kinds makes no API call", () => {
   assert.deepEqual(route({ trusted: "false" }).calls, []);
   assert.deepEqual(route({ routing: "off" }).calls, []);
   assert.deepEqual(route({ labels: {} }).calls, []);
+  assert.deepEqual(route({ kinds: "linux macos" }).calls, []);
+});
+
+// Fork Release outside pull requests: route-windows decides Windows, and the
+// build stage's route decides Linux and Android. Both reserve all three.
+const windowsCall = (used) =>
+  route({ kinds: "windows", fixtures: routes({ tally: usage({ used }) }) });
+const buildCall = (used) =>
+  route({ kinds: "linux android", fixtures: routes({ tally: usage({ used }) }) });
+
+test("either Fork Release call reserves all three kinds", () => {
+  for (const [call, expected] of [
+    [windowsCall, { ...none, blacksmith_windows: windows }],
+    [buildCall, { ...none, blacksmith_linux: linux, blacksmith_android: android }],
+  ]) {
+    const fits = call(360);
+    assert.deepEqual(fits.outputs, expected, fits.log);
+    // 361 + 600 + 240 + 720 + 480 = 2401, so Windows goes hosted while Linux and Android still fit.
+    const over = call(361);
+    assert.equal(over.outputs.blacksmith_linux, call === buildCall ? linux : "", over.log);
+    assert.equal(over.outputs.blacksmith_android, call === buildCall ? android : "", over.log);
+    assert.equal(over.outputs.blacksmith_windows, "", over.log);
+  }
+  // Before this change, the Windows call alone saw 361 + 600 + 480 <= 2400 and approved Windows.
+  assert.equal(windowsCall(361).outputs.blacksmith_windows, "");
+  assert.match(buildCall(360).log, /Blacksmith windows: reserved for another job of this run/);
+});
+
+test("a build call that reads a newer tally keeps the run within the Windows call's check", () => {
+  const reservation = { [linux]: 240, [android]: 720, [windows]: 480 };
+  const steps = [0, 300, 360, 361, 600, 840, 841, 1080, 1081, 1320, 1560, 1561, 1800];
+  const win = Object.fromEntries(steps.map((used) => [used, windowsCall(used).outputs]));
+  const build = Object.fromEntries(steps.map((used) => [used, buildCall(used).outputs]));
+  for (const [i, first] of steps.entries()) {
+    for (const later of steps.slice(i)) {
+      const labels = [win[first].blacksmith_windows, ...Object.values(build[later])];
+      const committed = labels.reduce((sum, label) => sum + (reservation[label] ?? 0), 0);
+      assert.ok(committed === 0 || first + 600 + committed <= 2400, `${first} then ${later}`);
+    }
+  }
+});
+
+test("a Fork Release pull request reserves Linux only", () => {
+  // 1561 + 600 + 240 = 2401 fails; at 1560 Linux fits, and Android and Windows reserve nothing.
+  const pr = (used) =>
+    route({ kinds: "linux", reserve: "linux", fixtures: routes({ tally: usage({ used }) }) });
+  assert.deepEqual(pr(1560).outputs, { ...none, blacksmith_linux: linux });
+  assert.doesNotMatch(pr(1560).log, /android|windows/);
+  assert.deepEqual(pr(1561).outputs, none);
+  // With the release list, the same tally approves Linux but no Android.
+  assert.deepEqual(buildCall(1560).outputs, { ...none, blacksmith_linux: linux });
 });
 
 test("a trusted run makes three calls and keeps the token out of argv and the log", () => {
