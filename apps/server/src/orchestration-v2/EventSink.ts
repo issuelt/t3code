@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
-import { requestResults, restartChain } from "./CoordinationDelivery.ts";
+import { coordinationToolItemTypes, requestResults, restartChain } from "./CoordinationDelivery.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectStoredEventForWire } from "./WireProjection.ts";
@@ -448,10 +448,20 @@ const layerBase: Layer.Layer<
             ["messages"],
             { messageRunIds: chain.runIds, messageRoles: ["user"] },
           );
+          const { turnItems: toolItems } = yield* projectionStore.getThreadRecords(
+            event.threadId,
+            ["turnItems"],
+            {
+              turnItemRunIds: chain.runIds,
+              turnItemTypes: coordinationToolItemTypes,
+              turnItemStatuses: ["completed"],
+            },
+          );
           const results = requestResults({
             messages,
             sourceRunId: event.payload.id,
             text: event.payload.status,
+            toolItems,
           });
           if (results.length === 0) continue;
           const { messages: output } = yield* projectionStore.getThreadRecords(

@@ -2,8 +2,10 @@ import {
   type MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   RunId,
 } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Schema from "effect/Schema";
 
 export class CoordinationResultDeferred extends Schema.TaggedError<CoordinationResultDeferred>()(
@@ -35,15 +37,67 @@ export function restartChain(
 }
 
 type Message = Pick<OrchestrationV2ConversationMessage, "id" | "coordination">;
+/** Turn item types that record tool work; a completed one after a send makes the send mid-job. */
+export const coordinationToolItemTypes = [
+  "command_execution",
+  "dynamic_tool",
+  "file_change",
+  "file_search",
+  "subagent",
+  "web_search",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+type ToolItem = Pick<OrchestrationV2TurnItem, "type" | "status" | "ordinal"> & {
+  readonly toolName?: string | null;
+  readonly input?: unknown;
+};
+
+/**
+ * The requester the run chain's final tool work messaged with a completed `t3_thread_send`, as
+ * `{ threadId, environmentId? }`. A send followed by any other completed tool item was a mid-job
+ * message, so it answers nobody. Items are ordered by their projection ordinal.
+ */
+function finalSendTarget(toolItems: ReadonlyArray<ToolItem>) {
+  const last = toolItems
+    .filter(({ status }) => status === "completed")
+    .reduce<ToolItem | undefined>(
+      (latest, item) => (latest === undefined || item.ordinal >= latest.ordinal ? item : latest),
+      undefined,
+    );
+  if (last?.type !== "dynamic_tool" || resolveT3McpToolId(last.toolName) !== "t3_thread_send") {
+    return undefined;
+  }
+  if (typeof last.input !== "object" || last.input === null) return undefined;
+  return last.input as { readonly threadId?: unknown; readonly environmentId?: unknown };
+}
+
+/**
+ * A send that names no environment acts in the run's own; its thread id stands for the
+ * requester there.
+ */
+function isRequester(
+  target: { readonly threadId?: unknown; readonly environmentId?: unknown } | undefined,
+  requester: { readonly environmentId: string; readonly threadId: string },
+) {
+  return (
+    target !== undefined &&
+    target.threadId === requester.threadId &&
+    (target.environmentId === undefined || target.environmentId === requester.environmentId)
+  );
+}
 
 /**
  * One result per requester: a run that took in several requests from the same thread answers
- * them together, so the requester receives that answer once, for its latest request.
+ * them together, so the requester receives that answer once, for its latest request. A
+ * requester whose `t3_thread_send` was the run chain's last completed tool work has its answer and
+ * gets none.
  */
 export function requestResults(input: {
   readonly messages: ReadonlyArray<Message>;
   readonly sourceRunId: RunId;
   readonly text: string;
+  /** The run chain's tool items; the last completed one decides whether a send was the answer. */
+  readonly toolItems: ReadonlyArray<ToolItem>;
 }) {
   const latestByRequester = new Map<
     string,
@@ -62,12 +116,15 @@ export function requestResults(input: {
       requestMessageId: message.id,
     });
   }
-  return [...latestByRequester.values()].map(({ requester, requestMessageId }) => ({
-    requester,
-    requestMessageId,
-    sourceRunId: input.sourceRunId,
-    text: input.text,
-  }));
+  const answered = finalSendTarget(input.toolItems);
+  return [...latestByRequester.values()]
+    .filter(({ requester }) => !isRequester(answered, requester))
+    .map(({ requester, requestMessageId }) => ({
+      requester,
+      requestMessageId,
+      sourceRunId: input.sourceRunId,
+      text: input.text,
+    }));
 }
 
 export function isCoordinationRun(
