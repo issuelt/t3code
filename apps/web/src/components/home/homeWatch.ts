@@ -14,7 +14,8 @@ export interface WatchedThreadState {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly title: string;
-  readonly attention: string | null;
+  /** The pending requests already reported, as `status:identity`. */
+  readonly attention: ReadonlyArray<string> | null;
   readonly completion: number | null;
   readonly ended: boolean;
   /** Set once a launch watch added after start-up has been compared with an empty state. */
@@ -27,16 +28,30 @@ export const homeWatchKey = (environmentId: string, threadId: string) =>
 const UNSEEN = { attention: null, completion: null, ended: false };
 
 /**
- * Each thread's newest approval request among its subagent and side-chat
- * children, keyed by `homeWatchKey`, so a child's approval that rolls up to its
- * parent keeps one identity across the parent's runs.
+ * The pending requests each thread's children roll up to it, keyed by
+ * `homeWatchKey`: approvals up the subagent and side-chat chain, and a side
+ * chat's question to its direct parent. Each request keeps its child's
+ * identity across the parent's runs.
  */
-function childApprovalsByParent(shells: ReadonlyArray<EnvironmentThreadShell>) {
+function childRequestsByParent(shells: ReadonlyArray<EnvironmentThreadShell>) {
   const byKey = new Map(
     shells.map((shell) => [homeWatchKey(shell.environmentId, shell.id), shell]),
   );
-  const approvals = new Map<string, { readonly request: string; readonly at: string }>();
+  const requests = new Map<string, { approval: Array<string>; question: Array<string> }>();
+  const add = (key: string, kind: "approval" | "question", request: string) => {
+    let entry = requests.get(key);
+    if (entry === undefined) requests.set(key, (entry = { approval: [], question: [] }));
+    entry[kind].push(request);
+  };
   for (const child of shells) {
+    const parentId = child.lineage.parentThreadId;
+    if (child.lineage.sideChat === true && parentId !== null && child.pendingUserInputAt != null) {
+      add(
+        homeWatchKey(child.environmentId, parentId),
+        "question",
+        `${child.id}@${child.pendingUserInputAt}`,
+      );
+    }
     const at = child.pendingApprovalAt;
     if (at == null) continue;
     let current = child;
@@ -45,20 +60,18 @@ function childApprovalsByParent(shells: ReadonlyArray<EnvironmentThreadShell>) {
       current.lineage.relationshipToParent === "subagent" ||
       current.lineage.sideChat === true
     ) {
-      const parentId = current.lineage.parentThreadId;
-      if (parentId === null) break;
-      const key = homeWatchKey(current.environmentId, parentId);
+      const nextId = current.lineage.parentThreadId;
+      if (nextId === null) break;
+      const key = homeWatchKey(current.environmentId, nextId);
       if (seen.has(key)) break;
       seen.add(key);
-      const known = approvals.get(key);
-      if (known === undefined || known.at < at)
-        approvals.set(key, { request: `${child.id}@${at}`, at });
+      add(key, "approval", `${child.id}@${at}`);
       const parent = byKey.get(key);
       if (parent === undefined) break;
       current = parent;
     }
   }
-  return approvals;
+  return requests;
 }
 
 /**
@@ -90,7 +103,7 @@ export function diffWatchedThreads(input: {
       ...(label === undefined ? {} : { environmentLabel: label.slice(0, 200) }),
     };
   };
-  let childApprovals: ReturnType<typeof childApprovalsByParent> | undefined;
+  let childRequests: ReturnType<typeof childRequestsByParent> | undefined;
   for (const thread of input.shells) {
     const key = homeWatchKey(thread.environmentId, thread.id);
     present.add(key);
@@ -114,18 +127,23 @@ export function diffWatchedThreads(input: {
             ? "failed"
             : null;
     // A request that stays pending across runs reports once; failures report per run.
-    const request =
-      attentionKind === "question"
-        ? thread.pendingUserInputAt
-        : attentionKind === "approval"
-          ? thread.hasPendingApprovals
+    let attention: Array<string> | null = null;
+    if (attentionKind !== null) {
+      const own =
+        attentionKind === "question" && thread.hasPendingUserInput
+          ? thread.pendingUserInputAt
+          : attentionKind === "approval" && thread.hasPendingApprovals
             ? thread.pendingApprovalAt
-            : (childApprovals ??= childApprovalsByParent(input.shells)).get(key)?.request
-          : undefined;
-    const attention =
-      attentionKind === null
-        ? null
-        : `${request == null ? (thread.latestRun?.runId ?? "") : request}:${status}`;
+            : null;
+      const fromChildren =
+        attentionKind === "failed"
+          ? []
+          : ((childRequests ??= childRequestsByParent(input.shells)).get(key)?.[attentionKind] ??
+            []);
+      const requests = [...(own == null ? [] : [own]), ...fromChildren];
+      if (requests.length === 0) requests.push(thread.latestRun?.runId ?? "");
+      attention = requests.map((request) => `${status}:${request}`);
+    }
     const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
     const completion =
       status === "ready" && thread.latestRun?.status === "completed" && Number.isFinite(completedAt)
@@ -153,7 +171,11 @@ export function diffWatchedThreads(input: {
       if (!prior.ended && watch !== undefined) events.push({ ...eventBase(state), kind: "ended" });
       continue;
     }
-    if (attentionKind !== null && attention !== prior.attention) {
+    if (
+      attentionKind !== null &&
+      attention !== null &&
+      attention.some((request) => !prior.attention?.includes(request))
+    ) {
       events.push({ ...eventBase(state), kind: attentionKind });
     } else if (
       completion !== null &&
