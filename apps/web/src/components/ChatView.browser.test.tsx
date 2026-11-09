@@ -1,6 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type VoiceTranscriptionDestination } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -13,6 +13,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
+import { chooseAudioDestination } from "~/speech/voiceConsent";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -64,4 +65,46 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+const MICROPHONE_BUTTONS = /^(Dictate|Set up dictation|Start voice input)$/;
+
+it.each<{
+  readonly state: string;
+  readonly destination: VoiceTranscriptionDestination | null;
+  readonly microphone: string;
+}>([
+  { state: "no Voice destination", destination: null, microphone: "Set up dictation" },
+  {
+    state: "a chosen Voice destination",
+    destination: { kind: "cloud", environmentId: ENVIRONMENT_ID, provider: "openai" },
+    microphone: "Start voice input",
+  },
+])("the composer shows one microphone with $state", async ({ destination, microphone }) => {
+  using _environment = installFakeEnvironment([]);
+  using _voiceChoice = {
+    [Symbol.dispose]: () => window.localStorage.removeItem("t3code:voice-audio-grant:v1"),
+  };
+  if (destination) chooseAudioDestination(destination);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make(`draft-microphone-${destination?.kind ?? "none"}`);
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make(`thread-microphone-${destination?.kind ?? "none"}`),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByRole("button", { name: microphone, exact: true })).toBeVisible();
+
+  const microphones = page.getByRole("button", { name: MICROPHONE_BUTTONS }).elements();
+  expect(microphones.map((button) => button.getAttribute("aria-label"))).toEqual([microphone]);
 });
