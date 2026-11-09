@@ -273,7 +273,7 @@ it.effect("clones and searches in the environment that runs the operation", () =
           projectId: "a",
           title: "Found",
           source: "title",
-          link: "<t3-thread://v2/studio/found>",
+          link: "[Found](t3-thread://v2/studio/found)",
         },
       ],
     });

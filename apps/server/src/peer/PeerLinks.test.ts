@@ -135,6 +135,7 @@ it.effect(
           .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
           .pipe(Effect.flip);
         expect(untrusted.reason).toBe("unreachable");
+        expect(untrusted.message).toContain("certificate this machine rejected");
         expect(untrusted.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
         expect(yield* Ref.get(b.probes)).toBe(0);
         NodeTls.setDefaultCACertificates(trusted);
@@ -781,3 +782,22 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
     }),
   ).pipe(Effect.provide(layerHttpsTest)),
 );
+
+it("reads Node's TLS verification code from anywhere in a cause chain", () => {
+  for (const code of [
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "HOSTNAME_MISMATCH",
+    "INVALID_CA",
+    "INVALID_PURPOSE",
+    "PATH_LENGTH_EXCEEDED",
+  ]) {
+    expect(PeerLinks.certificateErrorCode({ code })).toBe(code);
+  }
+  const wrapped = { message: "fetch failed", cause: { cause: { code: "INVALID_CA" } } };
+  expect(PeerLinks.certificateErrorCode(wrapped)).toBe("INVALID_CA");
+  expect(PeerLinks.certificateErrorCode({ cause: { code: "ECONNREFUSED" } })).toBeUndefined();
+  expect(PeerLinks.certificateErrorCode(new Error("timed out"))).toBeUndefined();
+});

@@ -7,8 +7,6 @@ import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
-import * as PromptSuggestions from "./PromptSuggestions.ts";
-
 export type ProviderOrchestrationAdapterInfrastructure =
   | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
   | CodexAdapterV2.CodexAppServerClientFactory
@@ -23,5 +21,4 @@ export const layer = Layer.mergeAll(
   CursorAgentSdk.layer.pipe(Layer.provideMerge(CursorSdk.layer)),
   IdAllocator.layer,
   ProviderContinuationRequests.layer,
-  PromptSuggestions.layer,
 );

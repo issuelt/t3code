@@ -58,7 +58,7 @@ function keyboardEvent(key: string, modifiers: KeyboardEventInit = {}): Keyboard
 function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHandler>[0]> = {}) {
   const input: Parameters<typeof composerCommandKeyHandler>[0] = {
     promptSuggestion: null,
-    onDismissPromptSuggestion: vi.fn(),
+    dismissPromptSuggestion: vi.fn(),
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     sendShortcut: "enter",
     routeKind: "draft",
@@ -66,7 +66,6 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
     isCompacting: false,
     followUpBehavior: "queue",
     isSoftwareKeyboardOpen: false,
-    planModeUiEnabled: true,
     isLiteralPendingAnswer: false,
     pendingUserInputs: [],
     promptHistoryEntries: [],
@@ -90,7 +89,7 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
           label: "Test",
           description: "",
         },
-        { id: "second", type: "slash-command", command: "plan", label: "Plan", description: "" },
+        { id: "second", type: "slash-command", command: "model", label: "Model", description: "" },
       ],
     },
     activeComposerMenuItemRef: { current: null },
@@ -99,7 +98,6 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
     setComposerTrigger: vi.fn(),
     setComposerHighlightedItemId: vi.fn(),
     dismissComposerTrigger: vi.fn(),
-    toggleInteractionMode: vi.fn(),
     nudgeComposerMenuHighlight: (key) => {
       const id = nudgeComposerMenuItemId({
         key,
