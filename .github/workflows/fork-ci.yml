@@ -19,8 +19,9 @@ jobs:
   check:
     if: github.repository == 'issuelt/t3code'
     uses: issuelt/t3code/.github/workflows/fork-ci-linux.yml@main
+    # A ceiling: the callee's watchdog needs actions: write to cancel the run; its other jobs set less.
     permissions:
       contents: read
-      actions: read
+      actions: write
     secrets:
       CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}

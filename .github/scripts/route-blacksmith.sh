@@ -13,6 +13,15 @@
 # including any failed call or missing data, writes an empty value so the job
 # keeps its VM104 or hosted runner. This never reads VM104.
 #
+# Two exclusions keep a label that had no runner on hosted. On a rerun
+# (GITHUB_RUN_ATTEMPT above 1), a kind whose label never got a runner in any
+# earlier attempt stays empty; that is how blacksmith-rerun.yml's rerun of a
+# watchdog cancel goes hosted. A kind whose label the tally lists as stalled in
+# the last 6 hours stays empty too. An excluded kind keeps its reservation, so
+# every call of a run reserves the same kinds even if a stall expires between
+# calls. If an earlier attempt's jobs cannot be read, every kind stays empty; a
+# missing or malformed stalled map in an otherwise valid tally does the same.
+#
 # Two calls of one run can read different tallies if the hourly tally refreshes
 # between them. The later tally is the same or higher, so the later call can
 # only approve fewer minutes, and the run stays within the earlier call's check.
@@ -20,13 +29,15 @@
 # Inputs: TRUSTED, BLACKSMITH_ROUTING, BLACKSMITH_KINDS,
 # BLACKSMITH_RESERVE_KINDS, BLACKSMITH_LINUX_LABEL, BLACKSMITH_ANDROID_LABEL,
 # BLACKSMITH_WINDOWS_LABEL, GH_TOKEN (actions: read), GITHUB_API_URL,
-# GITHUB_REPOSITORY, GITHUB_OUTPUT. Both kind lists are space-separated. Tests
-# set ROUTE_NOW (epoch seconds) to fix the clock.
+# GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_OUTPUT. Both
+# kind lists are space-separated. Tests set ROUTE_NOW (epoch seconds) to fix
+# the clock.
 set -uo pipefail
 
 budget=2400
 others=600
 max_age=$((90 * 60))
+stalled_window=$((6 * 3600))
 # Each kind's timeout-minutes in fork-ci-linux.yml, fork-release-linux.yml, and fork-release.yml.
 declare -A timeout=([linux]=60 [android]=90 [windows]=60)
 declare -A pattern=(
@@ -39,6 +50,7 @@ kinds=(linux android windows)
 declare -A labels=()
 declare -A asked=()
 declare -A reserve=()
+declare -A dropped=()
 
 finish() {
 	local kind
@@ -105,6 +117,41 @@ month="$(date -u -d "@$now" +%Y-%m)"
 work="$(mktemp -d)" || deny "no temporary directory"
 trap 'rm -rf "$work"' EXIT
 
+any_asked() {
+	local kind
+	for kind in "${!asked[@]}"; do [[ -z "${labels[$kind]:-}" || -n "${dropped[$kind]:-}" ]] || return 0; done
+	return 1
+}
+
+# Marks each kind whose label is in the newline-separated list as dropped, with the reason.
+# A dropped kind stays in labels until the end, because it keeps its reservation.
+drop_labels() {
+	local list="$1" reason="$2" kind
+	for kind in "${kinds[@]}"; do
+		[[ -n "${labels[$kind]:-}" && -z "${dropped[$kind]:-}" ]] || continue
+		if grep -qxF -- "${labels[$kind]}" <<<"$list"; then
+			echo "Blacksmith $kind: none (${labels[$kind]} $reason)."
+			dropped[$kind]=1
+		fi
+	done
+}
+
+attempt="${GITHUB_RUN_ATTEMPT:-1}"
+[[ "$attempt" =~ ^[0-9]+$ ]] || deny "GITHUB_RUN_ATTEMPT is not a number"
+if ((attempt > 1)); then
+	[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] || deny "GITHUB_RUN_ID is not a number"
+	for ((earlier = 1; earlier < attempt; earlier += 1)); do
+		# The labels of that attempt's jobs that no runner ever took. A job cancelled in the queue has runner_name "", a skipped one null.
+		call "$api/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$earlier/jobs?per_page=100" >"$work/previous.json" ||
+			deny "could not read attempt $earlier's jobs"
+		waited="$(jq -r 'if (.jobs | type) != "array" or (.total_count | type) != "number" or .total_count > (.jobs | length) then error("not one full page")
+			else [.jobs[] | select((.runner_name // "") == "" and .conclusion != "skipped") | .labels[]? | select(startswith("blacksmith-"))] | unique | .[] end' \
+			"$work/previous.json" 2>/dev/null)" || deny "could not read attempt $earlier's jobs"
+		drop_labels "$waited" "got no runner in attempt $earlier"
+	done
+	any_asked || deny "no label left after attempt $((attempt - 1))"
+fi
+
 run="$(call "$api/repos/$GITHUB_REPOSITORY/actions/workflows/blacksmith-usage.yml/runs?branch=main&status=success&per_page=1" |
 	jq -er --arg repo "$GITHUB_REPOSITORY" '.workflow_runs[0] | select(.head_branch == "main" and (.event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == $repo) | .id' 2>/dev/null)" ||
 	deny "no successful blacksmith-usage run on main"
@@ -120,6 +167,14 @@ call -L "$api/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" >"$work/
 	deny "could not download artifact $artifact"
 unzip -p "$work/usage.zip" blacksmith-usage.json >"$work/usage.json" 2>/dev/null ||
 	deny "artifact $artifact has no blacksmith-usage.json"
+
+# Labels that blacksmith-usage.cjs saw stall in the last 6 hours. A time in the future counts as recent.
+recent="$(jq -r --argjson now "$now" --argjson window "$stalled_window" '
+	if (.stalled | type) != "object" then error("no stalled map")
+	else .stalled | to_entries[] | select($now - (.value | fromdateiso8601) <= $window) | .key end' \
+	"$work/usage.json" 2>/dev/null)" || deny "the tally has no valid stalled map"
+drop_labels "$recent" "stalled in the last 6 hours"
+any_asked || deny "no label left after the stalled labels"
 
 # Prints one "kind label" line for each reserved kind, or fails on any data problem.
 fits="$(jq -er --arg month "$month" --argjson now "$now" --argjson max_age "$max_age" \
@@ -151,6 +206,7 @@ while read -r kind label; do
 	allowed[$kind]="$label"
 done <<<"$fits"
 for kind in "${kinds[@]}"; do
+	[[ -z "${dropped[$kind]:-}" ]] || continue
 	if [[ -n "${labels[$kind]:-}" && -z "${allowed[$kind]:-}" ]]; then
 		echo "Blacksmith $kind: none (${timeout[$kind]} minutes of ${labels[$kind]} on top of the kinds before it would pass the budget)."
 	elif [[ -n "${allowed[$kind]:-}" && -z "${asked[$kind]:-}" ]]; then
@@ -158,5 +214,5 @@ for kind in "${kinds[@]}"; do
 	fi
 done
 labels=()
-for kind in "${!asked[@]}"; do [[ -z "${allowed[$kind]:-}" ]] || labels[$kind]="${allowed[$kind]}"; done
+for kind in "${!asked[@]}"; do [[ -z "${allowed[$kind]:-}" || -n "${dropped[$kind]:-}" ]] || labels[$kind]="${allowed[$kind]}"; done
 finish
