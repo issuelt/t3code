@@ -6,7 +6,14 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { decide, watch, report, parseLabels, ApiError } = require("./blacksmith-watchdog.cjs");
+const {
+  decide,
+  watch,
+  report,
+  cancel,
+  parseLabels,
+  ApiError,
+} = require("./blacksmith-watchdog.cjs");
 
 const script = path.join(__dirname, "blacksmith-watchdog.cjs");
 const windows = "blacksmith-4vcpu-windows-2025";
@@ -117,6 +124,30 @@ test("no watched job after the grace minute ends the watch, such as a check on V
   const result = await run(h);
   assert.deepEqual(result.stalled, []);
   assert.equal(h.sleeps.length, 3);
+});
+
+test("cancel tries again after a transient failure, and stops at a client error or 3 tries", async () => {
+  const sleep = async () => {};
+  const failing = (statuses) => {
+    const calls = [];
+    return {
+      calls,
+      request: async (method, url) => {
+        calls.push(`${method} ${url}`);
+        const status = statuses[calls.length - 1];
+        if (status) throw new ApiError(`${method} ${url} returned ${status}`, status);
+      },
+    };
+  };
+  const recovers = failing([502]);
+  await cancel({ request: recovers.request, runId: "9", sleep });
+  assert.deepEqual(recovers.calls, ["POST /actions/runs/9/cancel", "POST /actions/runs/9/cancel"]);
+  const forbidden = failing([403]);
+  await assert.rejects(cancel({ request: forbidden.request, runId: "9", sleep }), /403/);
+  assert.equal(forbidden.calls.length, 1);
+  const down = failing([500, 500, 500]);
+  await assert.rejects(cancel({ request: down.request, runId: "9", sleep }), /500/);
+  assert.equal(down.calls.length, 3);
 });
 
 test("the API fails: the watch throws and never cancels", async () => {

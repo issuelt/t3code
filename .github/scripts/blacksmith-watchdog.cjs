@@ -11,6 +11,9 @@ const POLL_MS = 20_000;
 const GRACE_MS = 60_000;
 // Consecutive failed polls before the watch gives up; a 4xx other than 429 gives up at once.
 const MAX_FAILURES = 3;
+// A failed cancel leaves the job queued for hours, so it gets the same tries as a poll.
+const CANCEL_TRIES = 3;
+const CANCEL_WAIT_MS = 5_000;
 const LABEL = /^blacksmith-[0-9]+vcpu-[a-z]+-[0-9]+$/;
 
 class ApiError extends Error {
@@ -129,8 +132,20 @@ function report({ stalled, labels, runId, attempt, dir, outputFile, summaryFile 
   return stalledLabels;
 }
 
-async function cancel({ request, runId }) {
-  await request("POST", `/actions/runs/${runId}/cancel`);
+async function cancel({
+  request,
+  runId,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      await request("POST", `/actions/runs/${runId}/cancel`);
+      return;
+    } catch (error) {
+      if (!retryable(error) || tries >= CANCEL_TRIES) throw error;
+      await sleep(CANCEL_WAIT_MS);
+    }
+  }
 }
 
 function parseLabels(text) {

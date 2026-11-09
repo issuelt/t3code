@@ -74,7 +74,7 @@ function candidateFiles(dir) {
     files.map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]),
   );
   const found = new Set(files.filter((f) => /blacksmith/i.test(text[f])));
-  for (let grew = true; grew; ) {
+  for (let grew = true; grew;) {
     grew = false;
     for (const f of files) {
       if (found.has(f)) continue;

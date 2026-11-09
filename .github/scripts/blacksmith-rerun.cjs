@@ -6,6 +6,9 @@ const fs = require("node:fs");
 
 const REPOSITORY = "issuelt/t3code";
 const MAX_ATTEMPT = 3;
+// One transient failure here would leave a cancelled run with nothing to rerun it.
+const REQUEST_TRIES = 3;
+const REQUEST_WAIT_MS = 5_000;
 
 // The concurrency groups in fork-ci.yml and fork-release.yml. Both key a pull
 // request by its number; head repository and branch identify it here. Fork CI
@@ -54,12 +57,27 @@ async function decide({ run, repo, request }) {
   return { rerun: true, reason: `${marker.name} marks a stalled Blacksmith job` };
 }
 
+// Repeats a request after a network error, a 429, or a 5xx. Other responses throw at once.
+function withRetries(request, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  return async (method, url) => {
+    for (let tries = 1; ; tries += 1) {
+      try {
+        return await request(method, url);
+      } catch (error) {
+        const transient = error.status === undefined || error.status === 429 || error.status >= 500;
+        if (!transient || tries >= REQUEST_TRIES) throw error;
+        await sleep(REQUEST_WAIT_MS);
+      }
+    }
+  };
+}
+
 async function main() {
   const [eventFile] = process.argv.slice(2);
   const run = JSON.parse(fs.readFileSync(eventFile, "utf8")).workflow_run;
   const api = process.env.GITHUB_API_URL || "https://api.github.com";
   const repo = process.env.GITHUB_REPOSITORY;
-  const request = async (method, url) => {
+  const request = withRetries(async (method, url) => {
     const response = await fetch(`${api}/repos/${repo}${url}`, {
       method,
       headers: {
@@ -69,9 +87,12 @@ async function main() {
       },
       signal: AbortSignal.timeout(30_000),
     });
-    if (!response.ok) throw new Error(`${method} ${url} returned ${response.status}`);
+    if (!response.ok)
+      throw Object.assign(new Error(`${method} ${url} returned ${response.status}`), {
+        status: response.status,
+      });
     return method === "GET" ? response.json() : null;
-  };
+  });
   const { rerun, reason } = await decide({ run, repo, request });
   if (!rerun) {
     console.log(`Run ${run?.id}: no rerun (${reason}).`);
@@ -81,7 +102,7 @@ async function main() {
   console.log(`Run ${run.id}: rerun requested (${reason}).`);
 }
 
-module.exports = { decide, concurrencyGroup, REPOSITORY, MAX_ATTEMPT };
+module.exports = { decide, concurrencyGroup, withRetries, REPOSITORY, MAX_ATTEMPT };
 
 if (require.main === module) {
   main().catch((error) => {

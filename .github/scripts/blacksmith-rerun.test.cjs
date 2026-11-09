@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { decide, concurrencyGroup } = require("./blacksmith-rerun.cjs");
+const { decide, concurrencyGroup, withRetries } = require("./blacksmith-rerun.cjs");
 
 const repo = "issuelt/t3code";
 const marker = (attempt, job = "check", overrides = {}) => ({
@@ -198,6 +198,30 @@ for (const [name, options, reason] of refused) {
     assert.ok(api.calls.every((call) => call.startsWith("GET ")));
   });
 }
+
+test("requests repeat after a transient failure and stop at a client error or 3 tries", async () => {
+  const sleep = async () => {};
+  const failing = (errors) => {
+    let calls = 0;
+    const request = withRetries(async () => {
+      calls += 1;
+      const error = errors[calls - 1];
+      if (error) throw error;
+      return "ok";
+    }, sleep);
+    return { request, calls: () => calls };
+  };
+  const status = (code) => Object.assign(new Error(`returned ${code}`), { status: code });
+  const recovers = failing([status(502), new Error("socket hang up")]);
+  assert.equal(await recovers.request("GET", "/x"), "ok");
+  assert.equal(recovers.calls(), 3);
+  const refused = failing([status(403)]);
+  await assert.rejects(refused.request("GET", "/x"), /403/);
+  assert.equal(refused.calls(), 1);
+  const down = failing([status(500), status(500), status(500)]);
+  await assert.rejects(down.request("POST", "/x"), /500/);
+  assert.equal(down.calls(), 3);
+});
 
 test("checks that need no API call make none", async () => {
   for (const options of [

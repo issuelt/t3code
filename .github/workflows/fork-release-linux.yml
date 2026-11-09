@@ -208,6 +208,8 @@ jobs:
     runs-on: ubuntu-24.04
     # 5 minutes of queue, polls every 20 seconds, and up to 3 failed polls.
     timeout-minutes: 10
+    # A watchdog that cannot run must not fail a green run, even outside its steps.
+    continue-on-error: true
     permissions:
       contents: read
       actions: write
