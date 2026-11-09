@@ -213,6 +213,7 @@ jobs:
     steps:
       # The script comes from main, like the router, never from a pull request.
       - name: Check out the watchdog from main
+        continue-on-error: true
         run: |
           set -euo pipefail
           git init -q .
@@ -222,22 +223,27 @@ jobs:
           git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
       - name: Wait for every Blacksmith job to get a runner
         id: watch
+        # A failed watch cancels nothing and must not turn a green run red.
+        continue-on-error: true
         env:
           BLACKSMITH_LABELS: ${{ needs.version.outputs.blacksmith_windows }}
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/blacksmith-watchdog.cjs watch stalled
       # blacksmith-rerun.yml reruns a cancelled run only when this artifact exists.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        id: marker
         if: steps.watch.outputs.stalled == 'true'
+        continue-on-error: true
         with:
-          name: blacksmith-stalled-attempt-${{ github.run_attempt }}
+          # Each watchdog has its own name, so two that stall together cannot overwrite each other.
+          name: blacksmith-stalled-attempt-${{ github.run_attempt }}-windows
           path: stalled/blacksmith-stalled.json
           if-no-files-found: error
-          # Two watchdogs of one attempt can stall together; either marker is enough.
-          overwrite: true
           retention-days: 2
+      # A run with no marker would stay cancelled, so a failed upload cancels nothing.
       - name: Cancel the run
-        if: steps.watch.outputs.stalled == 'true'
+        if: steps.marker.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/blacksmith-watchdog.cjs cancel

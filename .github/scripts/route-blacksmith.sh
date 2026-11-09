@@ -14,12 +14,13 @@
 # keeps its VM104 or hosted runner. This never reads VM104.
 #
 # Two exclusions keep a label that had no runner on hosted. On a rerun
-# (GITHUB_RUN_ATTEMPT above 1), a kind whose label never got a runner in the
-# previous attempt stays empty; that is how blacksmith-rerun.yml's rerun of a
+# (GITHUB_RUN_ATTEMPT above 1), a kind whose label never got a runner in any
+# earlier attempt stays empty; that is how blacksmith-rerun.yml's rerun of a
 # watchdog cancel goes hosted. A kind whose label the tally lists as stalled in
-# the last 6 hours stays empty too. If the previous attempt's jobs cannot be
-# read, every kind stays empty; a missing or malformed stalled map in an
-# otherwise valid tally does the same.
+# the last 6 hours stays empty too. An excluded kind keeps its reservation, so
+# every call of a run reserves the same kinds even if a stall expires between
+# calls. If an earlier attempt's jobs cannot be read, every kind stays empty; a
+# missing or malformed stalled map in an otherwise valid tally does the same.
 #
 # Two calls of one run can read different tallies if the hourly tally refreshes
 # between them. The later tally is the same or higher, so the later call can
@@ -49,6 +50,7 @@ kinds=(linux android windows)
 declare -A labels=()
 declare -A asked=()
 declare -A reserve=()
+declare -A dropped=()
 
 finish() {
 	local kind
@@ -117,18 +119,19 @@ trap 'rm -rf "$work"' EXIT
 
 any_asked() {
 	local kind
-	for kind in "${!asked[@]}"; do [[ -z "${labels[$kind]:-}" ]] || return 0; done
+	for kind in "${!asked[@]}"; do [[ -z "${labels[$kind]:-}" || -n "${dropped[$kind]:-}" ]] || return 0; done
 	return 1
 }
 
-# Drops each kind whose label is in the named newline-separated list, with the reason.
+# Marks each kind whose label is in the newline-separated list as dropped, with the reason.
+# A dropped kind stays in labels until the end, because it keeps its reservation.
 drop_labels() {
 	local list="$1" reason="$2" kind
 	for kind in "${kinds[@]}"; do
-		[[ -n "${labels[$kind]:-}" ]] || continue
+		[[ -n "${labels[$kind]:-}" && -z "${dropped[$kind]:-}" ]] || continue
 		if grep -qxF -- "${labels[$kind]}" <<<"$list"; then
 			echo "Blacksmith $kind: none (${labels[$kind]} $reason)."
-			unset "labels[$kind]"
+			dropped[$kind]=1
 		fi
 	done
 }
@@ -137,15 +140,16 @@ attempt="${GITHUB_RUN_ATTEMPT:-1}"
 [[ "$attempt" =~ ^[0-9]+$ ]] || deny "GITHUB_RUN_ATTEMPT is not a number"
 if ((attempt > 1)); then
 	[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] || deny "GITHUB_RUN_ID is not a number"
-	previous=$((attempt - 1))
-	# The labels of previous-attempt jobs that no runner ever took. Skipped jobs never queued.
-	call "$api/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$previous/jobs?per_page=100" >"$work/previous.json" ||
-		deny "could not read attempt $previous's jobs"
-	waited="$(jq -r 'if (.jobs | type) != "array" or (.total_count | type) != "number" or .total_count > (.jobs | length) then error("not one full page")
-		else [.jobs[] | select(.runner_name == null and .conclusion != "skipped") | .labels[]? | select(startswith("blacksmith-"))] | unique | .[] end' \
-		"$work/previous.json" 2>/dev/null)" || deny "could not read attempt $previous's jobs"
-	drop_labels "$waited" "got no runner in attempt $previous"
-	any_asked || deny "no label left after attempt $previous"
+	for ((earlier = 1; earlier < attempt; earlier += 1)); do
+		# The labels of that attempt's jobs that no runner ever took. A job cancelled in the queue has runner_name "", a skipped one null.
+		call "$api/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$earlier/jobs?per_page=100" >"$work/previous.json" ||
+			deny "could not read attempt $earlier's jobs"
+		waited="$(jq -r 'if (.jobs | type) != "array" or (.total_count | type) != "number" or .total_count > (.jobs | length) then error("not one full page")
+			else [.jobs[] | select((.runner_name // "") == "" and .conclusion != "skipped") | .labels[]? | select(startswith("blacksmith-"))] | unique | .[] end' \
+			"$work/previous.json" 2>/dev/null)" || deny "could not read attempt $earlier's jobs"
+		drop_labels "$waited" "got no runner in attempt $earlier"
+	done
+	any_asked || deny "no label left after attempt $((attempt - 1))"
 fi
 
 run="$(call "$api/repos/$GITHUB_REPOSITORY/actions/workflows/blacksmith-usage.yml/runs?branch=main&status=success&per_page=1" |
@@ -202,6 +206,7 @@ while read -r kind label; do
 	allowed[$kind]="$label"
 done <<<"$fits"
 for kind in "${kinds[@]}"; do
+	[[ -z "${dropped[$kind]:-}" ]] || continue
 	if [[ -n "${labels[$kind]:-}" && -z "${allowed[$kind]:-}" ]]; then
 		echo "Blacksmith $kind: none (${timeout[$kind]} minutes of ${labels[$kind]} on top of the kinds before it would pass the budget)."
 	elif [[ -n "${allowed[$kind]:-}" && -z "${asked[$kind]:-}" ]]; then
@@ -209,5 +214,5 @@ for kind in "${kinds[@]}"; do
 	fi
 done
 labels=()
-for kind in "${!asked[@]}"; do [[ -z "${allowed[$kind]:-}" ]] || labels[$kind]="${allowed[$kind]}"; done
+for kind in "${!asked[@]}"; do [[ -z "${allowed[$kind]:-}" || -n "${dropped[$kind]:-}" ]] || labels[$kind]="${allowed[$kind]}"; done
 finish

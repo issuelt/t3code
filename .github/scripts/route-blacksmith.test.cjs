@@ -72,10 +72,14 @@ const routes = ({
   artifacts = [{ id: 9, name: "blacksmith-usage", expired: false }],
   archive,
   previous,
+  attempts = previous ? { 1: previous } : {},
 } = {}) => ({
-  ...(previous && {
-    "/repos/issuelt/t3code/actions/runs/42/attempts/1/jobs?per_page=100": previous,
-  }),
+  ...Object.fromEntries(
+    Object.entries(attempts).map(([n, jobs]) => [
+      `/repos/issuelt/t3code/actions/runs/42/attempts/${n}/jobs?per_page=100`,
+      jobs,
+    ]),
+  ),
   "/repos/issuelt/t3code/actions/workflows/blacksmith-usage.yml/runs?branch=main&status=success&per_page=1":
     { status: 200, body: { workflow_runs: run ? [run] : [] } },
   "/repos/issuelt/t3code/actions/runs/7/artifacts?name=blacksmith-usage": {
@@ -478,6 +482,55 @@ test("a rerun leaves a kind hosted when its label never got a runner in the prev
   assert.equal(result.calls.length, 4);
 });
 
+test("a job cancelled in the queue, reported with an empty runner name, counts as no runner", () => {
+  // Build win-x64 of run 42465199789, trimmed to the fields the router reads.
+  const cancelledInQueue = {
+    id: 128683270754,
+    name: "Build win-x64",
+    status: "completed",
+    conclusion: "cancelled",
+    labels: [windows],
+    runner_id: 0,
+    runner_name: "",
+    runner_group_name: "",
+    steps: [],
+  };
+  const result = route({
+    attempt: "2",
+    fixtures: routes({ previous: jobsOf([ranJob(linux), ranJob(android), cancelledInQueue]) }),
+  });
+  assert.deepEqual(result.outputs, {
+    ...none,
+    blacksmith_linux: linux,
+    blacksmith_android: android,
+  });
+  assert.match(result.log, /blacksmith-8vcpu-windows-2025 got no runner in attempt 1/);
+});
+
+test("a third attempt keeps the labels that got no runner in either earlier attempt", () => {
+  const result = route({
+    attempt: "3",
+    fixtures: routes({
+      attempts: {
+        1: jobsOf([ranJob(linux), ranJob(android), waitedJob(windows, { runner_name: "" })]),
+        2: jobsOf([ranJob(linux), waitedJob(android, { runner_name: "" })]),
+      },
+    }),
+  });
+  assert.deepEqual(result.outputs, { ...none, blacksmith_linux: linux }, result.log);
+  assert.match(result.log, /blacksmith-8vcpu-windows-2025 got no runner in attempt 1/);
+  assert.match(result.log, /blacksmith-16vcpu-ubuntu-2404 got no runner in attempt 2/);
+});
+
+test("a third attempt keeps every kind hosted when any earlier attempt cannot be read", () => {
+  const result = route({
+    attempt: "3",
+    fixtures: routes({ attempts: { 1: jobsOf([ranJob(linux)]), 2: { status: 500 } } }),
+  });
+  assert.deepEqual(result.outputs, none, result.log);
+  assert.match(result.log, /could not read attempt 2's jobs/);
+});
+
 test("a rerun ignores skipped jobs, hosted jobs, and labels that ran", () => {
   const result = route({
     attempt: "2",
@@ -545,16 +598,30 @@ test("a stall older than 6 hours, or on another label, leaves the label routed",
   assert.deepEqual(result.outputs, all, result.log);
 });
 
-test("a stalled label frees its reservation for the kinds after it", () => {
-  // 1081 + 600 + 240 + 720 = 2641 leaves Android out; with Linux stalled, 1081 + 600 + 720 = 2401 still does,
-  // and 1080 + 600 + 720 = 2400 fits.
-  const at = (used) =>
+test("a stalled kind keeps its reservation, so an expiring stall cannot change what later kinds get", () => {
+  // 600 + 600 + 240 + 720 = 2160 leaves no room for Windows's 480, whether or not Linux has stalled.
+  const call = (at) =>
     route({
-      kinds: "linux android",
-      fixtures: routes({ tally: usage({ used, stalled: { [linux]: iso(now - 60) } }) }),
+      fixtures: routes({ tally: usage({ used: 600, stalled: { [linux]: iso(at) } }) }),
     });
-  assert.deepEqual(at(1080).outputs, { ...none, blacksmith_android: android });
-  assert.deepEqual(at(1081).outputs, none);
+  assert.deepEqual(call(now - 60).outputs, { ...none, blacksmith_android: android });
+  assert.deepEqual(call(now - 6 * 3600 - 1).outputs, {
+    ...none,
+    blacksmith_linux: linux,
+    blacksmith_android: android,
+  });
+});
+
+test("a kind with no runner in an earlier attempt keeps its reservation too", () => {
+  // 1081 + 600 + 240 + 480 = 2401 is over for Windows with Linux still reserved; without it, 2161 would fit.
+  const result = route({
+    attempt: "2",
+    fixtures: routes({
+      tally: usage({ used: 1081 }),
+      previous: jobsOf([waitedJob(linux, { runner_name: "" }), ranJob(windows)]),
+    }),
+  });
+  assert.deepEqual(result.outputs, none, result.log);
 });
 
 for (const [name, stalled] of [

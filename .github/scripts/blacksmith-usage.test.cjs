@@ -409,11 +409,11 @@ const waited = (overrides = {}) =>
     ...overrides,
   });
 
-test("a job that ended without a runner after 5 minutes names its stalled label", () => {
+test("a job that ended without a runner after 4 minutes names its stalled label", () => {
   assert.equal(stalledLabel(waited()), "blacksmith-4vcpu-windows-2025");
   assert.equal(stalledLabel(waited({ conclusion: "failure" })), "blacksmith-4vcpu-windows-2025");
   assert.equal(
-    stalledLabel(waited({ created_at: at(9), completed_at: at(4) })),
+    stalledLabel(waited({ created_at: at(8), completed_at: at(4) })),
     "blacksmith-4vcpu-windows-2025",
   );
 });
@@ -423,7 +423,7 @@ test("skipped, hosted, started, short, and running jobs are not stalled", () => 
   assert.equal(stalledLabel(waited({ labels: ["windows-2025"] })), null);
   assert.equal(stalledLabel(waited({ runner_name: "blacksmith-4vcpu-windows-2025-a" })), null);
   // A person or a concurrency group cancelled it before the watchdog would have.
-  assert.equal(stalledLabel(waited({ created_at: at(9), completed_at: at(4, -1) })), null);
+  assert.equal(stalledLabel(waited({ created_at: at(8), completed_at: at(4, -1) })), null);
   assert.equal(
     stalledLabel(waited({ status: "queued", conclusion: null, completed_at: null })),
     null,

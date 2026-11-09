@@ -7,8 +7,9 @@ const path = require("node:path");
 
 const MAX_CALLS = 300;
 const MAX_LISTED = 1000;
-// blacksmith-watchdog.cjs cancels a run after this long; a shorter wait is a person's or a concurrency cancel.
-const STALL_MINUTES = 5;
+// blacksmith-watchdog.cjs cancels after 5 minutes on the runner's clock, and this reads GitHub's clock.
+// The minute of margin keeps skew from hiding a real stall. A shorter wait is a person's or a concurrency cancel.
+const STALL_MINUTES = 4;
 const STALLED_KEEP_HOURS = 24;
 const LABEL = /^blacksmith-(\d+)vcpu-(ubuntu|windows|macos)-\d+(-arm(?=$|-))?(?:$|-)/;
 
@@ -73,7 +74,7 @@ function candidateFiles(dir) {
     files.map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]),
   );
   const found = new Set(files.filter((f) => /blacksmith/i.test(text[f])));
-  for (let grew = true; grew;) {
+  for (let grew = true; grew; ) {
     grew = false;
     for (const f of files) {
       if (found.has(f)) continue;
