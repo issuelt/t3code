@@ -132,6 +132,7 @@ const layerTestRegistry = Layer.succeed(
 const layerTestRemoteAuthorization = Layer.succeed(
   RemoteEnvironmentAuthorization,
   RemoteEnvironmentAuthorization.of({
+    rememberCheckedDescriptor: () => Effect.void,
     authorizeBearer: () => Effect.die("unexpected bearer preparation"),
     authorizeDirect: () => Effect.die("unexpected direct preparation"),
     authorizeDpop: () => Effect.die("unexpected socket preparation"),

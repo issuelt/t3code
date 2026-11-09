@@ -114,7 +114,7 @@ export const searchThreads = Effect.fn("mcp.searchThreads")(function* (
   return {
     matches: matches.map((match) => ({
       ...match,
-      link: formatThreadLink({ environmentId, threadId: match.threadId }),
+      link: formatThreadLink({ environmentId, threadId: match.threadId }, match.title),
     })),
   };
 });

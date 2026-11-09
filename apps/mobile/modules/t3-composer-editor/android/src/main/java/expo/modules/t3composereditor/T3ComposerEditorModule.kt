@@ -66,7 +66,7 @@ internal object T3ComposerClipboard {
 }
 
 class T3ComposerEditorModule : Module() {
-  @Suppress("LongMethod")
+  @Suppress("LongMethod") // A flat list of the view's props and events.
   override fun definition() = ModuleDefinition {
     Name("T3ComposerEditor")
 

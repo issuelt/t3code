@@ -282,7 +282,12 @@ const make = Effect.gen(function* () {
 
     "threads.read": Effect.fn("FleetService.threads.read")(function* (input) {
       const target = yield* threads
-        .getThreadRecords(input.threadId, ["runs", "runtimeRequests", "contextTransfers"])
+        .getThreadRecords(input.threadId, [
+          "runs",
+          "runtimeRequests",
+          "contextTransfers",
+          "providerTurns",
+        ])
         .pipe(Effect.mapError(threadManagementFailure));
       if (target.thread.deletedAt !== null) {
         return yield* failure("thread_not_found", `Thread ${input.threadId} was not found.`);

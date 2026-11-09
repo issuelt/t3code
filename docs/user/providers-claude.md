@@ -51,10 +51,9 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 300,000 tokens. This changes when compaction happens, not the model's context
 window. Leave it empty for Claude Code's default.
 
-You can also send `/compact` in an existing conversation. Web and desktop offer
-**Compact context** from the context meter. The meter is off by default; see
-[commands and skills](./composer.md#commands-and-skills) to enable it. Claude Code
-compacts automatically whether the meter is on or off.
+You can also send `/compact` in an existing conversation. Claude Code also
+compacts automatically. To see context usage, see
+[commands and skills](./composer.md#commands-and-skills).
 
 When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
@@ -77,18 +76,6 @@ over 200,000 tokens. Each Claude provider's settings can override it:
   **When you return**. Switch the chip to **Keep** to keep the full history for that message.
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
-
-## Prompt suggestions
-
-Turn on **Prompt suggestions** in the Claude provider settings to have Claude
-suggest your next prompt when a turn finishes. On web and desktop the
-suggestion appears in the empty composer. Press **Right Arrow** or **Tab** to
-put it in the composer, where you can edit it before you send, or **Esc** to
-hide it. The suggestion disappears when you send your next message.
-
-Claude does not always have a suggestion, for example in plan mode, after an
-error, or when you are close to a usage limit. A thread where Claude is
-already running starts suggesting once Claude restarts for it.
 
 ## Usage limits
 

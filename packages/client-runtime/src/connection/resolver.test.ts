@@ -109,6 +109,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
         })),
     authorizeDirect: () => Effect.die("unused"),
     authorizeDpopHttp: () => Effect.die("unused"),
+    rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
   });
   const ssh = ClientCapabilities.SshEnvironmentGateway.of({
