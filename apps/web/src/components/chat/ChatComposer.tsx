@@ -1941,6 +1941,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     draftText: prompt,
     disabled: dictationDisabled,
+    offerSetup: false,
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -1963,6 +1964,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
+  // Dictation and Voice input are separate systems that share one composer microphone.
+  const voiceInputOwnsMicrophone = speechInput.available && !dictation.active;
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   const voiceSendDisabledReason =
     sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
@@ -3718,11 +3721,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  <ComposerDictationControl
-                    dictation={dictation}
-                    disabled={composerTextUnavailable}
-                    shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
-                  />
+                  {voiceInputOwnsMicrophone ? null : (
+                    <ComposerDictationControl
+                      dictation={dictation}
+                      disabled={composerTextUnavailable}
+                      shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
+                    />
+                  )}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
@@ -3782,7 +3787,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   >
-                    {speechInput.available ? (
+                    {voiceInputOwnsMicrophone ? (
                       <>
                         <ComposerSpeechRecordingPill
                           state={speechInput.state}

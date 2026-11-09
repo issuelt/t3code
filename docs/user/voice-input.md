@@ -15,7 +15,8 @@ to a named environment on that phone, open **Settings → Voice → Transcribe o
 On web and desktop, you choose where transcription runs.
 Nothing is sent until you choose one: open **Settings → Voice** and set
 **Transcribe with** to the environment that should transcribe for you.
-On a new device, the microphone or dictation shortcut opens that setting from the composer.
+Until you choose one, the composer's microphone runs
+[Dictation](./composer.md#dictation-on-web-and-desktop) instead.
 Microphone audio recorded on this device is sent to that environment over your
 authenticated connection, transcribed there, and discarded. The choice is saved
 on this device only, so every computer and browser you use asks for it once.
