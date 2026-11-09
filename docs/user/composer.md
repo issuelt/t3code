@@ -258,6 +258,9 @@ Linux while T3 Code is focused, and release to insert. `Esc` cancels. Recordings
 five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
 [keybindings](keybindings.md).
 
+After you choose a destination in **Settings → Voice**, the composer's microphone uses
+[Voice input](voice-input.md) instead. The hold shortcut still runs Dictation.
+
 The machine that owns the thread transcribes when its dictation is ready; otherwise another
 ready machine does. With two or more machines connected, you can pick one for this device in
 **Settings → Connections → Dictation machine**. Your audio goes only to that machine.
