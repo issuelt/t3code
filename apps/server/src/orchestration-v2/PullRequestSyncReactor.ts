@@ -3,6 +3,7 @@ import {
   isOrchestrationV2WorkActive,
   type OrchestrationV2TurnItem,
   type PullRequestSummary,
+  PullRequestUnavailableError,
   type ThreadId,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
@@ -175,6 +176,7 @@ export function changeRequestsCreatedBy(input: string, output: string) {
 }
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
+const isPullRequestUnavailableError = Schema.is(PullRequestUnavailableError);
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
@@ -314,6 +316,11 @@ function rateLimitRetryAt(cause: Cause.Cause<unknown>): number | undefined {
     error = error.cause;
   }
   return undefined;
+}
+
+function isProviderUnsupported(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.squash(cause);
+  return isPullRequestUnavailableError(error) && error.reason === "provider-unsupported";
 }
 
 function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
@@ -584,7 +591,10 @@ export const make = Effect.gen(function* () {
       syncGroup(key, entries).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
-          const retryAt = rateLimitRetryAt(cause);
+          // A host this server cannot browse fails the same way on every sweep.
+          const retryAt =
+            rateLimitRetryAt(cause) ??
+            (isProviderUnsupported(cause) ? nowMs + SLOW_SYNC_INTERVAL_MS : undefined);
           if (retryAt !== undefined) {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
           }
