@@ -126,7 +126,10 @@ export const isHomeDeliveredMessage = (
   message.idleCompaction === undefined &&
   message.scheduledTaskId === undefined;
 
-/** Durable agent provenance, including coordination results created by the server. */
+/**
+ * Durable agent provenance, including coordination results created by the server. A
+ * provider-written user message is the prompt a native subagent ran, so it stays a prompt.
+ */
 export const isAgentDeliveredMessage = (
   threadId: string,
   message: {
@@ -142,10 +145,10 @@ export const isAgentDeliveredMessage = (
   message.idleCompaction === undefined &&
   message.scheduledTaskId === undefined &&
   message.context?.guest === undefined &&
+  message.creationSource !== "provider" &&
   (message.senderThreadId !== undefined ||
     message.coordination !== undefined ||
-    (message.createdBy === "agent" &&
-      (message.creationSource === "mcp" || message.creationSource === "provider")) ||
+    (message.createdBy === "agent" && message.creationSource === "mcp") ||
     (isHomeThreadId(threadId) && message.createdBy !== undefined && message.createdBy !== "user"));
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
