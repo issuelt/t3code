@@ -413,6 +413,7 @@ export const make = Effect.gen(function* () {
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
+    for (const key of unsupportedUntil.keys()) if (!groups.has(key)) unsupportedUntil.delete(key);
 
     const linkedThisSweep = new Set<string>();
     // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
