@@ -25,6 +25,7 @@ import {
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -1161,7 +1162,9 @@ it.effect("Home waits for a remote thread through the fleet", () => {
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(PeerLinks.PeerLinks)({ get: () => Effect.succeed(Option.none()) }),
+        ),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),

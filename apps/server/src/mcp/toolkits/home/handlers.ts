@@ -1,9 +1,11 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as FleetBroker from "../../../home/FleetBroker.ts";
 import * as HomeService from "../../../home/HomeService.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { callerIsHome, readHomeChangeCaller } from "../../homeRouting.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
@@ -29,14 +31,39 @@ export const layer = McpToolAccess.toLayer(HomeToolkit, {
         };
       }
       const reach = yield* (yield* FleetBroker.FleetBroker).reach;
+      const desktop = reach.environments.filter(
+        (candidate) => candidate.environmentId !== scope.environmentId,
+      );
+      // Home's thread tools also reach these through their peer links.
+      const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+      const linked = Option.isNone(peerLinks)
+        ? []
+        : yield* peerLinks.value.list.pipe(Effect.orElseSucceed(() => []));
       return {
         currentEnvironmentId: scope.environmentId,
         relayConnected: reach.hostConnected,
         environments: [
           current,
-          ...reach.environments
-            .filter((candidate) => candidate.environmentId !== scope.environmentId)
-            .map((candidate) => ({ ...candidate, current: false })),
+          ...desktop.map((candidate) => {
+            const link = linked.find((entry) => entry.environmentId === candidate.environmentId);
+            return {
+              ...candidate,
+              connected: candidate.connected || link?.status === "reachable",
+              current: false,
+            };
+          }),
+          ...linked
+            .filter(
+              (link) =>
+                link.environmentId !== scope.environmentId &&
+                !desktop.some((candidate) => candidate.environmentId === link.environmentId),
+            )
+            .map((link) => ({
+              environmentId: link.environmentId,
+              label: link.label,
+              connected: link.status === "reachable",
+              current: false,
+            })),
         ],
       };
     }),

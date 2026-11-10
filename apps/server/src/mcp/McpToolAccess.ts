@@ -21,7 +21,9 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
 import * as HomeService from "../home/HomeService.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -384,6 +386,22 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
   const home = yield* Effect.serviceOption(HomeService.HomeService);
+  const desktop = yield* Effect.serviceOption(FleetBroker.FleetBroker);
+  const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+  // Home's fleet route reaches only the desktop's connections; a stored peer link covers the rest.
+  const homeUsesPeerLink = Effect.fn("McpToolAccess.homeUsesPeerLink")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    if (Option.isNone(peerLinks)) return false;
+    const link = yield* peerLinks.value.get(environmentId).pipe(Effect.orElseSucceed(Option.none));
+    if (Option.isNone(link)) return false;
+    if (Option.isNone(desktop)) return true;
+    const reach = yield* desktop.value.reach;
+    return !(
+      reach.hostConnected &&
+      reach.environments.some((entry) => entry.environmentId === environmentId && entry.connected)
+    );
+  });
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -406,28 +424,27 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
           scope.capabilities.has("orchestration") &&
           (yield* home.value.isHome(scope.thread.threadId))
         ) {
-          if (
-            [
-              "orchestrator_capabilities",
-              "t3_project_list",
-              "t3_project_create",
-              "t3_project_update",
-              "t3_project_clone",
-              "t3_thread_search",
-              "t3_thread_list",
-              "t3_thread_read",
-              "t3_thread_wait",
-              "t3_thread_launch",
-              "t3_thread_send",
-              "t3_thread_interrupt",
-              "t3_thread_organize",
-              "t3_thread_update",
-              "t3_pending_request",
-            ].includes(name)
-          ) {
+          const fleetTool = [
+            "orchestrator_capabilities",
+            "t3_project_list",
+            "t3_project_create",
+            "t3_project_update",
+            "t3_project_clone",
+            "t3_thread_search",
+            "t3_thread_list",
+            "t3_thread_read",
+            "t3_thread_wait",
+            "t3_thread_launch",
+            "t3_thread_send",
+            "t3_thread_interrupt",
+            "t3_thread_organize",
+            "t3_thread_update",
+            "t3_pending_request",
+          ].includes(name);
+          if (fleetTool && (target === undefined || !(yield* homeUsesPeerLink(target)))) {
             return yield* here({ ...params, environmentId });
           }
-          if (target !== undefined)
+          if (!fleetTool && target !== undefined)
             return yield* new OrchestratorMcpFailure({
               code: "capability_denied",
               message: "Home cannot use this tool in another environment.",
