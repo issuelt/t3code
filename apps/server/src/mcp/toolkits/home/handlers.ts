@@ -36,9 +36,11 @@ export const layer = McpToolAccess.toLayer(HomeToolkit, {
       );
       // Home's thread tools also reach these through their peer links.
       const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
-      const linked = Option.isNone(peerLinks)
-        ? []
-        : yield* peerLinks.value.list.pipe(Effect.orElseSucceed(() => []));
+      // With linked environments off, every peer call is refused, so none is listed.
+      const linked =
+        Option.isNone(peerLinks) || !(yield* peerLinks.value.enabled)
+          ? []
+          : yield* peerLinks.value.list.pipe(Effect.orElseSucceed(() => []));
       return {
         currentEnvironmentId: scope.environmentId,
         relayConnected: reach.hostConnected,

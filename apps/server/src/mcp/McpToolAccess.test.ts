@@ -21,6 +21,9 @@ import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as FleetBroker from "../home/FleetBroker.ts";
+import * as FleetService from "../home/FleetService.ts";
+import * as HomeWorkspace from "../home/HomeWorkspace.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HomeToolkit } from "./toolkits/home/tools.ts";
 import * as HomeHandlers from "./toolkits/home/handlers.ts";
@@ -612,6 +615,9 @@ it.effect("Home lists environments it reaches only through a peer link", () => {
   const windows = EnvironmentId.make("environment-windows");
   const layer = McpHttpServer.toolkitRegistration(HomeToolkit, HomeHandlers.layer).pipe(
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(Layer.mock(FleetService.FleetService)({})),
+    Layer.provide(Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home" })),
     Layer.provide(
       Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(true) }),
     ),
@@ -631,6 +637,7 @@ it.effect("Home lists environments it reaches only through a peer link", () => {
     ),
     Layer.provide(
       Layer.mock(PeerLinks.PeerLinks)({
+        enabled: Effect.succeed(true),
         list: Effect.succeed([
           { environmentId: windows, label: "windows", status: "reachable" } as never,
         ]),
