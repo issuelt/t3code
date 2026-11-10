@@ -7,6 +7,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -378,6 +379,15 @@ const linksUnavailable = new OrchestratorMcpFailure({
  * environment, which checks the rest. The handler here never sees
  * `environmentId`, so it cannot leak into what it writes.
  */
+const HOME_PEER_READS: ReadonlySet<string> = new Set([
+  "orchestrator_capabilities",
+  "t3_project_list",
+  "t3_thread_search",
+  "t3_thread_list",
+  "t3_thread_read",
+  "t3_thread_wait",
+]);
+
 const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
   declarations: Handlers<Tools>,
@@ -388,13 +398,17 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   const home = yield* Effect.serviceOption(HomeService.HomeService);
   const desktop = yield* Effect.serviceOption(FleetBroker.FleetBroker);
   const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
-  // Home's fleet route reaches only the desktop's connections; a stored peer link covers the rest.
-  const homeUsesPeerLink = Effect.fn("McpToolAccess.homeUsesPeerLink")(function* (
+  // Home's fleet route reaches only the desktop's connections. Home's reads also use a live
+  // peer link; its changes stay on the fleet route, which keeps its reports and mode checks.
+  const homeReadsThroughPeerLink = Effect.fn("McpToolAccess.homeReadsThroughPeerLink")(function* (
+    name: string,
     environmentId: EnvironmentId,
   ) {
-    if (Option.isNone(peerLinks)) return false;
+    if (!HOME_PEER_READS.has(name) || Option.isNone(peerLinks)) return false;
     const link = yield* peerLinks.value.get(environmentId).pipe(Effect.orElseSucceed(Option.none));
-    if (Option.isNone(link)) return false;
+    if (Option.isNone(link) || DateTime.isLessThan(link.value.expiresAt, yield* DateTime.now))
+      return false;
+    if (!(yield* peerLinks.value.enabled)) return false;
     if (Option.isNone(desktop)) return true;
     const reach = yield* desktop.value.reach;
     return !(
@@ -441,7 +455,10 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
             "t3_thread_update",
             "t3_pending_request",
           ].includes(name);
-          if (fleetTool && (target === undefined || !(yield* homeUsesPeerLink(target)))) {
+          if (
+            fleetTool &&
+            (target === undefined || !(yield* homeReadsThroughPeerLink(name, target)))
+          ) {
             return yield* here({ ...params, environmentId });
           }
           if (!fleetTool && target !== undefined)

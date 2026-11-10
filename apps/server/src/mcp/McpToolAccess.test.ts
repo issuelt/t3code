@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -530,56 +531,82 @@ it.effect("keeps Home fleet operations on their existing route", () => {
   }).pipe(Effect.provide(layer));
 });
 
+const LIVE = "2030-01-01T00:00:00Z";
+const EXPIRED = "1960-01-01T00:00:00Z";
 it.effect.each([
-  ["desktop reaches it", true, true, "saw environmentId"],
-  ["only a peer link reaches it", false, true, "t3_thread_read in environment-box"],
-  ["neither reaches it", false, false, "saw environmentId"],
-] as const)("Home reads another environment when %s", ([, desktopReaches, linked, expected]) => {
-  const toolkit = Toolkit.make(Tool.make("t3_thread_read", linkedProbe));
-  const layer = McpHttpServer.toolkitRegistration(
-    toolkit,
-    McpToolAccess.toLayer(toolkit, { t3_thread_read: McpToolAccess.reads(ranHere) }),
-  ).pipe(
-    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-    Layer.provide(
-      Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(true) }),
-    ),
-    Layer.provide(
-      Layer.mock(FleetBroker.FleetBroker)({
-        reach: Effect.succeed({
-          hostConnected: true,
-          mcpRelay: true,
-          environments: desktopReaches
-            ? [{ environmentId: box, label: "box", connected: true }]
-            : [],
+  ["t3_thread_read", "desktop reaches it", true, LIVE, "saw environmentId"],
+  [
+    "t3_thread_read",
+    "only a peer link reaches it",
+    false,
+    LIVE,
+    "t3_thread_read in environment-box",
+  ],
+  ["t3_thread_read", "neither reaches it", false, null, "saw environmentId"],
+  ["t3_thread_read", "its only link expired", false, EXPIRED, "saw environmentId"],
+  // Changes keep the fleet route, which registers Home's report and checks its mode.
+  ["t3_thread_send", "only a peer link reaches it", false, LIVE, "saw environmentId"],
+] as const)(
+  "Home's %s in another environment when %s",
+  ([tool, , desktopReaches, linkExpiresAt, expected]) => {
+    const toolkit = Toolkit.make(
+      Tool.make("t3_thread_read", linkedProbe),
+      Tool.make("t3_thread_send", linkedProbe),
+    );
+    const layer = McpHttpServer.toolkitRegistration(
+      toolkit,
+      McpToolAccess.toLayer(toolkit, {
+        t3_thread_read: McpToolAccess.reads(ranHere),
+        t3_thread_send: McpToolAccess.writes(ranHere),
+      }),
+    ).pipe(
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provide(
+        Layer.mock(HomeService.HomeService)({
+          available: true,
+          isHome: () => Effect.succeed(true),
         }),
-      }),
-    ),
-    Layer.provide(
-      Layer.mock(PeerLinks.PeerLinks)({
-        get: (environmentId) =>
-          Effect.succeed(
-            linked && environmentId === box ? Option.some({} as never) : Option.none(),
-          ),
-      }),
-    ),
-    Layer.provide(
-      Layer.mock(PeerForwarding.PeerForwarding)({
-        call: (_scope, tool, environmentId) =>
-          Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
-      }),
-    ),
-    Layer.provideMerge(
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
-      }),
-    ),
-  );
-  return call("t3_thread_read", fullAccess, { environmentId: box }).pipe(
-    Effect.map((outcome) => expect(outcome).toBe(expected)),
-    Effect.provide(layer),
-  );
-});
+      ),
+      Layer.provide(
+        Layer.mock(FleetBroker.FleetBroker)({
+          reach: Effect.succeed({
+            hostConnected: true,
+            mcpRelay: true,
+            environments: desktopReaches
+              ? [{ environmentId: box, label: "box", connected: true }]
+              : [],
+          }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PeerLinks.PeerLinks)({
+          enabled: Effect.succeed(true),
+          get: (environmentId) =>
+            Effect.succeed(
+              linkExpiresAt !== null && environmentId === box
+                ? Option.some({ expiresAt: DateTime.makeUnsafe(linkExpiresAt) } as never)
+                : Option.none(),
+            ),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PeerForwarding.PeerForwarding)({
+          call: (_scope, tool, environmentId) =>
+            Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+        }),
+      ),
+    );
+    return call(tool, fullAccess, { environmentId: box }).pipe(
+      Effect.map((outcome) => expect(outcome).toBe(expected)),
+      Effect.provide(layer),
+    );
+  },
+);
 
 it.effect("Home lists environments it reaches only through a peer link", () => {
   const windows = EnvironmentId.make("environment-windows");
