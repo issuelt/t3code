@@ -1539,6 +1539,16 @@ describe("PullRequestSyncReactor", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+
+          // A refresh the user asks for reads through the pause, for example after a sign-in.
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
