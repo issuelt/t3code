@@ -47,6 +47,38 @@ NodeTls.setDefaultCACertificates([
   NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url), "utf8"),
 ]);
 
+const fixture = (name: string) =>
+  NodeFS.readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+export const otherHostCertificate = fixture("other-host-cert.pem").toString("utf8");
+
+/** An IPv4 HTTPS server whose certificate names peer.invalid, so 127.0.0.1 mismatches it. */
+export const serveOtherHostCertificate = Effect.acquireRelease(
+  Effect.callback<{ readonly server: NodeHttps.Server; readonly seen: { requests: number } }>(
+    (resume) => {
+      const seen = { requests: 0 };
+      const server = NodeHttps.createServer(
+        { key: fixture("localhost-key.pem"), cert: otherHostCertificate },
+        (_request, response) => {
+          seen.requests += 1;
+          response.end();
+        },
+      );
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen })));
+    },
+  ),
+  ({ server }) =>
+    Effect.callback<void>((resume) => {
+      server.closeAllConnections();
+      server.close(() => resume(Effect.void));
+    }),
+).pipe(
+  Effect.map(({ server, seen }) => {
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("expected a TCP port");
+    return { url: `https://127.0.0.1:${address.port}`, seen };
+  }),
+);
+
 export const layerHttpsTest = NodeHttpServer.layer(
   () =>
     NodeHttps.createServer({
