@@ -68,6 +68,7 @@ const callConnectMcpApproval = Effect.fn("clientRuntime.state.connectMcpApproval
     const common = {
       prepared: {
         environmentId: input.environmentId,
+        label: authorized.label,
         httpBaseUrl: authorized.httpBaseUrl,
         httpAuthorization: authorized.httpAuthorization,
         target: new RelayConnectionTarget({

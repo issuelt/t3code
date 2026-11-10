@@ -148,7 +148,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
 >(input: {
   readonly prepared: Pick<
     PreparedConnection,
-    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target"
+    "environmentId" | "label" | "httpBaseUrl" | "httpAuthorization" | "target"
   >;
   readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<
