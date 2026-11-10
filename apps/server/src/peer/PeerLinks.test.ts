@@ -32,6 +32,8 @@ import {
   descriptorOf,
   layerLinkingEnvironment,
   layerHttpsTest,
+  otherHostCertificate,
+  serveOtherHostCertificate,
   servePeer,
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
@@ -138,8 +140,9 @@ it.effect(
         expect(untrusted.message).toContain("certificate this machine rejected");
         expect(untrusted.message).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
         expect(yield* Ref.get(b.probes)).toBe(0);
-        NodeTls.setDefaultCACertificates(trusted);
-        const mismatchUrl = b.url.replace("127.0.0.1", "[::ffff:127.0.0.1]");
+        NodeTls.setDefaultCACertificates([...trusted, otherHostCertificate]);
+        const otherHost = yield* serveOtherHostCertificate;
+        const mismatchUrl = otherHost.url;
         yield* Effect.promise(() =>
           // @effect-diagnostics-next-line globalFetchInEffect:off - Assert Node's TLS error before the client handles it.
           expect(fetch(mismatchUrl)).rejects.toMatchObject({
@@ -151,6 +154,7 @@ it.effect(
           .pipe(Effect.flip);
         expect(mismatch.reason).toBe("unreachable");
         expect(mismatch.message).toContain("ERR_TLS_CERT_ALTNAME_INVALID");
+        expect(otherHost.seen.requests).toBe(0);
         expect(yield* Ref.get(b.probes)).toBe(0);
         expect(yield* linkedSessions(b)).toEqual([]);
         expect(yield* Ref.get(b.bearers)).toEqual([]);
