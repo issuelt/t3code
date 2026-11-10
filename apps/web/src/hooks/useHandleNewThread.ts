@@ -1,5 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
-import { scopedProjectKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedProjectKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
@@ -27,6 +30,7 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  defaultNewThreadProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
@@ -34,16 +38,30 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
-import { defaultNewThreadProjectRef } from "../lib/chatThreadActions";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
+import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
+import * as Schema from "effect/Schema";
+import { useAtomValue } from "@effect/atom-react";
+import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+
+export const LAST_USED_PROJECT_STORAGE_KEY = "t3code:last-used-project:v1";
+export const lastUsedProjectKeySchema = Schema.NullOr(Schema.String);
+
+export function readLastUsedProjectKey(): string | null {
+  try {
+    return getLocalStorageItem(LAST_USED_PROJECT_STORAGE_KEY, lastUsedProjectKeySchema);
+  } catch {
+    return null;
+  }
+}
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -421,13 +439,28 @@ export function createNewThreadHandler(router: AnyRouter) {
   };
 }
 
+const NO_HOME: Parameters<typeof defaultNewThreadProjectRef>[1] = {
+  primaryEnvironmentId: null,
+  homeWorkspaceRoot: null,
+};
+
 export function resolveDefaultProjectRef(
   projects: ReadonlyArray<EnvironmentProject>,
   projectOrder: readonly string[],
-  home: Parameters<typeof defaultNewThreadProjectRef>[1],
+  lastUsedProjectKey: string | null,
+  fallbackReady = true,
+  home: Parameters<typeof defaultNewThreadProjectRef>[1] = NO_HOME,
 ): ScopedProjectRef | null {
+  const activeProjects = projects.filter((project) => project.archivedAt == null);
+  const lastUsed = activeProjects.find(
+    (project) =>
+      scopedProjectKey(scopeProjectRef(project.environmentId, project.id)) === lastUsedProjectKey,
+  );
+  const lastUsedRef = lastUsed ? defaultNewThreadProjectRef([lastUsed], home) : null;
+  if (lastUsedRef) return lastUsedRef;
+  if (!fallbackReady) return null;
   const orderedProjects = orderItemsByPreferredIds({
-    items: projects.filter((project) => project.archivedAt == null),
+    items: activeProjects,
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
     getPreferenceIds: (project) => [
@@ -440,6 +473,14 @@ export function resolveDefaultProjectRef(
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const [lastUsedProjectKey] = useLocalStorage(
+    LAST_USED_PROJECT_STORAGE_KEY,
+    null,
+    lastUsedProjectKeySchema,
+  );
+  const defaultProjectFallbackReady = useAtomValue(
+    defaultProjectFallbackReadyAtom(lastUsedProjectKey),
+  );
   const routeTarget = useThreadRouteTarget();
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
@@ -462,14 +503,19 @@ export function useHandleNewThread() {
     primaryServerConfigAtom,
     (config) => config?.homeWorkspaceRoot ?? null,
   );
+  const defaultProjectRef = resolveDefaultProjectRef(
+    projects,
+    projectOrder,
+    lastUsedProjectKey,
+    defaultProjectFallbackReady,
+    { primaryEnvironmentId, homeWorkspaceRoot },
+  );
 
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef: resolveDefaultProjectRef(projects, projectOrder, {
-      primaryEnvironmentId,
-      homeWorkspaceRoot,
-    }),
+    defaultProjectRef,
+    defaultProjectFallbackReady,
     handleNewThread,
     routeDraftId,
     routeThreadRef,

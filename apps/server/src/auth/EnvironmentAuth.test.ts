@@ -1,6 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or sign.
-import * as NodeCrypto from "node:crypto";
-
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -8,11 +5,6 @@ import {
   type AuthGrantScope,
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
-import {
-  computeDpopAccessTokenHash,
-  computeDpopJwkThumbprint,
-  type DpopPublicJwk,
-} from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -23,6 +15,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
+import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -85,36 +78,6 @@ const requestMetadata = {
   os: "macOS",
   browser: "Chrome",
   ipAddress: "192.168.1.23",
-};
-
-const makeDpopKey = () => {
-  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const publicJwk = publicKey.export({ format: "jwk" }) as DpopPublicJwk;
-  let proofCount = 0;
-  return {
-    thumbprint: computeDpopJwkThumbprint(publicJwk),
-    sign: (input: {
-      readonly method: string;
-      readonly url: string;
-      readonly token: string;
-      readonly iat: number;
-    }) => {
-      const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-      const header = encode({ typ: "dpop+jwt", alg: "ES256", jwk: publicJwk });
-      const payload = encode({
-        htm: input.method,
-        htu: input.url,
-        jti: `proof-${++proofCount}`,
-        iat: input.iat,
-        ath: computeDpopAccessTokenHash(input.token),
-      });
-      const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
-        key: privateKey,
-        dsaEncoding: "ieee-p1363",
-      }).toString("base64url");
-      return `${header}.${payload}.${signature}`;
-    },
-  };
 };
 
 const pairDevice = (scopes: ReadonlyArray<AuthGrantScope>, proofKeyThumbprint?: string) =>
