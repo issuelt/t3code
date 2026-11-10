@@ -260,6 +260,14 @@ export function mergeLearnedRoutes(input: {
       ];
     }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
+    // Re-pairing under a new id dropped the token this route borrows, so learn it again.
+    const borrowed = credentialConnectionId(connectionRouteId(route.target));
+    if (
+      borrowed !== connectionRouteId(route.target) &&
+      !saved.some((other) => connectionRouteId(other.target) === borrowed)
+    ) {
+      return [];
+    }
     if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
