@@ -1526,19 +1526,34 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("unsupported", { pullRequests: [makeLink(7)] })]),
-          summary: () =>
-            Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
+          summary: (input) =>
+            input.number === 7
+              ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
+              : Effect.succeed(makeSummary(input)),
         });
+        const reads = (number: number) =>
+          Ref.get(fixture.summaryCalls).pipe(
+            Effect.map((calls) => calls.filter((call) => call.number === number).length),
+          );
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
           yield* sweepAgain(fixture, reactor);
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          assert.strictEqual(yield* reads(7), 1);
 
-          yield* TestClock.adjust("14 minutes");
+          // Only the failing link waits; another link on the same host still reads.
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([makeThread("unsupported", { pullRequests: [makeLink(7), makeLink(8)] })]),
+          );
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* reads(8), 1);
+          assert.strictEqual(yield* reads(7), 1);
+
+          yield* TestClock.adjust("13 minutes");
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+          assert.strictEqual(yield* reads(7), 2);
 
           // A refresh the user asks for reads through the pause, for example after a sign-in.
           yield* reactor.requestSync({
@@ -1548,7 +1563,12 @@ describe("PullRequestSyncReactor", () => {
           });
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 3);
+          assert.strictEqual(yield* reads(7), 3);
+
+          // A failed refresh does not keep bypassing the pause.
+          yield* sweepAgain(fixture, reactor);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* reads(7), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
