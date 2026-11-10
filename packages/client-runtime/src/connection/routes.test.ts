@@ -289,6 +289,18 @@ describe("learned routes", () => {
     expect(profileOf(routes![0]!)).toMatchObject({ authorization: "t3-connect" });
   });
 
+  it("learns again an address whose borrowed token's route is gone", () => {
+    const origin = "http://100.101.102.103:3773";
+    const orphan = learned(`learned:${ENVIRONMENT_ID}:${origin}@replaced`, `${origin}/`);
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [orphan, PUBLIC, RELAY]),
+      activeRoute: PUBLIC,
+      reported: [{ kind: "tailnet", httpBaseUrl: `${origin}/` }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:${origin}@public`, "public", "relay"]);
+  });
+
   it("keeps plain HTTP routes that don't borrow the active HTTPS-paired token", () => {
     const lanOrigin = "http://10.0.0.42:3773";
     const overLan = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@lan`, `${lanOrigin}/`);
