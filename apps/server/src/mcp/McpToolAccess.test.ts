@@ -9,14 +9,24 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as FleetService from "../home/FleetService.ts";
+import * as HomeWorkspace from "../home/HomeWorkspace.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { HomeToolkit } from "./toolkits/home/tools.ts";
+import * as HomeHandlers from "./toolkits/home/handlers.ts";
 import * as HomeService from "../home/HomeService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -522,4 +532,134 @@ it.effect("keeps Home fleet operations on their existing route", () => {
       "capability_denied",
     );
   }).pipe(Effect.provide(layer));
+});
+
+const LIVE = "2030-01-01T00:00:00Z";
+const EXPIRED = "1960-01-01T00:00:00Z";
+it.effect.each([
+  ["t3_thread_read", "desktop reaches it", true, LIVE, "saw environmentId"],
+  [
+    "t3_thread_read",
+    "only a peer link reaches it",
+    false,
+    LIVE,
+    "t3_thread_read in environment-box",
+  ],
+  ["t3_thread_read", "neither reaches it", false, null, "saw environmentId"],
+  ["t3_thread_read", "its only link expired", false, EXPIRED, "saw environmentId"],
+  // Changes keep the fleet route, which registers Home's report and checks its mode.
+  ["t3_thread_send", "only a peer link reaches it", false, LIVE, "saw environmentId"],
+] as const)(
+  "Home's %s in another environment when %s",
+  ([tool, , desktopReaches, linkExpiresAt, expected]) => {
+    const toolkit = Toolkit.make(
+      Tool.make("t3_thread_read", linkedProbe),
+      Tool.make("t3_thread_send", linkedProbe),
+    );
+    const layer = McpHttpServer.toolkitRegistration(
+      toolkit,
+      McpToolAccess.toLayer(toolkit, {
+        t3_thread_read: McpToolAccess.reads(ranHere),
+        t3_thread_send: McpToolAccess.writes(ranHere),
+      }),
+    ).pipe(
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provide(
+        Layer.mock(HomeService.HomeService)({
+          available: true,
+          isHome: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(FleetBroker.FleetBroker)({
+          reach: Effect.succeed({
+            hostConnected: true,
+            mcpRelay: true,
+            environments: desktopReaches
+              ? [{ environmentId: box, label: "box", connected: true }]
+              : [],
+          }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PeerLinks.PeerLinks)({
+          enabled: Effect.succeed(true),
+          get: (environmentId) =>
+            Effect.succeed(
+              linkExpiresAt !== null && environmentId === box
+                ? Option.some({ expiresAt: DateTime.makeUnsafe(linkExpiresAt) } as never)
+                : Option.none(),
+            ),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PeerForwarding.PeerForwarding)({
+          call: (_scope, tool, environmentId) =>
+            Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+        }),
+      ),
+    );
+    return call(tool, fullAccess, { environmentId: box }).pipe(
+      Effect.map((outcome) => expect(outcome).toBe(expected)),
+      Effect.provide(layer),
+    );
+  },
+);
+
+it.effect("Home lists environments it reaches only through a peer link", () => {
+  const windows = EnvironmentId.make("environment-windows");
+  const layer = McpHttpServer.toolkitRegistration(HomeToolkit, HomeHandlers.layer).pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(Layer.mock(FleetService.FleetService)({})),
+    Layer.provide(Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home" })),
+    Layer.provide(
+      Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(true) }),
+    ),
+    Layer.provide(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({ label: "this mac" } as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(FleetBroker.FleetBroker)({
+        reach: Effect.succeed({
+          hostConnected: true,
+          mcpRelay: true,
+          environments: [{ environmentId: box, label: "box", connected: true }],
+        }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PeerLinks.PeerLinks)({
+        enabled: Effect.succeed(true),
+        list: Effect.succeed([
+          { environmentId: windows, label: "windows", status: "reachable" } as never,
+        ]),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+      }),
+    ),
+  );
+  return McpServer.McpServer.pipe(
+    Effect.flatMap((server) => server.callTool({ name: "t3_environment_list", arguments: {} })),
+    Effect.map(({ structuredContent }) =>
+      expect(
+        (
+          structuredContent as { environments: ReadonlyArray<{ environmentId: string }> }
+        ).environments.map((entry) => entry.environmentId),
+      ).toEqual([here, box, windows]),
+    ),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, fullAccess),
+    Effect.provideService(McpSchema.McpServerClient, mcpClient),
+    Effect.provide(layer),
+  );
 });

@@ -7,6 +7,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -21,7 +22,9 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
 import * as HomeService from "../home/HomeService.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
@@ -376,6 +379,15 @@ const linksUnavailable = new OrchestratorMcpFailure({
  * environment, which checks the rest. The handler here never sees
  * `environmentId`, so it cannot leak into what it writes.
  */
+const HOME_PEER_READS: ReadonlySet<string> = new Set([
+  "orchestrator_capabilities",
+  "t3_project_list",
+  "t3_thread_search",
+  "t3_thread_list",
+  "t3_thread_read",
+  "t3_thread_wait",
+]);
+
 const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
   declarations: Handlers<Tools>,
@@ -384,6 +396,26 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
   const home = yield* Effect.serviceOption(HomeService.HomeService);
+  const desktop = yield* Effect.serviceOption(FleetBroker.FleetBroker);
+  const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+  // Home's fleet route reaches only the desktop's connections. Home's reads also use a live
+  // peer link; its changes stay on the fleet route, which keeps its reports and mode checks.
+  const homeReadsThroughPeerLink = Effect.fn("McpToolAccess.homeReadsThroughPeerLink")(function* (
+    name: string,
+    environmentId: EnvironmentId,
+  ) {
+    if (!HOME_PEER_READS.has(name) || Option.isNone(peerLinks)) return false;
+    const link = yield* peerLinks.value.get(environmentId).pipe(Effect.orElseSucceed(Option.none));
+    if (Option.isNone(link) || DateTime.isLessThan(link.value.expiresAt, yield* DateTime.now))
+      return false;
+    if (!(yield* peerLinks.value.enabled)) return false;
+    if (Option.isNone(desktop)) return true;
+    const reach = yield* desktop.value.reach;
+    return !(
+      reach.hostConnected &&
+      reach.environments.some((entry) => entry.environmentId === environmentId && entry.connected)
+    );
+  });
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -406,28 +438,30 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
           scope.capabilities.has("orchestration") &&
           (yield* home.value.isHome(scope.thread.threadId))
         ) {
+          const fleetTool = [
+            "orchestrator_capabilities",
+            "t3_project_list",
+            "t3_project_create",
+            "t3_project_update",
+            "t3_project_clone",
+            "t3_thread_search",
+            "t3_thread_list",
+            "t3_thread_read",
+            "t3_thread_wait",
+            "t3_thread_launch",
+            "t3_thread_send",
+            "t3_thread_interrupt",
+            "t3_thread_organize",
+            "t3_thread_update",
+            "t3_pending_request",
+          ].includes(name);
           if (
-            [
-              "orchestrator_capabilities",
-              "t3_project_list",
-              "t3_project_create",
-              "t3_project_update",
-              "t3_project_clone",
-              "t3_thread_search",
-              "t3_thread_list",
-              "t3_thread_read",
-              "t3_thread_wait",
-              "t3_thread_launch",
-              "t3_thread_send",
-              "t3_thread_interrupt",
-              "t3_thread_organize",
-              "t3_thread_update",
-              "t3_pending_request",
-            ].includes(name)
+            fleetTool &&
+            (target === undefined || !(yield* homeReadsThroughPeerLink(name, target)))
           ) {
             return yield* here({ ...params, environmentId });
           }
-          if (target !== undefined)
+          if (!fleetTool && target !== undefined)
             return yield* new OrchestratorMcpFailure({
               code: "capability_denied",
               message: "Home cannot use this tool in another environment.",

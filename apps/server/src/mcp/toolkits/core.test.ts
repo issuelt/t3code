@@ -1079,7 +1079,7 @@ it.effect("thread search links identify the environment that returned them", () 
         Effect.provideService(McpSchema.McpServerClient, client),
       );
     expect(result.structuredContent).toMatchObject({
-      matches: [{ link: "<t3-thread://v2/mcp-core-environment/worker>" }],
+      matches: [{ link: "[Work](t3-thread://v2/mcp-core-environment/worker)" }],
     });
   }).pipe(
     Effect.provide(
@@ -1161,7 +1161,7 @@ it.effect("Home waits for a remote thread through the fleet", () => {
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({ get: () => Effect.succeedNone })),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
