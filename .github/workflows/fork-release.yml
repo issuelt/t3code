@@ -128,6 +128,11 @@ jobs:
       - name: Install dependencies
         run: vp install
 
+      # Official builds bake T3 Connect's public Clerk and relay ids into the bundle;
+      # without them, desktop and CLI builds ship with T3 Connect disabled.
+      - name: Enable T3 Connect
+        run: cp .env.example .env
+
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.version.outputs.version }}"
 
