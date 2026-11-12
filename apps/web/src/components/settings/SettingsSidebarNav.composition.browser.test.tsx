@@ -76,9 +76,10 @@ it("moves Tab through every settings section", async () => {
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
 
-  const sections = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths).map(
-    (to) => SETTINGS_SECTION_LABELS[to],
-  );
+  // Home lists only in the desktop app, and this test runs in a plain browser.
+  const sections = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)
+    .filter((to) => to !== "/settings/home")
+    .map((to) => SETTINGS_SECTION_LABELS[to]);
   const tabbed: string[] = [];
   for (let step = 0; step < sections.length; step += 1) {
     await userEvent.tab();
