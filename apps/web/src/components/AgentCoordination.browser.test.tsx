@@ -1,6 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { ChatAttachmentId, MessageId, RunId } from "@t3tools/contracts";
+import { ChatAttachmentId, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -59,6 +59,23 @@ it("keeps agent attachments and historical coordination outside human queue cont
       },
     ],
   };
+  // From a linked environment: no local sender thread, only the sender it named.
+  const linked = {
+    ...userItem(
+      original.id,
+      RunId.make("linked-delivery"),
+      "linked-delivered",
+      3,
+      "Linked review finished.",
+    ),
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    linkedSender: {
+      environmentId: EnvironmentId.make("environment-linked"),
+      threadId: ThreadId.make("thread-release-lead"),
+      title: "Release lead",
+    },
+  };
   const thread = {
     ...original,
     title: "Build verification",
@@ -66,6 +83,7 @@ it("keeps agent attachments and historical coordination outside human queue cont
       { ...first, text: "Check the build and report the result." },
       ...original.items.slice(1),
       delivered,
+      linked,
     ],
   };
   using _environment = installFakeEnvironment([thread, sender]);
@@ -133,8 +151,11 @@ it("keeps agent attachments and historical coordination outside human queue cont
   await expect
     .element(page.getByText("Also check the Linux package.", { exact: true }))
     .toBeVisible();
-  await vi.waitFor(() => expect(document.querySelectorAll("[data-agent-message]")).toHaveLength(2));
-  expect(document.querySelectorAll("[data-agent-message][aria-expanded=false]")).toHaveLength(2);
+  await vi.waitFor(() => expect(document.querySelectorAll("[data-agent-message]")).toHaveLength(3));
+  expect(document.querySelectorAll("[data-agent-message][aria-expanded=false]")).toHaveLength(3);
+  await expect
+    .element(page.getByRole("button", { name: "Message from Release lead", exact: true }))
+    .toBeVisible();
   expect(document.body.textContent?.match(/Send now/g)).toHaveLength(1);
   await document.fonts.ready;
 

@@ -278,7 +278,9 @@ function AgentMessageWorkRow({
   const remoteSender = useQuietThreadShellById(
     senderThreadId !== undefined && localSender === null ? senderThreadId : null,
   );
-  const title = (localSender ?? remoteSender)?.title.trim() || "Agent";
+  const linkedSenderTitle =
+    item?.type === "user_message" ? item.linkedSender?.title.trim() : undefined;
+  const title = (localSender ?? remoteSender)?.title.trim() || linkedSenderTitle || "Agent";
   const reportLines =
     item?.type === "user_message"
       ? watchReportSummaryLines(item.messageId, workEntry.detail ?? "")
