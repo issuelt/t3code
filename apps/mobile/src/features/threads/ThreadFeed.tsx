@@ -4,6 +4,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { AsyncResult } from "effect/reactivity";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
+import { agentMessageSender } from "./agentMessageSender";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
@@ -2022,16 +2023,12 @@ function renderFeedEntry(
       const rowId = `agent:${message.id}`;
       const expanded = props.expandedWorkRows[rowId] ?? false;
       const reportLines = watchReportSummaryLines(message.id, presentation.text);
-      const senderThreadId =
-        message.senderThreadId ??
-        (message.coordination?.kind === "request"
-          ? message.coordination.requester.threadId
-          : undefined);
+      const sender = agentMessageSender(message, props.environmentId);
       return (
         <View className="mb-2">
           <AgentMessageFoldHeader
-            environmentId={message.linkedSender?.environmentId ?? props.environmentId}
-            senderThreadId={message.linkedSender?.threadId ?? senderThreadId}
+            environmentId={sender?.environmentId ?? props.environmentId}
+            senderThreadId={sender?.threadId}
             {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
             fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
             variant="work"
@@ -2088,10 +2085,11 @@ function renderFeedEntry(
                   <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
                 ),
               )}
-              {senderThreadId ? (
+              {sender ? (
                 <OpenSenderThreadButton
-                  environmentId={props.environmentId}
-                  senderThreadId={senderThreadId}
+                  environmentId={sender.environmentId}
+                  senderThreadId={sender.threadId}
+                  linked={sender.linked}
                 />
               ) : null}
             </View>
