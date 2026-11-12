@@ -379,7 +379,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   selection.entry ? (
                     <ProviderInstanceIcon
                       key={`${selection.instanceId}:${selection.model}`}
-                      driverKind={selection.entry.driverKind}
+                      driverKind={selection.entry.iconDriverKind}
                       displayName={selection.entry.displayName}
                       accentColor={selection.entry.accentColor}
                       acpRegistryAgentId={selection.entry.acpRegistryAgentId}
@@ -399,7 +399,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             // Narrow compacted composers hide the provider icon before truncating the name.
             <span data-chat-provider-model-picker-icon className="contents">
               <ProviderInstanceIcon
-                driverKind={activeEntry.driverKind}
+                driverKind={activeEntry.iconDriverKind}
                 displayName={activeEntry.displayName}
                 accentColor={activeEntry.accentColor}
                 acpRegistryAgentId={activeEntry.acpRegistryAgentId}

@@ -11,6 +11,7 @@ import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 export interface ThreadRowProviderInstance {
   readonly driverKind: ProviderDriverKind;
+  readonly iconDriverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
   readonly showBadge: boolean;
@@ -32,6 +33,7 @@ export function resolveThreadProviderInstance(
   };
   return {
     ...entry,
+    iconDriverKind: snapshot.iconDriver ?? snapshot.driver,
     showBadge: shouldShowInstanceBadge(
       { ...entry, enabled: snapshot.enabled },
       providers.map((provider) => ({ driverKind: provider.driver, enabled: provider.enabled })),

@@ -149,7 +149,7 @@ export function useCommandPaletteThreadItems(input: {
           isCurrent={
             thread.id === activeThread?.id && thread.environmentId === activeThread.environmentId
           }
-          driverKind={providerEntry?.driverKind ?? null}
+          driverKind={providerEntry?.iconDriverKind ?? null}
           providerDisplayName={
             thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
           }

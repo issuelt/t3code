@@ -54,7 +54,8 @@ export function resolveThreadListV2ProviderDrivers(
   if (providers === undefined) return [];
   const stack = resolveThreadProviderStack(thread);
   const drivers = stack.flatMap((instanceId) => {
-    const driver = providers.find((provider) => provider.instanceId === instanceId)?.driver;
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    const driver = provider?.iconDriver ?? provider?.driver;
     return driver === undefined ? [] : [driver];
   });
   const currentDriver = providers.find(

@@ -286,11 +286,10 @@ export function EnvironmentSubagentAvatar({
     const derived = deriveProviderInstanceEntries(providers ?? []);
     return settings ? brandProviderInstanceEntries(derived, settings) : derived;
   };
-  const providerDriver = useAtomValue(
-    providersAtom,
-    (providers) =>
-      providers?.find((provider) => provider.instanceId === providerInstanceId)?.driver,
-  );
+  const providerDriver = useAtomValue(providersAtom, (providers) => {
+    const provider = providers?.find((candidate) => candidate.instanceId === providerInstanceId);
+    return provider?.iconDriver ?? provider?.driver;
+  });
   const displayName = useAtomValue(
     providersAtom,
     (providers) =>
@@ -703,7 +702,7 @@ function HandoffEndpoint(props: {
             className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <ProviderInstanceIcon
-              driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
+              driverKind={entry?.iconDriverKind ?? ProviderDriverKind.make(props.instanceId)}
               displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}

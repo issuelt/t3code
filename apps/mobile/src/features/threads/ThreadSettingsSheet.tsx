@@ -779,7 +779,7 @@ function buildThreadSettingsCatalogItems(
     });
     const provider: ThreadSettingsProviderCatalog = {
       key: group.providerKey,
-      driver,
+      driver: group.models[0]?.providerIconDriver ?? driver,
       iconUrl: group.models[0]?.providerIconUrl,
       label: group.providerLabel,
       collapsible,

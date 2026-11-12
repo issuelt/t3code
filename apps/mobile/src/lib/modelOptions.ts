@@ -31,6 +31,7 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly providerIconDriver?: string | undefined;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
   readonly providerBadge?: {
@@ -372,6 +373,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        ...(provider.iconDriver ? { providerIconDriver: provider.iconDriver } : {}),
         providerBadge,
         ...(provider.supportedRuntimeModes === undefined
           ? {}
@@ -441,6 +443,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        ...(provider?.iconDriver ? { providerIconDriver: provider.iconDriver } : {}),
         providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
         isDefault: false,
         isLegacy: model?.isLegacy === true,

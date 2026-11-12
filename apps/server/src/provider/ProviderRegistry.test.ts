@@ -420,6 +420,21 @@ it.layer(
       }),
     );
 
+    it.effect("shows the vendor icon of the model Codex is configured to use", () =>
+      Effect.gen(function* () {
+        const iconDriverFor = (configuredModel: string | undefined) =>
+          checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(makeCodexProbeSnapshot({ configuredModel })),
+          ).pipe(Effect.map((status) => status.iconDriver));
+
+        assert.strictEqual(yield* iconDriverFor("grok-4.7"), "grok");
+        assert.strictEqual(yield* iconDriverFor("claude-opus-5-5"), "claudeAgent");
+        assert.strictEqual(yield* iconDriverFor("gpt-6.1-sol"), undefined);
+        assert.strictEqual(yield* iconDriverFor("grokipedia"), undefined);
+        assert.strictEqual(yield* iconDriverFor(undefined), undefined);
+      }),
+    );
+
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
       Effect.gen(function* () {
         const statusWithUsagePlan = (planType: string | null) =>

@@ -47,7 +47,7 @@ const modelMentionPresentationAtom = Atom.family((key: string) =>
     const next: ModelMentionPresentation = {
       label: getDisplayModelName(option),
       providerLabel: option.subProvider ?? entry.displayName,
-      driverKind: entry.driverKind,
+      driverKind: entry.iconDriverKind,
       providerDisplayName: entry.displayName,
       acpRegistryAgentId: entry.acpRegistryAgentId,
       acpRegistryIconUrl: entry.acpRegistryIconUrl,

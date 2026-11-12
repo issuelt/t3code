@@ -29,6 +29,8 @@ export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
 export interface ProviderInstanceEntry {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
+  /** Which provider's icon to draw; differs from `driverKind` when the server says so. */
+  readonly iconDriverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
   readonly acpRegistryAgentId?: string | undefined;
@@ -63,6 +65,7 @@ export function deriveProviderInstanceEntries(
     return {
       instanceId,
       driverKind,
+      iconDriverKind: snapshot.iconDriver ?? driverKind,
       displayName: resolveProviderInstanceDisplayName(snapshot),
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
       ...(driverKind === "acpRegistry" && snapshot.iconUrl

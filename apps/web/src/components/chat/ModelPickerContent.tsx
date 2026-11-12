@@ -74,6 +74,7 @@ type ModelPickerItem = {
   badge?: "new";
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
+  iconDriverKind: ProviderDriverKind;
   instanceDisplayName: string;
   instanceAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
@@ -547,6 +548,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.isUnavailable ? { isUnavailable: true } : {}),
           instanceId,
           driverKind: entry.driverKind,
+          iconDriverKind: entry.iconDriverKind,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.acpRegistryAgentId ? { acpRegistryAgentId: entry.acpRegistryAgentId } : {}),
@@ -1019,7 +1021,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     name={model.name}
                     subProvider={model.subProvider}
                     instanceId={model.instanceId}
-                    driverKind={model.driverKind}
+                    driverKind={model.iconDriverKind}
                     providerDisplayName={model.instanceDisplayName}
                     providerAccentColor={model.instanceAccentColor}
                     acpRegistryAgentId={model.acpRegistryAgentId}

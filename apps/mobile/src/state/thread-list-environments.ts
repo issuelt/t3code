@@ -9,7 +9,7 @@ import { Atom } from "effect/reactivity";
 
 export type ThreadListProvider = Pick<
   ServerProvider,
-  "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
+  "instanceId" | "driver" | "iconDriver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
 const capabilityKeys = ["threadAutoSettleOptOut"] as const;
@@ -18,9 +18,10 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
     isConnected,
     providers: config.providers.map(
-      ({ instanceId, driver, enabled, displayName, accentColor, iconUrl }) => ({
+      ({ instanceId, driver, iconDriver, enabled, displayName, accentColor, iconUrl }) => ({
         instanceId,
         driver,
+        iconDriver,
         enabled,
         displayName,
         accentColor,
@@ -46,6 +47,7 @@ function sameProviders(
       return (
         provider.instanceId === other.instanceId &&
         provider.driver === other.driver &&
+        provider.iconDriver === other.iconDriver &&
         provider.enabled === other.enabled &&
         provider.displayName === other.displayName &&
         provider.accentColor === other.accentColor &&

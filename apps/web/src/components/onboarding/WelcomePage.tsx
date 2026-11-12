@@ -733,7 +733,7 @@ function AgentLogoStack({
       {providers.slice(0, 6).map((provider) => (
         <ProviderInstanceIcon
           key={provider.instanceId}
-          driverKind={provider.driver}
+          driverKind={provider.iconDriver ?? provider.driver}
           displayName={agentName(provider)}
           iconClassName="size-3.5"
         />
@@ -1160,7 +1160,7 @@ function AgentRow({
     <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
       <RowIcon>
         <ProviderInstanceIcon
-          driverKind={provider.driver}
+          driverKind={provider.iconDriver ?? provider.driver}
           displayName={name}
           iconClassName={compact ? "size-4" : "size-[18px]"}
         />

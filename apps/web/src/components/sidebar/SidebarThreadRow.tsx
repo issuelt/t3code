@@ -127,6 +127,7 @@ export type SidebarProviderEntry = Pick<
   ProviderInstanceEntry,
   | "instanceId"
   | "driverKind"
+  | "iconDriverKind"
   | "enabled"
   | "displayName"
   | "accentColor"
@@ -194,7 +195,7 @@ function SidebarProviderStack(props: {
   );
   const current = (
     <ProviderInstanceIcon
-      driverKind={currentEntry.driverKind}
+      driverKind={currentEntry.iconDriverKind}
       displayName={currentEntry.displayName}
       accentColor={currentEntry.accentColor}
       acpRegistryAgentId={currentEntry.acpRegistryAgentId}
@@ -215,7 +216,7 @@ function SidebarProviderStack(props: {
         return (
           <ProviderInstanceIcon
             key={instanceId}
-            driverKind={entry.driverKind}
+            driverKind={entry.iconDriverKind}
             displayName={entry.displayName}
             acpRegistryAgentId={entry.acpRegistryAgentId}
             acpRegistryIconUrl={entry.acpRegistryIconUrl}
@@ -260,7 +261,7 @@ function SidebarThreadTooltip({
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
 }) {
-  const driverKind = providerEntry?.driverKind ?? null;
+  const driverKind = providerEntry?.iconDriverKind ?? null;
   const previousProviderNames = thread.providerInstanceHistory
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);

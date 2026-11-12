@@ -33,7 +33,7 @@ export function matchComposerModelItems(input: {
     type: "model",
     instanceId: entry.instanceId,
     model: option.slug,
-    driverKind: entry.driverKind,
+    driverKind: entry.iconDriverKind,
     providerDisplayName: entry.displayName,
     acpRegistryAgentId: entry.acpRegistryAgentId,
     acpRegistryIconUrl: entry.acpRegistryIconUrl,
