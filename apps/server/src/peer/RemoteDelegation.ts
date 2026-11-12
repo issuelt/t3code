@@ -48,6 +48,8 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as WorkFilesTransfer from "./WorkFilesTransfer.ts";
+import { WorkFilesReceiveTool } from "../mcp/toolkits/workFiles/tools.ts";
 
 // Loaded per call: a static import closes a cycle through the fork's Home routing.
 const projectTools = Effect.promise(() => import("../mcp/toolkits/project/tools.ts")).pipe(
@@ -72,8 +74,37 @@ export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
 
+/** The one project there whose repository is `key`, paging through `list`. */
+export const findRemoteProject = Effect.fn("RemoteDelegation.findRemoteProject")(function* (
+  key: string,
+  list: (
+    cursor: number,
+  ) => Effect.Effect<
+    Tool.Success<typeof ProjectToolkit.tools.t3_project_list>,
+    OrchestratorMcpFailure
+  >,
+) {
+  const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
+  let cursor: number | null = 0;
+  while (cursor !== null) {
+    const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> = yield* list(cursor);
+    matches.push(
+      ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
+    );
+    cursor = listed.nextCursor;
+  }
+  if (matches.length === 1) return matches[0]!.id;
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message:
+      matches.length === 0
+        ? `No project there has this repository (${key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
+        : `Several projects there have this repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`,
+  });
+});
+
 /** `orchestrator_capabilities` there. Its toolkit imports this module, so it is described here. */
-const RemoteCapabilitiesTool = Tool.make("orchestrator_capabilities", {
+export const RemoteCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -154,6 +185,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  const workFiles = yield* WorkFilesTransfer.WorkFilesTransfer;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -193,27 +225,13 @@ const make = Effect.gen(function* () {
         message: "Pass target.projectId: this thread's project has no repository to match there.",
       });
     }
-    const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
-    let cursor: number | null = 0;
-    while (cursor !== null) {
-      const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
-        yield* forwarding.call(scope, (yield* projectTools).t3_project_list, environmentId, {
-          cursor,
-          limit: 100,
-        });
-      matches.push(
-        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
-      );
-      cursor = listed.nextCursor;
-    }
-    if (matches.length === 1) return matches[0]!.id;
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message:
-        matches.length === 0
-          ? `No project there has this repository (${key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId.`
-          : `Several projects there have this repository: ${matches.map((project) => `${project.title} (${project.id})`).join(", ")}. Pass target.projectId.`,
-    });
+    const listTool = (yield* projectTools).t3_project_list;
+    return yield* findRemoteProject(key, (cursor) =>
+      forwarding.call(scope, listTool, environmentId, {
+        cursor,
+        limit: 100,
+      }),
+    );
   });
 
   /** The instance there of the driver the caller named, preferring the one this thread runs on, as a task here does. */
@@ -331,6 +349,37 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
+      if (input.workFiles === "transfer") {
+        const here = yield* projects.getById(parent.thread.projectId).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+        const cwd = parent.thread.worktreePath ?? here?.workspaceRoot;
+        if (cwd === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "This thread has no working directory to transfer files from.",
+          });
+        }
+        // The files land before the launch, so a failed transfer launches nothing.
+        yield* workFiles
+          .send({
+            cwd,
+            environmentId: target.environmentId,
+            projectId,
+            receive: (request) =>
+              forwarding.call(scope, WorkFilesReceiveTool, target.environmentId, request),
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: error.code,
+                  message: `Nothing was launched, because the work files could not be transferred: ${error.message}`,
+                }),
+            ),
+          );
+      }
       // One key for the launch there and the record here, so a retry finds both.
       // Both are scoped to the provider session, as every key a caller passes is:
       // the forwarder scopes the launch's, and the record's names it.
