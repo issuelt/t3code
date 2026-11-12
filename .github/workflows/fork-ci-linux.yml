@@ -1,23 +1,19 @@
 name: Fork CI Linux
 
-# Callers use this file at @main so the runner group can allowlist it. The
-# runner choice reads the github context, which a pull request cannot edit, and
-# the route job below, whose script also comes from main.
+# Callers use this file at @main, so a pull request cannot change its runner
+# choice. That choice reads the github context, which a pull request cannot
+# edit, and the route job below, whose script also comes from main.
 
 on:
   workflow_call:
-    secrets:
-      CI_ROUTER_APP_KEY:
-        required: false
 
 permissions:
   contents: read
 
 jobs:
-  # Picks VM104 only when it is idle and nothing waits for it, so a busy or
-  # offline VM104 never queues a job. Separately, it picks the Blacksmith label
-  # while this month's tally leaves room. An untrusted event, such as a fork
-  # pull request, skips every step, so both stay empty and the job runs hosted.
+  # Picks the Blacksmith label while this month's tally leaves room. An
+  # untrusted event, such as a fork pull request, skips every step, so the
+  # output stays empty and the job runs hosted.
   route:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -25,7 +21,6 @@ jobs:
       contents: read
       actions: read
     outputs:
-      vm104: ${{ steps.decide.outputs.vm104 }}
       blacksmith_linux: ${{ steps.blacksmith.outputs.blacksmith_linux }}
     env:
       TRUSTED: >-
@@ -46,15 +41,6 @@ jobs:
           git fetch -q --no-tags --depth=1 origin refs/heads/main
           git sparse-checkout set --no-cone '/.github/scripts/'
           git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
-      - name: Decide
-        id: decide
-        if: env.TRUSTED == 'true'
-        continue-on-error: true
-        env:
-          APP_ID: ${{ vars.CI_ROUTER_APP_ID }}
-          APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/route-vm104.sh
       - name: Decide Blacksmith
         id: blacksmith
         if: env.TRUSTED == 'true'
@@ -69,11 +55,10 @@ jobs:
 
   # GitHub has no queue timeout for a job. If check waits 5 minutes for a
   # Blacksmith runner, this cancels the run, and blacksmith-rerun.yml reruns it
-  # with the label left hosted. check takes VM104 over Blacksmith, so a VM104
-  # answer skips the watch.
+  # with the label left hosted.
   watchdog:
     needs: route
-    if: ${{ !cancelled() && needs.route.outputs.blacksmith_linux != '' && needs.route.outputs.vm104 != 'true' }}
+    if: ${{ !cancelled() && needs.route.outputs.blacksmith_linux != '' }}
     runs-on: ubuntu-24.04
     # 5 minutes of queue, polls every 20 seconds, and up to 3 failed polls.
     timeout-minutes: 10
@@ -131,10 +116,7 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
-        && (
-          needs.route.outputs.vm104 == 'true' && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
-          || needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
-        )
+        && needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
         || '"ubuntu-24.04"') }}
     # route-blacksmith.sh reserves this many minutes for the job.
     timeout-minutes: 60
@@ -175,17 +157,12 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         with:
           node-version-file: package.json
-          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
+          cache: true
           run-install: true
-      # VM104 has no sudo, and its image carries the browser libraries. Blacksmith has sudo.
       - name: Install test browsers
         if: steps.gate.outputs.skip != 'true'
-        env:
-          WITH_DEPS: ${{ (runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-')) && '--with-deps' || '' }}
         run: |
-          # shellcheck disable=SC2086
-          node apps/web/node_modules/playwright/cli.js install $WITH_DEPS --only-shell chromium
+          node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
           node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
       - name: Check changed files
         if: steps.gate.outputs.skip != 'true'

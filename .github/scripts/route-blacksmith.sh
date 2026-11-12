@@ -11,7 +11,7 @@
 # A kind gets its label only when it is in BLACKSMITH_KINDS and was reserved,
 # the event is trusted, and BLACKSMITH_ROUTING is not off. Every other case,
 # including any failed call or missing data, writes an empty value so the job
-# keeps its VM104 or hosted runner. This never reads VM104.
+# keeps its hosted runner.
 #
 # Two exclusions keep a label that had no runner on hosted. On a rerun
 # (GITHUB_RUN_ATTEMPT above 1), a kind whose label never got a runner in any
