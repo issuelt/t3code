@@ -528,24 +528,13 @@ it.effect("requires older links without an origin binding to be paired again", (
   ).pipe(Effect.provide(layerHttpsTest)),
 );
 
-it.effect("lists a peer asleep at every address as unreachable within one probe budget", () =>
+it.effect("lists a peer asleep at its trusted address as unreachable within one probe budget", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const b = yield* serveB(box);
-      // Another address of the same machine, asleep too.
-      const wake = yield* Deferred.make<void>();
-      const elsewhere = yield* serveRaw(() =>
-        Deferred.await(wake).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
-      );
-      yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
       const a = yield* makeA(laptop);
       const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({
-        url: b.url,
-        alternateUrls: [elsewhere],
-        pairingCode: pairing.credential,
-        access: "auto",
-      });
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
 
       yield* Ref.set(b.asleep, true);
       const listing = yield* a.links.list.pipe(Effect.forkScoped);
@@ -557,7 +546,8 @@ it.effect("lists a peer asleep at every address as unreachable within one probe 
   ).pipe(Effect.provide(layerHttpsTest)),
 );
 
-it.effect("lists a peer as reachable at another address while its first one sleeps", () =>
+// A link keeps one trusted origin, so another address of the machine never stands in for it.
+it.effect("lists a peer asleep at its trusted address as unreachable while another answers", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const b = yield* serveB(box);
@@ -565,21 +555,31 @@ it.effect("lists a peer as reachable at another address while its first one slee
         Effect.flatMap((response) => response.text),
         Effect.provide(FetchHttpClient.layer),
       );
-      // Another address of the same machine that answers.
+      const asked = yield* Ref.make(0);
       const elsewhere = yield* serveRaw(() =>
-        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+        Ref.update(asked, (count) => count + 1).pipe(
+          Effect.as(HttpServerResponse.text(described, { contentType: "application/json" })),
+        ),
       );
       const a = yield* makeA(laptop);
       const pairing = yield* b.auth.issuePairingCredential();
-      yield* a.links.link({
+      const linked = yield* a.links.link({
         url: b.url,
         alternateUrls: [elsewhere],
         pairingCode: pairing.credential,
         access: "auto",
+        expectedEnvironmentId: box.environmentId,
       });
+      expect(linked.urls).toEqual([b.url]);
+      yield* Ref.set(asked, 0);
 
       yield* Ref.set(b.asleep, true);
-      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      const listed = yield* Fiber.join(listing);
+      expect(listed.map((link) => link.status)).toEqual(["unreachable"]);
+      expect(yield* Ref.get(asked)).toBe(0);
     }),
   ).pipe(Effect.provide(layerHttpsTest)),
 );
