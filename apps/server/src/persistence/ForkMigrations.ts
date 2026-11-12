@@ -43,6 +43,18 @@ export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
   return executed;
 });
 
+export const hasPendingForkMigrations = Effect.fn("hasPendingForkMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${FORK_MIGRATIONS_TABLE}
+  `;
+  if (tables.length === 0) return true;
+  const rows = yield* sql<{ readonly latestId: number | null }>`
+    SELECT MAX(migration_id) AS latestId FROM fork_sql_migrations
+  `;
+  return (rows[0]?.latestId ?? 0) < forkMigrationEntries[forkMigrationEntries.length - 1]![0];
+});
+
 // Fork-only migrations that older fork builds recorded in effect_sql_migrations.
 const LEGACY_FORK_MIGRATIONS = new Set([
   "ProjectionThreadShellActivitySummary",

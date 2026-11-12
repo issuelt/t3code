@@ -32,6 +32,7 @@ import {
   ConnectionTransientError,
   type ConnectionAttemptError,
 } from "../connection/model.ts";
+import { isNearbyAddress } from "../connection/routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -104,10 +105,14 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       readonly rejectedAccessToken?: string;
       readonly direct?: DirectDpopCredential;
     }) => Effect.Effect<AuthorizedRemoteHttpEnvironment, ConnectionAttemptError>;
-    /** Lets the next direct authorization of this address skip its own descriptor read. */
+    /**
+     * Lets the next direct authorization of this address skip its own descriptor
+     * read. Kept only where the address reaches the same machine on every network.
+     */
     readonly rememberCheckedDescriptor: (
       httpBaseUrl: string,
       descriptor: Option.Option<ExecutionEnvironmentDescriptor>,
+      keepsItsHost: boolean,
     ) => Effect.Effect<void>;
     /**
      * Renews a live socket's token before it expires, so the server moves the
@@ -137,6 +142,14 @@ const PAIRED_CREDENTIAL_PREFIX = "bearer:";
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
+// A loopback or LAN host answers well inside this, so a dead one frees its attempt sooner.
+const NEARBY_DESCRIPTOR_TIMEOUT_MS = 3_000;
+
+/** A token with the descriptor its mint read. A cached token has none. */
+interface IssuedDpopToken {
+  readonly token: TokenStore.RemoteDpopAccessToken;
+  readonly descriptor?: ExecutionEnvironmentDescriptor;
+}
 
 function mapDpopSocketError(
   error: RemoteEnvironmentAuthError | ConnectionAttemptError,
@@ -150,10 +163,12 @@ function mapDpopSocketError(
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
   httpBaseUrl: string,
   connectionMethod: ClientConnectionMethod,
+  timeoutMs?: number,
 ) {
-  return yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)),
-  );
+  return yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)));
 });
 
 export const make = Effect.gen(function* () {
@@ -180,13 +195,13 @@ export const make = Effect.gen(function* () {
       readonly id: object;
       readonly identity: ClientCapabilities.CloudSessionIdentity;
       readonly thumbprint: string;
-      readonly token: Effect.Effect<TokenStore.RemoteDpopAccessToken, ConnectionAttemptError>;
+      readonly issued: Effect.Effect<IssuedDpopToken, ConnectionAttemptError>;
     }
   >();
 
   // A route or host check hands its descriptor to the connect it leads to, once,
-  // so the connect skips a round trip. Only over HTTPS: a plain LAN address can
-  // belong to another machine after a network change.
+  // so the connect skips a round trip. Only over HTTPS or loopback: any other
+  // plain http address can belong to another machine after a network change.
   const checkedDescriptors = new Map<
     string,
     { readonly descriptor: ExecutionEnvironmentDescriptor; readonly at: bigint }
@@ -210,9 +225,14 @@ export const make = Effect.gen(function* () {
         checked.descriptor.environmentId === input.expectedEnvironmentId &&
         (yield* Clock.monotonicTimeNanos) - checked.at <= CHECKED_DESCRIPTOR_TTL_NANOS
           ? checked.descriptor
-          : yield* fetchDescriptor(input.httpBaseUrl, input.connectionMethod).pipe(
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-            );
+          : yield* fetchDescriptor(
+              input.httpBaseUrl,
+              input.connectionMethod,
+              // An SSH forward listens on loopback but reaches a remote host.
+              input.connectionMethod === "direct" && isNearbyAddress(input.httpBaseUrl)
+                ? NEARBY_DESCRIPTOR_TIMEOUT_MS
+                : undefined,
+            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* environmentMismatchError({
           expected: input.expectedEnvironmentId,
@@ -407,7 +427,7 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
       const issuedAt = yield* Clock.currentTimeMillis;
-      return new TokenStore.RemoteDpopAccessToken({
+      const token = new TokenStore.RemoteDpopAccessToken({
         environmentId: descriptor.environmentId,
         accountId: identity.accountId,
         label: descriptor.label,
@@ -416,6 +436,7 @@ export const make = Effect.gen(function* () {
         expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
         dpopThumbprint: thumbprint,
       });
+      return { token, descriptor } satisfies IssuedDpopToken;
     },
   );
 
@@ -458,14 +479,17 @@ export const make = Effect.gen(function* () {
             accessToken: cached.value.accessToken,
             identity,
           });
-          return { token: Effect.succeed(cached.value), fromCache: true };
+          return {
+            issued: Effect.succeed<IssuedDpopToken>({ token: cached.value }),
+            fromCache: true,
+          };
         }
         if (input.rejectedAccessToken !== undefined) {
           yield* removeRejectedToken(input.expectedEnvironmentId, input.rejectedAccessToken);
         }
         const pending = pendingTokens.get(input.expectedEnvironmentId);
         if (pending?.identity === identity && pending.thumbprint === thumbprint) {
-          return { token: pending.token, fromCache: false };
+          return { issued: pending.issued, fromCache: false };
         }
 
         const id = {};
@@ -474,9 +498,10 @@ export const make = Effect.gen(function* () {
           thumbprint,
           identity,
         ).pipe(
-          Effect.flatMap((token) =>
+          Effect.flatMap((issued) =>
             tokenLock.withPermits(1)(
               Effect.gen(function* () {
+                const { token } = issued;
                 yield* assertSession(identity);
                 yield* tokenStore
                   .put(token)
@@ -493,7 +518,7 @@ export const make = Effect.gen(function* () {
                 if (pendingTokens.get(input.expectedEnvironmentId)?.id === id) {
                   pendingTokens.delete(input.expectedEnvironmentId);
                 }
-                return token;
+                return issued;
               }),
             ),
           ),
@@ -519,17 +544,17 @@ export const make = Effect.gen(function* () {
           // One caller's timeout must not cancel renewal for other HTTP requests.
           Effect.forkIn(serviceScope),
         );
-        const token = Fiber.join(fiber);
-        pendingTokens.set(input.expectedEnvironmentId, { id, identity, thumbprint, token });
-        return { token, fromCache: false };
+        const issued = Fiber.join(fiber);
+        pendingTokens.set(input.expectedEnvironmentId, { id, identity, thumbprint, issued });
+        return { issued, fromCache: false };
       }),
     );
     yield* Effect.annotateCurrentSpan({
       "connection.remote_token_cache": selected.fromCache ? "hit" : "miss",
     });
-    const token = yield* selected.token;
+    const issued = yield* selected.issued;
     yield* assertSession(identity);
-    return { token, fromCache: selected.fromCache, identity };
+    return { ...issued, fromCache: selected.fromCache, identity };
   });
 
   const httpAuthorization = (
@@ -550,7 +575,7 @@ export const make = Effect.gen(function* () {
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpop"]>[0],
   ) {
     const endpoint = input.directEndpoint;
-    const descriptor =
+    const directDescriptor =
       endpoint === undefined
         ? undefined
         : yield* verifyDirectEndpoint({
@@ -558,22 +583,41 @@ export const make = Effect.gen(function* () {
             httpBaseUrl: endpoint.httpBaseUrl,
             connectionMethod: "direct",
           });
-    const authorized = (token: TokenStore.RemoteDpopAccessToken, socketUrl: string) => ({
-      ...httpAuthorization(token, endpoint?.httpBaseUrl),
-      socketUrl,
-      ...(descriptor === undefined ? {} : { descriptor }),
+    const authorized = (
+      token: TokenStore.RemoteDpopAccessToken,
+      socketUrl: string,
+      descriptor: ExecutionEnvironmentDescriptor,
+    ) => ({ ...httpAuthorization(token, endpoint?.httpBaseUrl), socketUrl, descriptor });
+    // A cached token comes without a descriptor. That read needs no ticket, so
+    // it runs beside the ticket request, and a failed ticket abandons it.
+    const openSocket = Effect.fnUntraced(function* (issued: IssuedDpopToken, timeoutMs?: number) {
+      const socket = createDpopSocketUrl(
+        issued.token.accessToken,
+        endpoint ?? issued.token.endpoint,
+        "relay",
+        timeoutMs,
+      ).pipe(Effect.result);
+      const known = directDescriptor ?? issued.descriptor;
+      if (known !== undefined) {
+        return Result.map(yield* socket, (socketUrl) => authorized(issued.token, socketUrl, known));
+      }
+      const reading = yield* fetchDescriptor(issued.token.endpoint.httpBaseUrl, "relay").pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.forkChild,
+      );
+      const opened = yield* socket;
+      if (Result.isFailure(opened)) {
+        yield* Fiber.interrupt(reading);
+        return Result.fail(opened.failure);
+      }
+      return Result.succeed(authorized(issued.token, opened.success, yield* Fiber.join(reading)));
     });
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedSocket = yield* createDpopSocketUrl(
-        selected.token.accessToken,
-        endpoint ?? selected.token.endpoint,
-        "relay",
-        CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-      ).pipe(Effect.result);
+      const cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
-        return authorized(selected.token, cachedSocket.success);
+        return cachedSocket.success;
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
@@ -589,11 +633,7 @@ export const make = Effect.gen(function* () {
         rejectedAccessToken: selected.token.accessToken,
       });
     }
-    const socket = yield* createDpopSocketUrl(
-      selected.token.accessToken,
-      endpoint ?? selected.token.endpoint,
-      "relay",
-    ).pipe(Effect.result);
+    const socket = yield* openSocket(selected);
     if (Result.isFailure(socket)) {
       if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
         yield* tokenLock.withPermits(1)(
@@ -603,7 +643,7 @@ export const make = Effect.gen(function* () {
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);
-    return authorized(selected.token, socket.success);
+    return socket.success;
   });
 
   const directLock = (credentialId: string) => {
@@ -875,8 +915,8 @@ export const make = Effect.gen(function* () {
     authorizeDirect,
     authorizeBearer,
     // Untraced: it runs on every route and host check.
-    rememberCheckedDescriptor: Effect.fnUntraced(function* (httpBaseUrl, descriptor) {
-      if (Option.isNone(descriptor) || !httpBaseUrl.startsWith("https:")) {
+    rememberCheckedDescriptor: Effect.fnUntraced(function* (httpBaseUrl, descriptor, keepsItsHost) {
+      if (Option.isNone(descriptor) || !keepsItsHost) {
         checkedDescriptors.delete(httpBaseUrl);
         return;
       }

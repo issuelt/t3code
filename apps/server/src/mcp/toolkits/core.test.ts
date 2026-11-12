@@ -36,6 +36,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
   OrchestratorProjectionError,
+  OrchestratorProviderSelectionBusyError,
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -236,6 +237,11 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
       new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
     ).message,
   ).toBe("Run is not queued.");
+  const busy = new OrchestratorProviderSelectionBusyError({
+    commandId: command.commandId,
+    threadId,
+  });
+  expect(dispatchFailure(busy)).toMatchObject({ code: "invalid_request", message: busy.message });
   for (const cause of [
     undefined,
     "",
@@ -288,7 +294,10 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       server
         .callTool({
           name,
-          arguments: { path: "/t3-missing-dir/revenue.html", title: "Revenue", height: 240 },
+          arguments: {
+            path: "/t3-missing-dir/revenue.html",
+            ...(name === "html_render" ? { title: "Revenue", height: 240 } : {}),
+          },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
@@ -406,7 +415,7 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
     expect(dispatched).toEqual([]);
     expect(outcome).toMatchObject({
       _tag: "Failure",
-      failure: { message: expect.stringContaining("Expected no excess property") },
+      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
     });
   }).pipe(
     Effect.provide(
@@ -724,6 +733,11 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1110,7 +1124,24 @@ it.effect("thread search links identify the environment that returned them", () 
   ),
 );
 
-it.effect("Home waits for a remote thread through the fleet", () => {
+it.effect.each([
+  {
+    tool: "t3_thread_wait",
+    args: { threadId: "worker", timeoutMs: 1000 },
+    reply: { threadId: "worker", runId: null, status: "idle", timedOut: false },
+  },
+  {
+    tool: "t3_thread_send",
+    args: { threadId: "worker", message: "Check the build." },
+    reply: {
+      threadId: "worker",
+      messageId: "message-1",
+      runId: "run-1",
+      status: "running",
+      delivery: "started",
+    },
+  },
+] as const)("Home's $tool reaches a remote thread through the fleet", ({ tool, args, reply }) => {
   const remote = EnvironmentId.make("remote");
   const requests: Array<unknown> = [];
   const home = Layer.mergeAll(
@@ -1120,7 +1151,7 @@ it.effect("Home waits for a remote thread through the fleet", () => {
     Layer.mock(FleetBroker.FleetBroker)({
       invoke: (environmentId, input) => {
         requests.push({ environmentId, input });
-        return Effect.succeed({ threadId: "worker", runId: null, status: "idle", timedOut: false });
+        return Effect.succeed(reply);
       },
     }),
   );
@@ -1128,22 +1159,18 @@ it.effect("Home waits for a remote thread through the fleet", () => {
     const server = yield* McpServer.McpServer;
     const result = yield* server
       .callTool({
-        name: "t3_thread_wait",
-        arguments: { environmentId: remote, threadId: "worker", timeoutMs: 1000 },
+        name: tool,
+        arguments: { environmentId: remote, ...args },
       })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(result.structuredContent).toMatchObject({
-      threadId: "worker",
-      status: "idle",
-      timedOut: false,
-    });
+    expect(result.structuredContent).toMatchObject(reply);
     expect(requests).toMatchObject([
       {
         environmentId: remote,
-        input: { request: { op: "threads.wait", input: { threadId: "worker", timeoutMs: 1000 } } },
+        input: { request: { op: tool.replace("t3_thread_", "threads."), input: args } },
       },
     ]);
   }).pipe(
@@ -1151,7 +1178,13 @@ it.effect("Home waits for a remote thread through the fleet", () => {
       layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (threadId) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId)),
+            registerCoordinationRequest: () => Effect.void,
+          }),
+        ),
         Layer.provide(home),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
@@ -1208,7 +1241,21 @@ it.effect(
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
