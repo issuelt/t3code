@@ -4192,7 +4192,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         assert.deepEqual(stamps, [numbers]);
         for (const number of numbers) assert.include(wakes[0]!.text, `#${number}`);
-        if (!busy) return;
+        // Later tests sweep with their own hosts, which would read these watches too.
+        const unwatch = (number: number) =>
+          orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-pass-end-${busy}-${number}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number,
+            watching: false,
+          });
+        if (!busy) return yield* Effect.forEach(numbers, unwatch, { discard: true });
 
         // A pull request unwatched while the wake waited leaves it; the others still start.
         yield* orchestrator.dispatch({
@@ -4220,6 +4231,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           after.runs.find((run) => run.userMessageId === woken.id)?.status,
           "cancelled",
         );
+        yield* Effect.forEach([13, 14], unwatch, { discard: true });
       }),
   );
 
