@@ -6224,7 +6224,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
-            pendingBackgroundWork: owedWakeTasks.length > 0,
+            // A task held for its wake turn is owed work too, though it stays on the roster.
+            pendingBackgroundWork:
+              owedWakeTasks.length > 0 || (yield* wakeTurnTaskIds(input.nativeThreadId)).size > 0,
           });
         });
 
@@ -8994,7 +8996,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   type: "provider_thread.updated" as const,
                   driver: CLAUDE_PROVIDER,
                   providerThread,
-                  pendingBackgroundWork: owedWakeTasks.length > 0,
+                  pendingBackgroundWork:
+                    owedWakeTasks.length > 0 ||
+                    (nativeThreadId !== null && (yield* wakeTurnTaskIds(nativeThreadId)).size > 0),
                 });
               }),
               emitProviderEvent(terminalEvent),
@@ -9768,6 +9772,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           let removed = false;
           for (const taskId of taskIds) {
             removed = (yield* clearPendingBackgroundTask(nativeThreadId, taskId)) || removed;
+            // An ended hold owes no wake, so the roster must not publish the task as owed.
+            yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
           }
           if (!removed) return;
           const active = yield* Ref.get(activeTurn);

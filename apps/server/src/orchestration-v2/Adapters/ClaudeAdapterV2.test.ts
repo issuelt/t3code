@@ -11244,6 +11244,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ["dev-server", false],
           ],
         );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
         // A replacing level rebuilds every entry; the mark must survive it.
         yield* Queue.offer(
           harness.sdkMessages,
@@ -11257,20 +11260,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ],
         );
 
-        // Once the task ends, a reused id starts unmarked.
+        // An awaited task that leaves the roster stays published, still marked, until its wake.
         yield* Queue.offer(
           harness.sdkMessages,
-          claudeSdkFrame({ ...wakeNotification, uuid: "00000000-0000-4000-8000-000000000303" }),
+          roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
         );
-        yield* nextRoster((tasks) => tasks.length === 1);
+        assert.deepStrictEqual(
+          marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
+          [
+            ["dev-server", false],
+            [WAKE_TASK_ID, true],
+          ],
+        );
+        // A reused id starts unmarked.
         yield* Queue.offer(
           harness.sdkMessages,
           roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
         );
-        assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
-          ["dev-server", false],
-          [WAKE_TASK_ID, false],
-        ]);
+        assert.deepStrictEqual(
+          marks(yield* nextRoster((tasks) => tasks.every((task) => task.awaited !== true))),
+          [
+            ["dev-server", false],
+            [WAKE_TASK_ID, false],
+          ],
+        );
 
         yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
@@ -11297,8 +11310,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             [WAKE_TASK_ID, false],
           ],
         );
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* Queue.take(harness.terminalReceipts);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -13973,7 +13984,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* harness.offerAndWait(wakeNotification);
         assert.lengthOf(harness.continuationRequests, 0);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        // The wake turn the notification starts holds the session until its result.
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
         yield* Queue.offer(harness.sdkMessages, wakeAssistant);
         yield* harness.awaitContinuation(1);
@@ -14888,8 +14900,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             yield* harness.offerAndWait(emptyRoster);
           yield* harness.offerAndWait(wakeNotification);
           if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
-          // Query replacement reads the internal roster, which the exit already cleared.
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          // The wake turn the notification starts holds the session until its result.
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
           yield* harness.offerAndWait(wakeTurnInit);
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
