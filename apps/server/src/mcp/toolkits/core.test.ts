@@ -1124,7 +1124,24 @@ it.effect("thread search links identify the environment that returned them", () 
   ),
 );
 
-it.effect("Home waits for a remote thread through the fleet", () => {
+it.effect.each([
+  {
+    tool: "t3_thread_wait",
+    args: { threadId: "worker", timeoutMs: 1000 },
+    reply: { threadId: "worker", runId: null, status: "idle", timedOut: false },
+  },
+  {
+    tool: "t3_thread_send",
+    args: { threadId: "worker", message: "Check the build." },
+    reply: {
+      threadId: "worker",
+      messageId: "message-1",
+      runId: "run-1",
+      status: "running",
+      delivery: "started",
+    },
+  },
+] as const)("Home's $tool reaches a remote thread through the fleet", ({ tool, args, reply }) => {
   const remote = EnvironmentId.make("remote");
   const requests: Array<unknown> = [];
   const home = Layer.mergeAll(
@@ -1134,7 +1151,7 @@ it.effect("Home waits for a remote thread through the fleet", () => {
     Layer.mock(FleetBroker.FleetBroker)({
       invoke: (environmentId, input) => {
         requests.push({ environmentId, input });
-        return Effect.succeed({ threadId: "worker", runId: null, status: "idle", timedOut: false });
+        return Effect.succeed(reply);
       },
     }),
   );
@@ -1142,22 +1159,18 @@ it.effect("Home waits for a remote thread through the fleet", () => {
     const server = yield* McpServer.McpServer;
     const result = yield* server
       .callTool({
-        name: "t3_thread_wait",
-        arguments: { environmentId: remote, threadId: "worker", timeoutMs: 1000 },
+        name: tool,
+        arguments: { environmentId: remote, ...args },
       })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(result.structuredContent).toMatchObject({
-      threadId: "worker",
-      status: "idle",
-      timedOut: false,
-    });
+    expect(result.structuredContent).toMatchObject(reply);
     expect(requests).toMatchObject([
       {
         environmentId: remote,
-        input: { request: { op: "threads.wait", input: { threadId: "worker", timeoutMs: 1000 } } },
+        input: { request: { op: tool.replace("t3_thread_", "threads."), input: args } },
       },
     ]);
   }).pipe(
@@ -1165,7 +1178,13 @@ it.effect("Home waits for a remote thread through the fleet", () => {
       layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (threadId) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId)),
+            registerCoordinationRequest: () => Effect.void,
+          }),
+        ),
         Layer.provide(home),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),

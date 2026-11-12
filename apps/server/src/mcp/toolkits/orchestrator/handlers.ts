@@ -215,6 +215,8 @@ const handlers = {
       (input) => [input.threadId],
       (input) =>
         Effect.gen(function* () {
+          const routed = yield* routeHome(input.environmentId, "threads.send", input);
+          if (Option.isSome(routed)) return routed.value;
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           return yield* service.sendToThread(scope, input);
@@ -223,8 +225,6 @@ const handlers = {
     // There the thread's parent is here, so only this side can make a follow-up a task.
     (input, environmentId, sent) =>
       Effect.gen(function* () {
-        const routed = yield* routeHome(input.environmentId, "threads.send", input);
-        if (Option.isSome(routed)) return routed.value;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const remote = yield* RemoteDelegation.RemoteDelegation;
         return yield* remote.followUp(scope, environmentId, input, sent);
