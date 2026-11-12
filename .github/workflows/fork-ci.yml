@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The callee at @main picks VM104 for same-repo PRs and main pushes, and a hosted runner otherwise.
+  # The callee at @main picks Blacksmith for same-repo PRs and main pushes while the budget allows, and a hosted runner otherwise.
   check:
     if: github.repository == 'issuelt/t3code'
     uses: issuelt/t3code/.github/workflows/fork-ci-linux.yml@main
@@ -23,5 +23,3 @@ jobs:
     permissions:
       contents: read
       actions: write
-    secrets:
-      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}

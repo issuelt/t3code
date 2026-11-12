@@ -1,7 +1,7 @@
 name: Fork Release Linux
 
-# Linux and Android stages of Fork Release. Callers use this file at @main so
-# the runner group can allowlist it. The runner choice reads the github
+# Linux and Android stages of Fork Release. Callers use this file at @main, so
+# a pull request cannot change its runner choice. That choice reads the github
 # context, which a pull request cannot edit, and the route job below, whose
 # script also comes from main.
 #   stage version: resolves the nightly version, tag, and name, and the Windows
@@ -35,8 +35,6 @@ on:
         required: false
       EXPO_TOKEN:
         required: false
-      CI_ROUTER_APP_KEY:
-        required: false
     outputs:
       version:
         value: ${{ jobs.version.outputs.version }}
@@ -62,7 +60,6 @@ jobs:
           echo "Unknown stage: $STAGE. Use version, build, or publish." >&2
           exit 1
 
-  # About a minute of work, so it never waits for a VM104 cycle.
   version:
     if: inputs.stage == 'version'
     runs-on: ubuntu-24.04
@@ -80,8 +77,7 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
+          cache: true
           run-install: true
       - id: meta
         run: |
@@ -136,22 +132,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/route-blacksmith.sh
 
-  # Picks VM104 only when it is idle and nothing waits for it, so a busy or
-  # offline VM104 never queues a job. Separately, in the build stage, it picks
-  # the Blacksmith labels while this month's tally leaves room. An untrusted
-  # event, such as a fork pull request, skips every step, so every output stays
-  # empty and the jobs run hosted.
+  # Picks the Blacksmith labels while this month's tally leaves room. An
+  # untrusted event, such as a fork pull request, skips every step, so every
+  # output stays empty and the jobs run hosted.
   route:
-    if: ${{ !cancelled() && (inputs.stage == 'build' || inputs.stage == 'publish') }}
-    # In the publish stage this waits for publish, so mobile-update routes when it can start.
-    needs: publish
+    if: inputs.stage == 'build'
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read
       actions: read
     outputs:
-      vm104: ${{ steps.decide.outputs.vm104 }}
       blacksmith_linux: ${{ steps.blacksmith.outputs.blacksmith_linux }}
       blacksmith_android: ${{ steps.blacksmith.outputs.blacksmith_android }}
     env:
@@ -173,18 +164,9 @@ jobs:
           git fetch -q --no-tags --depth=1 origin refs/heads/main
           git sparse-checkout set --no-cone '/.github/scripts/'
           git -c checkout.workers=0 checkout -q --detach FETCH_HEAD
-      - name: Decide
-        id: decide
-        if: env.TRUSTED == 'true'
-        continue-on-error: true
-        env:
-          APP_ID: ${{ vars.CI_ROUTER_APP_ID }}
-          APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/route-vm104.sh
       - name: Decide Blacksmith
         id: blacksmith
-        if: env.TRUSTED == 'true' && inputs.stage == 'build'
+        if: env.TRUSTED == 'true'
         continue-on-error: true
         env:
           BLACKSMITH_ROUTING: ${{ vars.BLACKSMITH_ROUTING }}
@@ -251,8 +233,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/blacksmith-watchdog.cjs cancel
 
-  # Shares one route answer with android; when Android takes VM104, this build
-  # tries Blacksmith, then a hosted runner.
   desktop-linux:
     needs: route
     if: ${{ !cancelled() && inputs.stage == 'build' }}
@@ -265,12 +245,7 @@ jobs:
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
-        && (
-          needs.route.outputs.vm104 == 'true'
-          && (github.event_name == 'pull_request' || vars.ANDROID_ON_VM104 != 'true')
-          && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
-          || needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
-        )
+        && needs.route.outputs.blacksmith_linux != '' && format('"{0}"', needs.route.outputs.blacksmith_linux)
         || '"ubuntu-24.04"') }}
     env:
       VERSION: ${{ inputs.version }}
@@ -288,44 +263,20 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
+          cache: true
           run-install: false
 
-      # VM104's image installs 1.99.1; a floating stable makes rustup download it again.
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.99.1
 
-      # VM104's image carries these libraries, and its runner has no sudo. Blacksmith has sudo.
       - name: Install Linux desktop build libraries
-        if: runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-')
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
 
-      # VM104 runs 8 vCPUs with a 6.5 GiB job cgroup; six Cargo jobs peaked near 5 GB there.
-      - name: Bound build parallelism
-        if: runner.environment != 'github-hosted' && !startsWith(runner.name, 'blacksmith-')
-        run: |
-          {
-            echo "CARGO_BUILD_JOBS=6"
-            echo "XZ_OPT=-T0"
-            echo "NODE_OPTIONS=--max-old-space-size=3072"
-          } >> "$GITHUB_ENV"
-
       - name: Install dependencies
         run: vp install
-
-      - name: Use VM104's warm Cargo targets
-        if: runner.environment != 'github-hosted' && !startsWith(runner.name, 'blacksmith-')
-        shell: bash
-        run: |
-          set -euo pipefail
-          for cache in "$HOME"/.cache/ci-cargo-target/*/; do
-            crate=$(basename "$cache")
-            if [[ -f native/$crate/Cargo.toml ]]; then ln -sfn "${cache%/}" "native/$crate/target"; fi
-          done
 
       # Official builds bake T3 Connect's public Clerk and relay ids into the bundle;
       # without them, desktop and CLI builds ship with T3 Connect disabled.
@@ -395,18 +346,13 @@ jobs:
     if: ${{ !cancelled() && inputs.stage == 'build' && github.event_name != 'pull_request' }}
     # route-blacksmith.sh reserves this many minutes for the job.
     timeout-minutes: 90
-    # Android skips VM104 until an APK build passes on the runner; an admin sets ANDROID_ON_VM104.
     runs-on: >-
       ${{ fromJSON(
         github.repository == 'issuelt/t3code' && (
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
           ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
         )
-        && (
-          vars.ANDROID_ON_VM104 == 'true' && needs.route.outputs.vm104 == 'true'
-          && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
-          || needs.route.outputs.blacksmith_android != '' && format('"{0}"', needs.route.outputs.blacksmith_android)
-        )
+        && needs.route.outputs.blacksmith_android != '' && format('"{0}"', needs.route.outputs.blacksmith_android)
         || '"ubuntu-24.04"') }}
     env:
       APP_VARIANT: preview
@@ -427,8 +373,7 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
+          cache: true
           run-install: false
 
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -443,58 +388,12 @@ jobs:
 
       # Current Android phones are arm64; each extra ABI recompiles every native library.
       - name: Build APK
-        if: runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-')
         working-directory: apps/mobile
         run: |
           node_modules/.bin/expo prebuild --clean --platform android
           cd android
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a \
             "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m"
-
-      # The android recipe from ubuntu-runner-build.yml, sized for the first 4.5 GiB job cgroup; the cgroup is now 6.5 GiB.
-      - name: Build APK with one worker
-        if: runner.environment != 'github-hosted' && !startsWith(runner.name, 'blacksmith-')
-        working-directory: apps/mobile
-        env:
-          NODE_OPTIONS: --max-old-space-size=1536
-          CMAKE_BUILD_PARALLEL_LEVEL: "1"
-          EXPO_NO_TELEMETRY: "1"
-        run: |
-          set -euo pipefail
-          node_modules/.bin/expo prebuild --clean --platform android --no-install
-          echo 'react { extraPackagerArgs = ["--max-workers", "1"] }' >> android/app/build.gradle
-          # Ninja pools still cap compilation when Gradle supplies an explicit -j.
-          cat > android/runner-pools.gradle <<'GRADLE'
-          subprojects { project ->
-              ["com.android.application", "com.android.library"].each { pluginId ->
-                  project.plugins.withId(pluginId) {
-                      project.extensions.getByName("androidComponents").finalizeDsl { android ->
-                          android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
-                              "-DCMAKE_JOB_POOLS=runner_pool=1",
-                              "-DCMAKE_JOB_POOL_COMPILE=runner_pool",
-                              "-DCMAKE_JOB_POOL_LINK=runner_pool"
-                          ])
-                      }
-                  }
-              }
-          }
-          GRADLE
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("android/build.gradle")
-          text = path.read_text()
-          marker = 'apply plugin: "expo-root-project"'
-          if text.count(marker) != 1:
-              raise SystemExit("Expected one Expo root plugin application")
-          path.write_text(text.replace(marker, 'apply from: "runner-pools.gradle"\n\n' + marker))
-          PY
-          cd android
-          ./gradlew assembleRelease --no-daemon --no-parallel --max-workers=1 \
-            -PreactNativeArchitectures=arm64-v8a \
-            -Pandroid.builder.sdkDownload=false \
-            -Dorg.gradle.java.installations.auto-download=false \
-            -Pkotlin.compiler.execution.strategy=in-process \
-            '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=1 -XX:+ExitOnOutOfMemoryError'
 
       # Android installs an update only when it is signed with the installed
       # app's key, so every release APK is re-signed with the fork release key.
@@ -521,7 +420,7 @@ jobs:
           path: release-android/*.apk
           if-no-files-found: error
 
-  # Stays hosted: it holds contents: write and runs gh, which the runner image lacks.
+  # Stays hosted: it holds contents: write.
   publish:
     if: inputs.stage == 'publish' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
@@ -557,17 +456,9 @@ jobs:
   # matches this commit. After a native change the fingerprint differs, and
   # those phones take the release APK instead.
   mobile-update:
-    needs: [publish, route]
-    if: ${{ !cancelled() && inputs.stage == 'publish' && needs.publish.result == 'success' }}
-    runs-on: >-
-      ${{ fromJSON(
-        github.repository == 'issuelt/t3code' && (
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.ref == 'refs/heads/main')
-        )
-        && needs.route.outputs.vm104 == 'true'
-        && '{"group":"conf-ubuntu-t3code","labels":"issuelt-t3code-ubuntu24"}'
-        || '"ubuntu-24.04"') }}
+    needs: publish
+    if: inputs.stage == 'publish'
+    runs-on: ubuntu-24.04
     env:
       APP_VARIANT: preview
       T3CODE_MOBILE_UPDATE_CHANNEL: fork
@@ -586,8 +477,7 @@ jobs:
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          # VM104's clean image carries a warm pnpm store; GitHub's cache would only add uplink traffic.
-          cache: ${{ runner.environment == 'github-hosted' || startsWith(runner.name, 'blacksmith-') }}
+          cache: true
           run-install: false
 
       - name: Install dependencies

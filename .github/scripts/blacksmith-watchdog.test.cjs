@@ -119,8 +119,8 @@ test("a job that gets a runner at 4 minutes 40 seconds is not stalled", async ()
   assert.deepEqual(result.stalled, []);
 });
 
-test("no watched job after the grace minute ends the watch, such as a check on VM104", async () => {
-  const h = harness([[job({ labels: ["issuelt-t3code-ubuntu24"] })]]);
+test("no watched job after the grace minute ends the watch, such as a check on a hosted runner", async () => {
+  const h = harness([[job({ labels: ["ubuntu-24.04"] })]]);
   const result = await run(h);
   assert.deepEqual(result.stalled, []);
   assert.equal(h.sleeps.length, 3);

@@ -6,7 +6,7 @@ name: Fork Release
 # disabled here.
 # Pull requests only build Linux as a packaging canary; main builds every
 # platform before it publishes. Linux and Android stages live in
-# fork-release-linux.yml, which picks VM104 or Blacksmith for trusted events.
+# fork-release-linux.yml, which picks Blacksmith for trusted events.
 # Windows uses the Blacksmith label from the version stage while this month's
 # Blacksmith tally leaves room; macOS stays hosted.
 
@@ -270,7 +270,6 @@ jobs:
     secrets:
       FORK_ANDROID_KEYSTORE: ${{ secrets.FORK_ANDROID_KEYSTORE }}
       FORK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.FORK_ANDROID_KEYSTORE_PASSWORD }}
-      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}
 
   publish:
     if: github.event_name != 'pull_request'
@@ -287,4 +286,3 @@ jobs:
       name: ${{ needs.version.outputs.name }}
     secrets:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-      CI_ROUTER_APP_KEY: ${{ secrets.CI_ROUTER_APP_KEY }}

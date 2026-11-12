@@ -49,13 +49,13 @@ test("a skipped job keeps its label but has no runner, so it counts nothing", ()
   assert.equal(jobUsage(job({ started_at: null }), now), 0);
 });
 
-test("hosted and VM104 jobs count nothing", () => {
+test("hosted and other self-hosted jobs count nothing", () => {
   assert.equal(
     jobUsage(job({ runner_name: "GitHub Actions 1000001285", labels: ["ubuntu-24.04"] }), now),
     0,
   );
   assert.equal(
-    jobUsage(job({ runner_name: "ci-ubuntu104-1", labels: ["issuelt-t3code-ubuntu24"] }), now),
+    jobUsage(job({ runner_name: "ci-runner-1", labels: ["self-hosted", "linux"] }), now),
     0,
   );
 });
