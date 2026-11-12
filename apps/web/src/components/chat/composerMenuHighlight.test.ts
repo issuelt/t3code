@@ -63,7 +63,7 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
     sendShortcut: "enter",
     routeKind: "draft",
     phase: "ready",
-    isCompacting: false,
+    canSteer: true,
     followUpBehavior: "queue",
     isSoftwareKeyboardOpen: false,
     isLiteralPendingAnswer: false,

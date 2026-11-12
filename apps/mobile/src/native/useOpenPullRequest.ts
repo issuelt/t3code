@@ -9,6 +9,9 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
+let linkNavigationId = 0;
+const nextLinkNavigationId = () => ++linkNavigationId;
+
 type PullRequestContext = { readonly environmentId: string; readonly projectId: string };
 
 // Route-free so navigator layouts such as the workspace sidebar, which have no
@@ -29,7 +32,10 @@ export function useNavigateToPullRequest(options?: {
       serverConfigs.has(environmentId),
     );
     if (!destination) return tryOpenExternalUrl(url, "pull-request");
-    const params = withKnownPullRequestSummary(destination);
+    const params = withKnownPullRequestSummary({
+      ...destination,
+      ...(destination.navigationUrl ? { navigationId: nextLinkNavigationId() } : {}),
+    });
     // Contextual links open over the current page, so Back returns to the chat they came from.
     if (Platform.OS === "android" && mode === "workspace")
       selectDetail({ name: "PullRequest", params });

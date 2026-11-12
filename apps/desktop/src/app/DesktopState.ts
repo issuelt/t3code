@@ -22,6 +22,8 @@ export class DesktopState extends Context.Service<
      * On macOS, closing the window then hides it so the relay keeps running.
      */
     readonly keepAliveOnClose: Ref.Ref<boolean>;
+    // Set by DesktopUpdates.configure, which runs before the first backend start.
+    readonly canInstallUpdates: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
   }
 >()("@t3tools/desktop/app/DesktopState") {}
@@ -30,6 +32,7 @@ const make = Effect.all({
   backendReady: Ref.make(false),
   quitting: Ref.make(false),
   keepAliveOnClose: Ref.make(false),
+  canInstallUpdates: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
 });
 

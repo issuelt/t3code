@@ -93,7 +93,8 @@ export const cloneProject = Effect.fn("mcp.cloneProject")(function* (
   input: SourceControlCloneRepositoryInput,
 ) {
   const repositories = yield* Repositories.SourceControlRepositoryService;
-  return yield* repositories.cloneRepository(input).pipe(
+  // Agents' MCP calls have their own long budget, and an aborted call interrupts git.
+  return yield* repositories.cloneRepository(input, { timeoutMs: null }).pipe(
     Effect.mapError(
       (error) =>
         new OrchestratorMcpFailure({
