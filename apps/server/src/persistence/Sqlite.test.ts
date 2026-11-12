@@ -20,6 +20,7 @@ import { vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
+import { runForkMigrations } from "./ForkMigrations.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -229,9 +230,11 @@ const ownT3Home = Effect.fn(function* () {
 const migrateTo = (toMigrationInclusive?: number) =>
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig.ServerConfig;
-    yield* runMigrations({ toMigrationInclusive }).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: dbPath })),
-    );
+    yield* Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive });
+      // A current fork home also has every fork migration.
+      if (toMigrationInclusive === undefined) yield* runForkMigrations();
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
   });
 
 const latestRecordedMigrationId = Effect.gen(function* () {
