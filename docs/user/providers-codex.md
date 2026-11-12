@@ -72,6 +72,30 @@ Use a completely separate **CODEX_HOME path**, with no shadow home, when you wan
 separate Codex sessions and configuration. That instance cannot continue threads
 from the other home.
 
+### Another model provider
+
+A Codex instance can run against any endpoint that Codex's `model_providers`
+configuration supports. T3 Code shows the instance with the logo of the model
+family set as `model` in that Codex home's `config.toml`. A `grok-*` model shows
+the Grok logo, and a `claude-*` model shows the Claude logo.
+
+Codex lists only its built-in OpenAI models for another provider unless you set
+a catalog URL. To list the models the endpoint serves, add `model_catalog_url`
+to your provider's table and turn on model discovery in the same `config.toml`:
+
+```toml
+[model_providers.my_provider]
+base_url = "https://example.com/v1"
+env_key = "MY_PROVIDER_API_KEY"
+model_catalog_url = "https://example.com/v1/models"
+
+[features]
+api_key_model_discovery = true
+```
+
+Discovery needs `env_key`, and that variable must be set for the instance. Without it,
+the model list is empty once `model_catalog_url` is set.
+
 ## Switch accounts in an existing thread
 
 Choose the other account from the thread's model picker. T3 Code offers compatible

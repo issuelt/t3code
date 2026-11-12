@@ -920,7 +920,7 @@ export function ProviderInstanceCard({
 
   const titleIconNode = (
     <ProviderInstanceIcon
-      driverKind={driverKind ?? instance.driver}
+      driverKind={liveProvider?.iconDriver ?? driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
       acpRegistryAgentId={

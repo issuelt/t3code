@@ -27,7 +27,11 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import {
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  ProviderDriverKind,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 
 import {
   codexModelFamily,
@@ -94,6 +98,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
+  readonly configuredModel?: string | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -279,6 +284,17 @@ export function applyPreferredCodexDefaultModel(
     const { isDefault: _isDefault, ...rest } = model;
     return rest;
   });
+}
+
+const MODEL_FAMILY_ICON_DRIVERS: ReadonlyArray<readonly [RegExp, ProviderDriverKind]> = [
+  [/^grok\b/iu, ProviderDriverKind.make("grok")],
+  [/^claude\b/iu, ProviderDriverKind.make("claudeAgent")],
+];
+
+/** Codex pointed at another vendor's endpoint shows that vendor's mark, chosen by its configured model. */
+function codexIconDriverForModel(model: string | undefined): ProviderDriverKind | undefined {
+  if (!model) return undefined;
+  return MODEL_FAMILY_ICON_DRIVERS.find(([pattern]) => pattern.test(model))?.[1];
 }
 
 function applyConfiguredCodexServiceTier(
@@ -552,7 +568,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, config, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -569,7 +585,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         deadlineMs,
         CODEX_CONFIG_PROBE_TIMEOUT_MS,
       ).pipe(
-        Effect.map((response) => response?.config.service_tier ?? undefined),
+        Effect.map((response) => response?.config),
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
@@ -606,7 +622,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
+    serviceTier: config?.service_tier ?? undefined,
+    configuredModel: config?.model ?? undefined,
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -862,7 +879,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             checkedAt,
           });
 
-  return buildServerProvider({
+  const iconDriver = codexIconDriverForModel(snapshot.configuredModel);
+  const draft = buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
@@ -898,6 +916,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       ...(managedAuth ? {} : { usageLimits }),
     },
   });
+  return iconDriver ? { ...draft, iconDriver } : draft;
 });
 
 export { makePendingCodexProvider };

@@ -163,7 +163,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 aria-label={isUnavailable || isContextDisabled ? tooltip : entry.displayName}
               >
                 <ProviderInstanceIcon
-                  driverKind={entry.driverKind}
+                  driverKind={entry.iconDriverKind}
                   displayName={entry.displayName}
                   accentColor={entry.accentColor}
                   acpRegistryAgentId={entry.acpRegistryAgentId}
