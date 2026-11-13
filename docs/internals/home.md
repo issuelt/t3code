@@ -28,13 +28,18 @@ across every project and connected environment. User guide:
 
 ## Sessions roll instead of compacting
 
-Home is one thread that lives for weeks, so it never compacts. When its next turn starts more than
-five minutes after the last one (the provider's prompt cache has gone cold) or its native context is
-half full, `ProviderTurnStartService` skips the resume and takes the fresh-session recovery path: a
-new native session seeded with a summary of the thread's recent history
-(`orchestration-v2/homeSessionRoll.ts`). Steering an active turn is unaffected. The summary clips
-each message, so Home's instructions tell it to read its own thread for full text; `t3_thread_read`
-defaults to the caller's thread for that.
+Home is one thread that lives for weeks, so it never compacts. When its next turn starts with its
+native context half full, as the provider measured on its last request, `ProviderTurnStartService`
+skips the resume and takes the fresh-session recovery path: a new native session seeded with the
+thread's newest items (`orchestration-v2/homeSessionRoll.ts`). The roll waits while the old session
+still runs background work, and steering an active turn is unaffected. Idle time is not a trigger:
+users answer Home minutes apart, so a prompt-cache timeout rolled Home on nearly every message.
+
+The seed is the only memory the new session has, so Home's handoffs get the full 64 KB history cap
+instead of the 16 KB default (`handoffByteCapForThread`), and the seed's header tells Home to read
+its own thread with `t3_thread_read`, which defaults to the caller's thread. Reports, watch reports
+and coordination results are keyed by thread, not native session, so they reach the new session
+unchanged.
 
 ## Reaching other environments
 

@@ -44,6 +44,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffByteCapForThread,
   handoffTokenCapConfig,
   handoffBudget,
   attachmentTokenAllowance,
@@ -53,7 +54,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
-import { homeSessionRollReason } from "./homeSessionRoll.ts";
+import { homeContextHalfFull } from "./homeSessionRoll.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -804,8 +805,9 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
-      const tokenCap = yield* handoffTokenCapConfig.pipe(
-        Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
+      const tokenCap = handoffByteCapForThread(
+        projection.thread.id,
+        yield* handoffTokenCapConfig.pipe(Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP)),
       );
       const handoffContextForThread = (loadedProviderThread: OrchestrationV2ProviderThread) => {
         const measuredContext = latestNativeContextUsage(projection, providerThread);
@@ -1259,19 +1261,17 @@ export const layer: Layer.Layer<
             candidate.startedAt !== null,
         );
         const nativeUsage = latestNativeContextUsage(projection, providerThread)?.usage;
-        const homeRollReason = isHomeThreadId(projection.thread.id)
-          ? homeSessionRollReason({
-              lastTurnAt: previousTurnRun?.completedAt ?? previousTurnRun?.startedAt ?? null,
-              usedTokens: nativeUsage?.usedTokens,
-              contextWindow:
-                nativeUsage?.maxTokens ??
-                session.getModelContextWindow?.(run.modelSelection, resolvedRuntimePolicy.cwd),
-              now: yield* DateTime.now,
-            })
-          : null;
+        const homeFull =
+          isHomeThreadId(projection.thread.id) &&
+          homeContextHalfFull({
+            usedTokens: nativeUsage?.usedTokens,
+            contextWindow:
+              nativeUsage?.maxTokens ??
+              session.getModelContextWindow?.(run.modelSelection, resolvedRuntimePolicy.cwd),
+          });
         // A replacement session cannot adopt background work still running in the old one.
         const homeHasBackgroundWork =
-          homeRollReason !== null &&
+          homeFull &&
           (yield* (
             session.hasPendingBackgroundWorkForThread?.(providerThread, {
               includeSubagents: true,
@@ -1279,12 +1279,12 @@ export const layer: Layer.Layer<
               session.hasPendingBackgroundWork ??
               Effect.succeed(false)
           ));
-        const homeRoll = homeHasBackgroundWork ? null : homeRollReason;
+        const homeRoll = homeFull && !homeHasBackgroundWork;
         const skipResume = uncertainDelivery
           ? "Uncertain native history injection"
-          : homeRoll === null
-            ? null
-            : `Home session rolled over: ${homeRoll}`;
+          : homeRoll
+            ? "Home session rolled over: context half full"
+            : null;
         const resumed = yield* Effect.result(
           skipResume !== null
             ? Effect.fail(
@@ -1373,8 +1373,8 @@ export const layer: Layer.Layer<
           runId,
           reason: uncertainDelivery
             ? "uncertain_history_delivery"
-            : homeRoll !== null
-              ? `home_${homeRoll}`
+            : homeRoll
+              ? "home_context_half_full"
               : resumed._tag === "Success"
                 ? "handoff_budget_exhausted"
                 : "resume_failed",
@@ -1475,7 +1475,7 @@ export const layer: Layer.Layer<
           ],
         });
         // A Home rollover is routine, not a recovery, so it leaves no divider in the thread.
-        recoveryTurnItem = homeRoll === null ? handoffTurnItem : undefined;
+        recoveryTurnItem = homeRoll ? undefined : handoffTurnItem;
         return replacement;
       });
       if (loadedProviderThread === undefined) return;

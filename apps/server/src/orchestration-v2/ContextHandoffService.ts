@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffByteCapForThread,
   handoffTokenCapConfig,
   handoffCoverage,
   historicalMessage,
@@ -549,7 +550,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               ];
         }),
         coverage,
-        budget: tokenCap,
+        budget: handoffByteCapForThread(input.threadId, tokenCap),
       });
       return {
         id: handoffId,

@@ -14,12 +14,21 @@ import * as Config from "effect/Config";
 
 import { labelAgentMessage } from "./agentMessageLabel.ts";
 
+// Despite the name, every history budget counts UTF-8 bytes, so 16,000 is about 4k tokens.
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
 export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
   Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
+
+/**
+ * Home starts a fresh session whenever its context is half full, and that session knows only what
+ * the history seed carries, so Home's handoffs get the whole byte cap.
+ */
+export function handoffByteCapForThread(threadId: string, configuredCap: number): number {
+  return isHomeThreadId(threadId) ? HANDOFF_BYTE_CAP : configuredCap;
+}
 
 // Only accepted roots with matching native identity count; row reuse must not revive old usage.
 export function latestNativeContextUsage(
@@ -299,5 +308,10 @@ export function handoffCoverage(input: {
     `Provider context handoff. Thread: ${input.threadId}. Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}.`,
     `Source item range: ${input.items.at(0)?.id ?? "none"} through ${input.items.at(-1)?.id ?? "none"}.`,
     `Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Items included below need no read. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
+    ...(isHomeThreadId(input.threadId)
+      ? [
+          `Your session restarted. These are the newest items of your own thread ${input.threadId}. Before you answer from memory about earlier work, read it with t3_thread_read.`,
+        ]
+      : []),
   ].join("\n");
 }
