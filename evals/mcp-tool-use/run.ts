@@ -2225,7 +2225,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   for (let step = 0; step < maxSteps; step++) {
     const response = input
       ? yield* callCodex(config, codexRequest(base, input))
-      : yield* callModel(config.apiKey, requestBody(sample, config.effort, messages));
+      : yield* callModel(
+          config.apiKey,
+          requestBody(sample, config.effort, messages),
+          config.apiKey ? undefined : config.proxy,
+        );
     addUsage(usage, response.usage);
     if ("raw" in response) {
       input?.push(...response.raw);
@@ -2640,15 +2644,15 @@ const main = Effect.gen(function* () {
   }
   const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
-  if ((!apiKey && !codex) || out === undefined) {
+  if (out === undefined) {
     const message =
-      "Set ANTHROPIC_API_KEY and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
+      "Pass --out <directory>. Claude models use ANTHROPIC_API_KEY, or the Codex proxy without one; ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
     return yield* Effect.die(new Error(message));
   }
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
+    ...(codex || !apiKey || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],
