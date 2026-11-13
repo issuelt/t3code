@@ -1208,7 +1208,7 @@ export const readThreadPage = Effect.fn("OrchestratorMcp.readThreadPage")(functi
   const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
   const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
   const timeline = yield* threadManagement
-    .getTimelinePage(input.threadId, {
+    .getTimelinePage(target.thread.id, {
       ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
       ...(newestFirst ? { beforePosition: input.beforePosition ?? Number.POSITIVE_INFINITY } : {}),
       limit,
@@ -3270,7 +3270,14 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
-      const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
+      const threadId = input.threadId ?? scope.thread?.threadId;
+      if (threadId === undefined) {
+        return yield* failure(
+          "target_required",
+          "Pass threadId: this MCP client is not running inside a T3 thread.",
+        );
+      }
+      const { parent, target, shell } = yield* loadReadableThread(scope, threadId);
       const { result, page } = yield* readThreadPage(
         threadManagement,
         target,

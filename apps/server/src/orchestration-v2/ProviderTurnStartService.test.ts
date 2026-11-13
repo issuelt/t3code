@@ -33,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import {
@@ -301,6 +302,8 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
   };
+  /** The thread is Home, and its previous turn ended this many minutes before this one. */
+  readonly homeIdleMinutes?: number;
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
    * the provider, or an earlier run that delivered it. `nativeForkFrom` plans a native fork of the
@@ -315,7 +318,11 @@ function makeLocalCommandHarness(input: {
 }) {
   const settledRuns: Array<string> = [];
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
-  const threadId = ThreadId.make("thread-native-account-command");
+  const threadId = ThreadId.make(
+    input.homeIdleMinutes === undefined
+      ? "thread-native-account-command"
+      : "home:thread-native-account-command",
+  );
   const runId = RunId.make("run-native-account-command");
   const rootNodeId = NodeId.make("root-native-account-command");
   const attemptId = RunAttemptId.make("attempt-native-account-command");
@@ -691,7 +698,12 @@ function makeLocalCommandHarness(input: {
           rootNodeId: NodeId.make("previous-root"),
           activeAttemptId: previousAttemptId,
           providerThreadId: previousProviderThreadId,
-          completedAt: now,
+          ...(input.homeIdleMinutes === undefined
+            ? { completedAt: now }
+            : {
+                startedAt: DateTime.subtract(now, { minutes: input.homeIdleMinutes }),
+                completedAt: DateTime.subtract(now, { minutes: input.homeIdleMinutes }),
+              }),
         },
         run,
       ],
@@ -800,6 +812,8 @@ function makeLocalCommandHarness(input: {
     lastError: null,
   };
   const startTurn = vi.fn((_turn: ProviderAdapter.ProviderAdapterV2TurnInput) => Effect.void);
+  const previousTurnEnsureThread = vi.fn(() => Effect.succeed(providerThread));
+  const previousTurnResumeThread = vi.fn(() => Effect.succeed(projection.providerThreads[0]));
   const sideChatThread = {
     ...providerThread,
     nativeThreadRef: {
@@ -846,8 +860,8 @@ function makeLocalCommandHarness(input: {
                 ? Effect.succeed({
                     driver: providerThread.driver,
                     providerSession,
-                    ensureThread: () => Effect.succeed(providerThread),
-                    resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    ensureThread: previousTurnEnsureThread,
+                    resumeThread: previousTurnResumeThread,
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
@@ -952,7 +966,7 @@ function makeLocalCommandHarness(input: {
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
-            input.sideChat?.nativeForkFrom === undefined
+            input.sideChat?.nativeForkFrom === undefined && input.homeIdleMinutes === undefined
               ? Effect.die("history read must fail first")
               : Effect.succeed({
                   ...handoff,
@@ -976,7 +990,9 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
-        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({
+          allocate: () => Effect.succeed(1),
+        }),
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -1004,7 +1020,7 @@ function makeLocalCommandHarness(input: {
               projection.runs.find((candidate) => candidate.id === id),
             ),
           getTurnStartHistory: () =>
-            input.sideChat !== undefined
+            input.sideChat !== undefined || input.homeIdleMinutes !== undefined
               ? Effect.succeed([])
               : Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
@@ -1051,6 +1067,8 @@ function makeLocalCommandHarness(input: {
     createWorktree,
     open,
     fallbackEnsureThread,
+    previousTurnEnsureThread,
+    previousTurnResumeThread,
     writeIfRunCurrent,
     startRootRun,
     startTurn,
@@ -2044,3 +2062,39 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("starts an idle Home thread in a fresh session with its recent history", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      homeIdleMinutes: 6,
+    });
+    // The harness dates its turns at 2026-09-04T12:00:00Z.
+    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00Z"));
+
+    yield* harness.start;
+
+    expect(harness.previousTurnResumeThread).not.toHaveBeenCalled();
+    expect(harness.previousTurnEnsureThread).toHaveBeenCalledWith(
+      expect.objectContaining({ forceNewNativeThread: true }),
+    );
+    expect(harness.projection().contextHandoffs.at(-1)?.strategy).toBe("full_thread_summary");
+  }),
+);
+
+effectIt.effect("resumes a Home thread whose prompt cache is still warm", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      homeIdleMinutes: 2,
+    });
+    // The harness dates its turns at 2026-09-04T12:00:00Z.
+    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00Z"));
+
+    yield* harness.start;
+
+    expect(harness.previousTurnResumeThread).toHaveBeenCalledOnce();
+  }),
+);

@@ -12,6 +12,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  isHomeThreadId,
   parseGoalCommand,
   RunId,
   ThreadId,
@@ -52,6 +53,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { homeSessionRollReason } from "./homeSessionRoll.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1250,15 +1252,37 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const previousTurnRun = projection.runs.findLast(
+          (candidate) =>
+            candidate.providerThreadId === providerThread.id &&
+            candidate.ordinal < run.ordinal &&
+            candidate.startedAt !== null,
+        );
+        const nativeUsage = latestNativeContextUsage(projection, providerThread)?.usage;
+        const homeRoll = isHomeThreadId(projection.thread.id)
+          ? homeSessionRollReason({
+              lastTurnAt: previousTurnRun?.completedAt ?? previousTurnRun?.startedAt ?? null,
+              usedTokens: nativeUsage?.usedTokens,
+              contextWindow:
+                nativeUsage?.maxTokens ??
+                session.getModelContextWindow?.(run.modelSelection, resolvedRuntimePolicy.cwd),
+              now: yield* DateTime.now,
+            })
+          : null;
+        const skipResume = uncertainDelivery
+          ? "Uncertain native history injection"
+          : homeRoll === null
+            ? null
+            : `Home session rolled over: ${homeRoll}`;
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          skipResume !== null
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: skipResume,
                 }),
               )
             : session.resumeThread({
@@ -1338,9 +1362,11 @@ export const layer: Layer.Layer<
           runId,
           reason: uncertainDelivery
             ? "uncertain_history_delivery"
-            : resumed._tag === "Success"
-              ? "handoff_budget_exhausted"
-              : "resume_failed",
+            : homeRoll !== null
+              ? `home_${homeRoll}`
+              : resumed._tag === "Success"
+                ? "handoff_budget_exhausted"
+                : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(
@@ -1359,12 +1385,6 @@ export const layer: Layer.Layer<
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
         effectiveHandoffs = withRecoveryHandoff(handoff);
         resumeFellBack = true;
-        const previousRun = projection.runs.findLast(
-          (candidate) =>
-            candidate.providerThreadId === providerThread.id &&
-            candidate.ordinal < run.ordinal &&
-            candidate.startedAt !== null,
-        );
         // Stable per run so a retried start reuses the reserved run-start position.
         const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
           runId,
@@ -1398,7 +1418,8 @@ export const layer: Layer.Layer<
           toProviderThreadId: handoff.toProviderThreadId,
           fromProviderInstanceIds: [providerThread.providerInstanceId],
           toProviderInstanceId: run.providerInstanceId,
-          fromModelSelections: previousRun === undefined ? [] : [previousRun.modelSelection],
+          fromModelSelections:
+            previousTurnRun === undefined ? [] : [previousTurnRun.modelSelection],
           toModel: run.modelSelection.model,
           strategy: handoff.strategy,
           summary: handoff.summaryText,

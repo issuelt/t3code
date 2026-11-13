@@ -448,7 +448,7 @@ const clampedPositiveInt = (maximum: number) =>
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
+  threadId: Schema.optional(ThreadId),
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
