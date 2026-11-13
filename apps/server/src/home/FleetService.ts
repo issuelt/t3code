@@ -221,10 +221,11 @@ const make = Effect.gen(function* () {
       ),
     ),
 
-    "threads.search": Effect.fn("FleetService.threads.search")((input) =>
-      searchThreads(input, environmentId).pipe(
-        Effect.provideService(ThreadSearch.ThreadSearch, threadSearch),
-      ),
+    "threads.search": Effect.fn("FleetService.threads.search")((input, actor) =>
+      searchThreads(input, {
+        environmentId,
+        currentThreadId: actor.environmentId === environmentId ? actor.threadId : null,
+      }).pipe(Effect.provideService(ThreadSearch.ThreadSearch, threadSearch)),
     ),
 
     "threads.list": Effect.fn("FleetService.threads.list")(function* (input, actor) {
@@ -299,7 +300,9 @@ const make = Effect.gen(function* () {
         return yield* failure("thread_not_found", `Thread ${input.threadId} was not found.`);
       }
       const link = formatThreadLink({ environmentId, threadId: input.threadId });
-      return (yield* readThreadPage(threads, target, shell, input, link)).result;
+      return (yield* readThreadPage(threads, target, shell, input, link, {
+        newestFirst: input.beforePosition !== undefined || input.afterPosition === undefined,
+      })).result;
     }),
 
     "threads.wait": Effect.fn("FleetService.threads.wait")(function* (input) {

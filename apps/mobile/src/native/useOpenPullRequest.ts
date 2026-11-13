@@ -1,7 +1,5 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
-import { Platform } from "react-native";
-import { useSelectWorkspaceDetail } from "../features/layout/workspace/useSelectWorkspaceDetail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
@@ -16,15 +14,10 @@ type PullRequestContext = { readonly environmentId: string; readonly projectId: 
 
 // Route-free so navigator layouts such as the workspace sidebar, which have no
 // route context for useRoute, can open pull requests for any thread.
-export function useNavigateToPullRequest(options?: {
-  readonly replace?: boolean;
-  readonly mode?: "contextual" | "workspace";
-}) {
+export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
   const projects = useProjects();
   const replace = options?.replace;
-  const mode = options?.mode ?? "workspace";
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
@@ -36,10 +29,7 @@ export function useNavigateToPullRequest(options?: {
       ...destination,
       ...(destination.navigationUrl ? { navigationId: nextLinkNavigationId() } : {}),
     });
-    // Contextual links open over the current page, so Back returns to the chat they came from.
-    if (Platform.OS === "android" && mode === "workspace")
-      selectDetail({ name: "PullRequest", params });
-    else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+    if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
     else navigation.dispatch(StackActions.push("PullRequest", params));
     return true;
   };
@@ -47,7 +37,6 @@ export function useNavigateToPullRequest(options?: {
 
 export function useOpenPullRequest(options?: {
   readonly replace?: boolean;
-  readonly mode?: "contextual" | "workspace";
   readonly context?: PullRequestContext;
 }) {
   const route = useRoute();
@@ -73,7 +62,6 @@ export function useOpenPullRequest(options?: {
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
   const navigateToPullRequest = useNavigateToPullRequest({
     replace: options?.replace,
-    mode: options?.mode ?? "contextual",
   });
   return (url: string) =>
     navigateToPullRequest(

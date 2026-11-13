@@ -51,7 +51,7 @@ function createComposerDictationController(input: {
     ...streaming.dependencies,
     readDraft: () => {
       const draft = latest.current.readDraft();
-      return draft && { ...draft, ownerKey: latest.current.ownerKey, revision: 0 };
+      return draft && { ...draft, ownerKey: latest.current.ownerKey };
     },
     commitDraft: (text, selection, inserted) => {
       committed.current = true;

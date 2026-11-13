@@ -10,6 +10,7 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
   type SourceControlCloneRepositoryInput,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
@@ -108,11 +109,15 @@ export const cloneProject = Effect.fn("mcp.cloneProject")(function* (
 /** Links point at `environmentId`, the environment that ran the search. */
 export const searchThreads = Effect.fn("mcp.searchThreads")(function* (
   input: FleetThreadSearchInput,
-  environmentId: EnvironmentId,
+  {
+    environmentId,
+    currentThreadId,
+  }: { environmentId: EnvironmentId; currentThreadId: ThreadId | null },
 ) {
   const threadSearch = yield* ThreadSearch.ThreadSearch;
   const { matches } = yield* threadSearch.searchThreads(input).pipe(Effect.mapError(unavailable));
   return {
+    currentThreadId,
     matches: matches.map((match) => ({
       ...match,
       link: formatThreadLink({ environmentId, threadId: match.threadId }, match.title),

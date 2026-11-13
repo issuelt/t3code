@@ -43,24 +43,9 @@ vi.mock("react-native", () => ({
     },
   },
 }));
-vi.mock("../features/layout/workspace/WorkspaceTabsContext", () => ({
-  useWorkspaceTabs: () => ({ dispatch: selectTab }),
-}));
 vi.mock("../state/entities", () => ({
   useThreadShell: () => ({ projectId: "project-a" }),
   useProjects: () => [],
-}));
-vi.mock("../features/layout/workspace/useSelectWorkspaceDetail", () => ({
-  useSelectWorkspaceDetail: () => (detail: typeof pullRequest) => {
-    current = apply(
-      current,
-      CommonActions.reset({
-        stale: true,
-        index: 1,
-        routes: [{ name: "Home", key: current.routes[0]?.key }, detail],
-      }),
-    );
-  },
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: { get: () => new Map() } }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
@@ -76,10 +61,7 @@ vi.mock("./pullRequestNavigation", () => ({
 vi.mock("./openExternalUrl", () => ({ tryOpenExternalUrl: vi.fn() }));
 
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
-import {
-  useAndroidWorkspaceBack,
-  useWorkspaceListNavigation,
-} from "../features/layout/workspace/useAndroidWorkspaceNavigation";
+import { useAndroidWorkspaceBack } from "../features/layout/workspace/useAndroidWorkspaceNavigation";
 
 const { CommonActions, StackActions, StackRouter } = loadRouters();
 const router = StackRouter({});
@@ -144,7 +126,6 @@ function names(state: ReturnType<typeof router.getInitialState>) {
 
 let current = router.getInitialState(options);
 let hardwareBack: (() => boolean) | undefined;
-const selectTab = vi.fn();
 type RouterAction = Parameters<typeof router.getStateForAction>[1];
 const navigation = {
   getState: () => current,
@@ -164,17 +145,15 @@ const navigation = {
 beforeEach(() => {
   current = router.getInitialState(options);
   hardwareBack = undefined;
-  selectTab.mockClear();
 });
 
 describe("Android workspace navigation", () => {
-  it("returns to a distinct previous thread, otherwise to the workspace list", () => {
+  it("returns to the previous page, otherwise to the workspace list", () => {
     const parent = withThread();
     let state = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
     );
-    let listSelected = false;
     const navigation = {
       dispatch: (action: RootStackResetAction) => {
         state = apply(state, action);
@@ -185,39 +164,41 @@ describe("Android workspace navigation", () => {
         state = apply(state, StackActions.pop());
       },
     };
-    const back = () =>
-      returnToAndroidWorkspaceList(navigation, () => {
-        listSelected = true;
-      });
+    const back = () => returnToAndroidWorkspaceList(navigation);
 
     back();
     expect(state.routes).toEqual(parent.routes);
     expect(state.index).toBe(parent.index);
-    expect(listSelected).toBe(false);
 
     back();
     expect(state.routes).toEqual([parent.routes[0]]);
     expect(state.index).toBe(0);
-    expect(listSelected).toBe(true);
 
     state = apply(
       parent,
       StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
     );
-    listSelected = false;
     back();
     expect(state.routes).toEqual(parent.routes);
     expect(state.index).toBe(parent.index);
-    expect(listSelected).toBe(false);
+
+    const pullRequestOverThread = legacyHistory();
+    state = pullRequestOverThread;
+    back();
+    expect(state.routes).toEqual(pullRequestOverThread.routes.slice(0, 2));
 
     // Confirming a Git action from the inline inspector can duplicate the current thread.
     state = apply(parent, StackActions.push("Thread", thread.params));
     back();
-    expect({ routes: names(state), index: state.index, listSelected }).toEqual({
-      routes: ["Home"],
-      index: 0,
-      listSelected: true,
-    });
+    expect({ routes: names(state), index: state.index }).toEqual({ routes: ["Home"], index: 0 });
+
+    const child = { ...thread.params, threadId: "child-a" };
+    state = apply(
+      apply(parent, StackActions.push("Thread", child)),
+      StackActions.push("Thread", child),
+    );
+    back();
+    expect(state.routes).toEqual(parent.routes);
   });
 
   it("opens a linked thread above the current one so Back returns to it", () => {
@@ -355,12 +336,11 @@ describe("Android contextual navigation", () => {
       await useOpenPullRequest({ replace })("https://github.com/owner/repository/pull/42");
       expect(current.routes.slice(0, -1)).toEqual(previous);
       expect(current.routes.at(-1)).toMatchObject(pullRequest);
-      const back = useAndroidWorkspaceBack("pullRequests");
+      const back = useAndroidWorkspaceBack();
       if (replace) {
         if (!hardwareBack?.()) navigation.goBack();
       } else back();
       expect(current.routes).toEqual(previous);
-      expect(selectTab).not.toHaveBeenCalled();
     },
   );
 
@@ -370,12 +350,13 @@ describe("Android contextual navigation", () => {
       previous,
       StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
     );
-    useAndroidWorkspaceBack("threads")();
+    useAndroidWorkspaceBack()();
     expect(current.routes).toEqual(previous.routes);
-    expect(selectTab).not.toHaveBeenCalled();
-    useWorkspaceListNavigation("threads")();
+    current = apply(
+      current,
+      CommonActions.reset(androidWorkspaceTabNavigationState(current, "threads", false)),
+    );
     expect(current.routes).toEqual([previous.routes[0]]);
-    expect(selectTab).toHaveBeenLastCalledWith({ type: "select", tab: "threads" });
     expect(navigation.canGoBack()).toBe(false);
   });
 });
@@ -395,11 +376,10 @@ it.each([false, true])(
     );
     if (draft)
       current = apply(current, CommonActions.setParams({ draft: undefined, ...thread.params }));
-    const back = useAndroidWorkspaceBack("threads");
+    const back = useAndroidWorkspaceBack();
     if (draft) hardwareBack?.();
     else back();
     expect(current.routes).toEqual(previous);
-    expect(selectTab).not.toHaveBeenCalled();
   },
 );
 
@@ -409,9 +389,8 @@ it("keeps chat history when a PR links to itself", async () => {
   await useOpenPullRequest()("https://github.com/owner/repository/pull/42");
   const previous = current.routes;
   await useOpenPullRequest()("https://github.com/owner/repository/pull/42");
-  useAndroidWorkspaceBack("pullRequests")();
+  useAndroidWorkspaceBack()();
   expect(current.routes).toEqual(previous);
-  useAndroidWorkspaceBack("pullRequests")();
+  useAndroidWorkspaceBack()();
   expect(current.routes).toEqual(chat);
-  expect(selectTab).not.toHaveBeenCalled();
 });

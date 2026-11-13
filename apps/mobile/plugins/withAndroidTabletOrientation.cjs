@@ -1,9 +1,6 @@
 const { AndroidConfig, withAndroidManifest, withMainActivity } = require("expo/config-plugins");
 
-// Lock portrait at runtime on phones only (smallest width < 600dp), before super.onCreate. The
-// manifest stays unlocked: a tablet launched in landscape against a portrait manifest stays
-// letterboxed until rotated. FULL_USER respects rotation lock; foldables change
-// smallestScreenWidthDp without recreating the activity.
+// FULL_USER respects rotation lock. Foldables change smallestScreenWidthDp without recreating the activity.
 
 const ORIENTATION_METHODS = `
   // Applied in onCreate and re-applied on fold/unfold; added by

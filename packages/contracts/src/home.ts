@@ -41,6 +41,7 @@ import {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 import { Project, ProjectCreatePayload, ProjectUpdatePayload } from "./project.ts";
 import {
@@ -280,28 +281,11 @@ export const FleetRequestTarget = Schema.Struct({
 });
 export type FleetRequestTarget = typeof FleetRequestTarget.Type;
 
-const FleetQuestion = Schema.Struct({
-  id: Schema.String,
-  header: Schema.String,
-  question: Schema.String,
-  options: Schema.Array(
-    Schema.Struct({
-      label: Schema.String,
-      description: Schema.String,
-      value: Schema.optional(Schema.String),
-    }),
-  ),
-  multiSelect: Schema.optional(Schema.Boolean),
-  allowCustomAnswer: Schema.optional(Schema.Boolean),
-  initialAnswer: Schema.optional(Schema.String),
-  required: Schema.optional(Schema.Boolean),
-});
-
 export const FleetRequestReadResult = Schema.Struct({
   requestId: RuntimeRequestId,
   kind: Schema.optional(FleetPendingRequestKind),
   /** The questions of a user-input request; empty for an approval. */
-  questions: Schema.Array(FleetQuestion),
+  questions: Schema.Array(OrchestrationV2UserInputQuestion),
   /** What an approval asks to do. */
   approval: Schema.optional(
     Schema.Struct({
@@ -357,6 +341,7 @@ export const FleetThreadSearchInput = Schema.Struct({
 export type FleetThreadSearchInput = typeof FleetThreadSearchInput.Type;
 
 export const FleetThreadSearchResult = Schema.Struct({
+  currentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   matches: Schema.Array(
     Schema.Struct({
       threadId: OrchestrationThreadSearchMatch.fields.threadId,

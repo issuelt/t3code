@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -86,6 +87,18 @@ const CodexRoutingConfig = Schema.Struct({
 });
 const decodeCodexRoutingConfig = Schema.decodeUnknownOption(CodexRoutingConfig);
 
+const CodexCyberAccessConfig = Schema.Struct({
+  daybreak: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  features: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        api_key_cyber_access_programs: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
+});
+const decodeCodexCyberAccessConfig = Schema.decodeUnknownOption(CodexCyberAccessConfig);
+
 function routesToNativeOpenai(config: unknown): boolean {
   const decoded = decodeCodexRoutingConfig(config);
   if (Option.isNone(decoded)) return false;
@@ -138,6 +151,9 @@ export interface CodexAppServerProviderSnapshot {
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
   readonly configuredModel?: string | undefined;
+  /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
+  readonly daybreakEnabled?: boolean | undefined;
+  readonly cyberAccessProgramsUnavailable?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -156,6 +172,12 @@ const DEFAULT_SERVICE_TIER_ID = "default";
 
 const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
+};
+
+const CYBER_ACCESS_PROGRAM_LABELS: Readonly<Record<string, string>> = {
+  standard: "Standard",
+  daybreakBlue: "Daybreak Blue",
+  daybreakRed: "Daybreak Red",
 };
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -286,6 +308,25 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
+  if (cyberAccessPrograms.length > 0) {
+    const hasStandard = cyberAccessPrograms.includes("standard");
+    const defaultProgram = hasStandard ? "standard" : cyberAccessPrograms[0];
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      // Standard stays selectable as an opt-out; Codex rejects it visibly when the login cannot use it.
+      options: (hasStandard ? cyberAccessPrograms : ["standard", ...cyberAccessPrograms]).map(
+        (program) => ({
+          id: program,
+          label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+          ...(program === defaultProgram ? { isDefault: true } : {}),
+        }),
+      ),
+      ...(defaultProgram === undefined ? {} : { currentValue: defaultProgram }),
+    });
+  }
 
   return createModelCapabilities({
     optionDescriptors,
@@ -336,35 +377,93 @@ function codexIconDriverForModel(model: string | undefined): ProviderDriverKind 
   return MODEL_FAMILY_ICON_DRIVERS.find(([pattern]) => pattern.test(model))?.[1];
 }
 
-function applyConfiguredCodexServiceTier(
+function mapCodexOptionDescriptors(
   models: ReadonlyArray<ServerProviderModel>,
-  serviceTier: string | undefined,
+  update: (
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+    model: ServerProviderModel,
+  ) => ReadonlyArray<ProviderOptionDescriptor>,
 ): ReadonlyArray<ServerProviderModel> {
-  if (!serviceTier) return models;
   return models.map((model) => {
     if (!model.capabilities?.optionDescriptors) return model;
     return {
       ...model,
       capabilities: {
         ...model.capabilities,
-        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
-          if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
-          const value = descriptor.options.find(
-            (option) =>
-              option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-          )?.id;
-          if (!value) return descriptor;
-          return {
-            ...descriptor,
-            currentValue: value,
-            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
-              option.id === value ? { ...option, isDefault: true } : option,
-            ),
-          };
-        }),
+        optionDescriptors: update(model.capabilities.optionDescriptors, model),
       },
     };
   });
+}
+
+function withConfiguredSelectDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  descriptorId: string,
+  pick: (options: ReadonlyArray<{ readonly id: string }>) => string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  return mapCodexOptionDescriptors(models, (descriptors) =>
+    descriptors.map((descriptor) => {
+      if (descriptor.id !== descriptorId || descriptor.type !== "select") return descriptor;
+      const value = pick(descriptor.options);
+      if (!value) return descriptor;
+      return {
+        ...descriptor,
+        currentValue: value,
+        options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
+          option.id === value ? { ...option, isDefault: true } : option,
+        ),
+      };
+    }),
+  );
+}
+
+function applyConfiguredCodexServiceTier(
+  models: ReadonlyArray<ServerProviderModel>,
+  serviceTier: string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!serviceTier) return models;
+  return withConfiguredSelectDefault(
+    models,
+    "serviceTier",
+    (options) =>
+      options.find(
+        (option) =>
+          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
+      )?.id,
+  );
+}
+
+/** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
+function applyConfiguredCodexCyberAccess(
+  models: ReadonlyArray<ServerProviderModel>,
+  snapshot: Pick<
+    CodexAppServerProviderSnapshot,
+    "daybreakEnabled" | "cyberAccessProgramsUnavailable"
+  >,
+): ReadonlyArray<ServerProviderModel> {
+  // Without a descriptor no turn sends a program; without a default only an explicit choice goes.
+  const offered = mapCodexOptionDescriptors(models, (descriptors, model) =>
+    descriptors.flatMap((descriptor): ReadonlyArray<ProviderOptionDescriptor> => {
+      if (descriptor.id !== "cyberAccessProgram" || descriptor.type !== "select") {
+        return [descriptor];
+      }
+      if (model.isCustom || snapshot.cyberAccessProgramsUnavailable === true) return [];
+      if (snapshot.daybreakEnabled !== undefined) return [descriptor];
+      const { currentValue: _currentValue, ...withoutDefault } = descriptor;
+      return [
+        {
+          ...withoutDefault,
+          options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+        },
+      ];
+    }),
+  );
+  if (snapshot.daybreakEnabled !== true) return offered;
+  return withConfiguredSelectDefault(offered, "cyberAccessProgram", (options) =>
+    ["daybreakBlue", "daybreakRed"].find((program) =>
+      options.some((option) => option.id === program),
+    ),
+  );
 }
 
 /**
@@ -610,6 +709,7 @@ const readCodexRateLimits = (
   );
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly probeTimeoutMs: number;
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
@@ -634,62 +734,61 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   }
 
   // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { serviceTier, configuredModel, nativeUsage, rateLimits }] =
-    yield* Effect.all(
-      [
-        withCodexDiscoveryDeadline(
-          client.request("skills/list", { cwds: [input.cwd] }),
-          deadlineMs,
-        ),
-        accountResponse.account?.type === "chatgpt"
-          ? requestCodexChatGptModels({
-              client,
-              codexHome: initialize.codexHome,
-              spawnedAtMs,
-              deadlineMs,
-            })
-          : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
-        // The shared catalog must exclude config from the server's launch project.
-        withCodexDiscoveryDeadline(
-          client.request("config/read", { includeLayers: false }),
-          deadlineMs,
-          CODEX_CONFIG_PROBE_TIMEOUT_MS,
-        ).pipe(
-          Effect.catch(() =>
-            Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
-          ),
-          Effect.flatMap((config) => {
-            // Only a confirmed native route may probe or publish the login's quota.
-            const nativeUsage =
-              !input.skipNativeUsage &&
-              config !== undefined &&
-              codexRoutesSpendNativeQuota(accountResponse, config.config);
-            const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
-              ? readCodexRateLimits(client, deadlineMs)
-              : Effect.undefined;
-            return readUsage.pipe(
-              Effect.map((rateLimits) => ({
-                serviceTier: config?.config.service_tier ?? undefined,
-                configuredModel: config?.config.model ?? undefined,
-                nativeUsage,
-                rateLimits,
-              })),
-            );
-          }),
-        ),
-      ],
-      { concurrency: "unbounded" },
-    );
+  const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
+  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
+    [
+      withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
+      accountResponse.account?.type === "chatgpt"
+        ? requestCodexChatGptModels({
+            client,
+            codexHome: initialize.codexHome,
+            spawnedAtMs,
+            deadlineMs,
+          })
+        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+      // The shared catalog must exclude config from the server's launch project.
+      withCodexDiscoveryDeadline(
+        client.request("config/read", { includeLayers: false }),
+        deadlineMs,
+        CODEX_CONFIG_PROBE_TIMEOUT_MS,
+      ).pipe(
+        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
+        Effect.flatMap((config) => {
+          // Only a confirmed native route may probe or publish the login's quota.
+          const nativeUsage =
+            !input.skipNativeUsage &&
+            config !== undefined &&
+            codexRoutesSpendNativeQuota(accountResponse, config.config);
+          const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
+            ? readCodexRateLimits(client, deadlineMs)
+            : Effect.undefined;
+          return readUsage.pipe(
+            Effect.map((rateLimits) => ({
+              config: config?.config,
+              nativeUsage,
+              rateLimits,
+            })),
+          );
+        }),
+      ),
+    ],
+    { concurrency: "unbounded" },
+  );
 
+  const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
     account: accountResponse,
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
-    configuredModel,
+    serviceTier: config?.service_tier ?? undefined,
+    daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
+    // An unread config cannot rule out an API key with the programs turned off.
+    cyberAccessProgramsUnavailable:
+      accountResponse.account?.type === "apiKey" &&
+      (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
+    configuredModel: config?.model ?? undefined,
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -720,7 +819,12 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
     if (result.code !== 0) return null;
     return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
   },
-  Effect.timeoutOption(Duration.millis(DEFAULT_TIMEOUT_MS)),
+  (effect, input) =>
+    effect.pipe(
+      Effect.timeoutOption(
+        resolveProviderProbeTimeoutMs("codex", DEFAULT_TIMEOUT_MS, input.environment),
+      ),
+    ),
   Effect.map(Option.getOrNull),
   Effect.catch((cause) =>
     Effect.logDebug("Codex --version fallback failed.", { cause }).pipe(Effect.as(null)),
@@ -826,9 +930,19 @@ function accountProbeStatus(
   return { status: "ready", auth };
 }
 
+const CODEX_PROBE_FAILED_PREFIX = "Codex app-server provider probe failed: ";
+
+/** The CLI spawned but neither the probe nor `codex --version` ran, e.g. its launcher lacks node. */
+export const isCodexLaunchFailure = (provider: ServerProvider): boolean =>
+  provider.installed &&
+  provider.status === "error" &&
+  provider.version === null &&
+  provider.message?.startsWith(CODEX_PROBE_FAILED_PREFIX) === true;
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
+    readonly probeTimeoutMs: number;
     readonly binaryPath: string;
     readonly homePath?: string;
     readonly launchArgs?: string;
@@ -868,7 +982,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+    "codex",
+    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
   const probeResult = yield* probe({
+    probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
@@ -877,7 +997,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
     Effect.scoped,
     Effect.result,
   );
@@ -905,7 +1025,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `Codex app-server provider probe failed: ${error.message}.`
+          ? `${CODEX_PROBE_FAILED_PREFIX}${error.message}.`
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
             (codexSettings.binaryPath === "codex"
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
@@ -967,6 +1087,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
+      (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,
     slashCommands: [

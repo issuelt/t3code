@@ -35,6 +35,8 @@ import {
   ServerSettingsError,
   ServerProvider,
   type ServerProviderSlashCommand,
+  type ServerProviderUpdateState,
+  type ServerProviderVersionAdvisoryStatus,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -44,7 +46,11 @@ import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  mapCodexModelCapabilities,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -339,6 +345,86 @@ const awaitPersistedProvider = (
     Effect.forkScoped,
   );
 
+const codexUpdateSnapshot = (advisory: ServerProviderVersionAdvisoryStatus) =>
+  ({
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-06-10T00:00:00.000Z",
+    version: "1.0.0",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: advisory,
+      currentVersion: "1.0.0",
+      latestVersion: advisory === "unknown" ? null : advisory === "current" ? "1.0.0" : "2.0.0",
+      updateCommand: null,
+      canUpdate: true,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      message: null,
+    },
+  }) as const satisfies ServerProvider;
+
+const makeUpdateState = (status: ServerProviderUpdateState["status"]) =>
+  ({
+    status,
+    startedAt: "2026-06-10T00:00:00.000Z",
+    finishedAt: status === "queued" || status === "running" ? null : "2026-06-10T00:01:00.000Z",
+    message: `update ${status}`,
+    output: null,
+  }) satisfies ServerProviderUpdateState;
+
+// One Codex instance whose probe returns whatever `snapshot` currently holds.
+const buildRegistryOverSnapshot = Effect.fn("buildRegistryOverSnapshot")(function* (
+  snapshot: Ref.Ref<ServerProvider>,
+) {
+  const driver = ProviderDriverKind.make("codex");
+  const instance = {
+    instanceId: ProviderInstanceId.make("codex"),
+    driverKind: driver,
+    continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+    displayName: undefined,
+    enabled: true,
+    snapshot: {
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
+        ),
+      getSnapshot: Ref.get(snapshot),
+      refresh: Ref.get(snapshot),
+      streamChanges: Stream.empty,
+      applyUsageLimits: () => Effect.void,
+    },
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  } satisfies ProviderInstance;
+  const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+    getInstance: (instanceId) =>
+      Effect.succeed(instanceId === instance.instanceId ? instance : undefined),
+    listInstances: Effect.succeed([instance]),
+    listUnavailable: Effect.succeed([]),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+  });
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  return yield* Layer.build(
+    ProviderRegistry.layer.pipe(
+      Layer.provide(layerUnusedMutator),
+      Layer.provideMerge(layerInstanceRegistry),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-update-state-" }),
+      ),
+      Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ).pipe(Scope.provide(scope));
+});
+
 const layerTestNodeServices = Layer.mergeAll(
   ProviderLatestVersions.layer,
   NodeServices.layer,
@@ -438,6 +524,20 @@ it.layer(
       }),
     );
 
+    it.effect("allows a slow successful Codex probe with a configured budget", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(
+          defaultCodexSettings,
+          () => Effect.sleep("22 seconds").pipe(Effect.as(makeCodexProbeSnapshot())),
+          { T3CODE_CODEX_PROBE_TIMEOUT_MS: "60000" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("22 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+      }),
+    );
+
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
       Effect.gen(function* () {
         const statusWithUsagePlan = (planType: string | null) =>
@@ -520,6 +620,84 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+      }),
+    );
+
+    it.effect("offers cyber access only on catalog models that advertise it", () =>
+      Effect.gen(function* () {
+        const catalogModel = (slug: string, cyber?: Array<"standard" | "daybreakBlue">) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: mapCodexModelCapabilities({
+            additionalSpeedTiers: [],
+            ...(cyber ? { availableAccessPrograms: { cyber } } : {}),
+            defaultReasoningEffort: "medium",
+            description: slug,
+            displayName: slug,
+            hidden: false,
+            id: slug,
+            isDefault: false,
+            model: slug,
+            supportedReasoningEfforts: [],
+          }),
+        });
+        const defaultPrograms = (snapshot: Partial<CodexAppServerProviderSnapshot>) =>
+          checkCodexProviderStatus(decodeCodexSettings({ customModels: ["my-model"] }), () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                models: [
+                  catalogModel("both", ["standard", "daybreakBlue"]),
+                  catalogModel("daybreak-only", ["daybreakBlue"]),
+                  catalogModel("plain"),
+                ],
+                ...snapshot,
+              }),
+            ),
+          ).pipe(
+            Effect.map((status) =>
+              Object.fromEntries(
+                status.models.map((model) => {
+                  const descriptor = model.capabilities?.optionDescriptors?.find(
+                    (option) => option.id === "cyberAccessProgram",
+                  );
+                  return [
+                    model.slug,
+                    descriptor?.type === "select"
+                      ? (descriptor.currentValue ?? "no default")
+                      : null,
+                  ];
+                }),
+              ),
+            ),
+          );
+
+        assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: false }), {
+          both: "standard",
+          "daybreak-only": "daybreakBlue",
+          plain: null,
+          "my-model": null,
+        });
+        assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: true }), {
+          both: "daybreakBlue",
+          "daybreak-only": "daybreakBlue",
+          plain: null,
+          "my-model": null,
+        });
+        // An unread config keeps the choice but cannot know Codex's default.
+        assert.deepStrictEqual(yield* defaultPrograms({}), {
+          both: "no default",
+          "daybreak-only": "no default",
+          plain: null,
+          "my-model": null,
+        });
+        assert.deepStrictEqual(
+          yield* defaultPrograms({
+            account: { account: { type: "apiKey" }, requiresOpenaiAuth: false },
+            cyberAccessProgramsUnavailable: true,
+          }),
+          { both: null, "daybreak-only": null, plain: null, "my-model": null },
+        );
       }),
     );
 
@@ -1308,167 +1486,188 @@ it.layer(
       );
     });
 
-    it.effect.each(["replay", "in-flight missing", "in-flight installed", "launcher"] as const)(
-      "recovers a copied driver environment after late PATH (%s)",
-      (mode) =>
-        Effect.gen(function* () {
-          // "launcher": the CLI is found on the early PATH, but its check fails until the late
-          // PATH brings the interpreter it needs, like an npm launcher that runs node.
-          const replay = mode === "replay" || mode === "launcher";
-          const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
-          const environment = providerHostEnvironment(
-            { organization: "PATH test", lockedSettings: [] },
-            host,
-          );
-          const updates = yield* DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates(
-            host,
-            "linux",
-          );
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const finished = yield* Deferred.make<void>();
-          const paths: Array<string | undefined> = [];
-          let first = true;
-          const driverKind = ProviderDriverKind.make("pi");
-          const instanceId = ProviderInstanceId.make("late-path");
-          const driver: AnyProviderDriver = {
-            driverKind,
-            metadata: { displayName: "PATH fixture" },
-            configSchema: Schema.Unknown,
-            defaultConfig: () => ({}),
-            create: (input) =>
-              Effect.gen(function* () {
-                const copied = { ...environment };
-                paths.push(copied.PATH);
-                const late = copied.PATH?.includes("/late/bin") === true;
-                const installed = mode === "in-flight installed" || mode === "launcher" || late;
-                const ready = mode === "launcher" ? late : installed;
-                const snapshot: ServerProvider = {
-                  instanceId,
-                  driver: driverKind,
-                  enabled: true,
-                  installed: false,
-                  status: "warning",
-                  auth: { status: "unknown" },
-                  version: null,
-                  checkedAt: "2026-10-03T00:00:00.000Z",
-                  models: [],
-                  slashCommands: [],
-                  skills: [],
-                };
-                const current = yield* Ref.make(snapshot);
-                return {
-                  instanceId: input.instanceId,
-                  driverKind,
-                  enabled: true,
-                  displayName: undefined,
-                  continuationIdentity: { driverKind, continuationKey: "pi:late-path" },
-                  snapshot: {
-                    resolveMaintenance: () =>
-                      Effect.succeed(
-                        makeManualOnlyProviderMaintenanceCapabilities({
-                          provider: driverKind,
-                          packageName: null,
-                        }),
-                      ),
-                    getSnapshot: Ref.get(current),
-                    refresh: Effect.gen(function* () {
-                      if (first && !replay) {
-                        first = false;
-                        yield* Deferred.succeed(entered, undefined);
-                        yield* Deferred.await(release);
-                      }
-                      const checked = {
-                        ...snapshot,
-                        installed,
-                        status: ready ? ("ready" as const) : ("error" as const),
-                      };
-                      yield* Ref.set(current, checked);
-                      return checked;
-                    }),
-                    streamChanges: Stream.empty,
-                    applyUsageLimits: () => Effect.void,
-                  },
-                  orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-                  textGeneration: {} as ProviderInstance["textGeneration"],
-                } satisfies ProviderInstance;
-              }),
-          };
-          const built = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
-            drivers: [driver],
-            configMap: { [instanceId]: { driver: driverKind, enabled: true } },
-          }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
-          yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry.ProviderRegistry;
-            const running = replay ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
-            if (running) yield* Deferred.await(entered);
-            yield* updates.apply({
-              version: 1,
-              type: "shellEnvironment",
-              platform: "linux",
-              discovered: true,
-              environment: { PATH: "/early/bin:/late/bin" },
-            });
+    it.effect.each([
+      "replay",
+      "in-flight missing",
+      "in-flight installed",
+      "launcher",
+      "codex timeout",
+      "other error",
+    ] as const)("recovers a copied driver environment after late PATH (%s)", (mode) =>
+      Effect.gen(function* () {
+        // "launcher": the Codex CLI is found on the early PATH, but its check fails until the
+        // late PATH brings the node its npm launcher runs. "other error" is the same failure on a
+        // driver whose errors may be auth or network, so it must not be rebuilt. "codex timeout" is a
+        // Codex error other than a launcher failure, which must not be rebuilt either.
+        const failsEarly =
+          mode === "launcher" || mode === "codex timeout" || mode === "other error";
+        const replay = mode === "replay" || failsEarly;
+        const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
+        const environment = providerHostEnvironment(
+          { organization: "PATH test", lockedSettings: [] },
+          host,
+        );
+        const updates = yield* DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates(
+          host,
+          "linux",
+        );
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<void>();
+        const paths: Array<string | undefined> = [];
+        let first = true;
+        const driverKind = ProviderDriverKind.make(
+          mode === "launcher" || mode === "codex timeout" ? "codex" : "pi",
+        );
+        const instanceId = ProviderInstanceId.make("late-path");
+        const driver: AnyProviderDriver = {
+          driverKind,
+          metadata: { displayName: "PATH fixture" },
+          configSchema: Schema.Unknown,
+          defaultConfig: () => ({}),
+          create: (input) =>
+            Effect.gen(function* () {
+              const copied = { ...environment };
+              paths.push(copied.PATH);
+              const late = copied.PATH?.includes("/late/bin") === true;
+              const installed = mode === "in-flight installed" || failsEarly || late;
+              const ready = failsEarly ? late : installed;
+              const snapshot: ServerProvider = {
+                instanceId,
+                driver: driverKind,
+                enabled: true,
+                installed: false,
+                status: "warning",
+                auth: { status: "unknown" },
+                version: null,
+                checkedAt: "2026-10-03T00:00:00.000Z",
+                models: [],
+                slashCommands: [],
+                skills: [],
+              };
+              const current = yield* Ref.make(snapshot);
+              return {
+                instanceId: input.instanceId,
+                driverKind,
+                enabled: true,
+                displayName: undefined,
+                continuationIdentity: { driverKind, continuationKey: `${driverKind}:late-path` },
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driverKind,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Ref.get(current),
+                  refresh: Effect.gen(function* () {
+                    if (first && !replay) {
+                      first = false;
+                      yield* Deferred.succeed(entered, undefined);
+                      yield* Deferred.await(release);
+                    }
+                    const checked = {
+                      ...snapshot,
+                      installed,
+                      status: ready ? ("ready" as const) : ("error" as const),
+                      ...(ready
+                        ? {}
+                        : {
+                            message:
+                              mode === "codex timeout"
+                                ? "Timed out while checking Codex app-server provider status."
+                                : "Codex app-server provider probe failed: transport failed.",
+                          }),
+                    };
+                    yield* Ref.set(current, checked);
+                    return checked;
+                  }),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+            }),
+        };
+        const built = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: { driver: driverKind, enabled: true } },
+        }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const running = replay ? undefined : yield* registry.refresh().pipe(Effect.forkScoped);
+          if (running) yield* Deferred.await(entered);
+          yield* updates.apply({
+            version: 1,
+            type: "shellEnvironment",
+            platform: "linux",
+            discovered: true,
+            environment: { PATH: "/early/bin:/late/bin" },
+          });
+          expect(paths).toEqual(["/early/bin"]);
+          if (replay) {
+            yield* Layer.build(
+              ProviderHostPathWatcher.layer.pipe(
+                Layer.provide(
+                  DesktopTelemetryReceiver.layerTest({ pathChanges: updates.pathChanges }),
+                ),
+                Layer.provide(
+                  Layer.succeed(ProviderRegistry.ProviderRegistry, {
+                    ...registry,
+                    rebuildMissingAndRefresh: registry.rebuildMissingAndRefresh.pipe(
+                      Effect.tap(() => Deferred.succeed(finished, undefined)),
+                    ),
+                  }),
+                ),
+              ),
+            );
+          } else {
+            yield* registry.rebuildMissingAndRefresh.pipe(
+              Effect.tap(() => Deferred.succeed(finished, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
             expect(paths).toEqual(["/early/bin"]);
-            if (replay) {
-              yield* Layer.build(
-                ProviderHostPathWatcher.layer.pipe(
-                  Layer.provide(
-                    DesktopTelemetryReceiver.layerTest({ pathChanges: updates.pathChanges }),
-                  ),
-                  Layer.provide(
-                    Layer.succeed(ProviderRegistry.ProviderRegistry, {
-                      ...registry,
-                      rebuildMissingAndRefresh: registry.rebuildMissingAndRefresh.pipe(
-                        Effect.tap(() => Deferred.succeed(finished, undefined)),
-                      ),
-                    }),
-                  ),
-                ),
-              );
-            } else {
-              yield* registry.rebuildMissingAndRefresh.pipe(
-                Effect.tap(() => Deferred.succeed(finished, undefined)),
-                Effect.forkScoped({ startImmediately: true }),
-              );
-              expect(paths).toEqual(["/early/bin"]);
-            }
-            yield* Deferred.succeed(release, undefined);
-            if (running) yield* Fiber.join(running);
-            yield* Deferred.await(finished);
-            const row = (yield* registry.getProviders).find(
-              (candidate) => candidate.instanceId === instanceId,
-            );
-            expect(row?.installed).toBe(true);
-            expect(row?.status).toBe("ready");
-            expect(paths).toEqual(
-              mode === "in-flight installed"
-                ? ["/early/bin"]
-                : ["/early/bin", "/early/bin:/late/bin"],
-            );
-          }).pipe(
-            Effect.provide(
-              ProviderRegistry.layer.pipe(
-                Layer.provide(
-                  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, built.registry),
-                ),
-                Layer.provide(
-                  Layer.succeed(
-                    ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-                    built.mutator,
-                  ),
+          }
+          yield* Deferred.succeed(release, undefined);
+          if (running) yield* Fiber.join(running);
+          yield* Deferred.await(finished);
+          const row = (yield* registry.getProviders).find(
+            (candidate) => candidate.instanceId === instanceId,
+          );
+          expect(row?.installed).toBe(true);
+          expect(row?.status).toBe(
+            mode === "codex timeout" || mode === "other error" ? "error" : "ready",
+          );
+          expect(paths).toEqual(
+            mode === "in-flight installed" || mode === "codex timeout" || mode === "other error"
+              ? ["/early/bin"]
+              : ["/early/bin", "/early/bin:/late/bin"],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderRegistry.layer.pipe(
+              Layer.provide(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, built.registry),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+                  built.mutator,
                 ),
               ),
             ),
-          );
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-late-path-" }).pipe(
-              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-            ),
+          ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-late-path-" }).pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),
+      ),
     );
 
     describe("Codex model inventories", () => {
@@ -3380,6 +3579,67 @@ it.layer(
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
+
+    describe("update results across refreshes", () => {
+      const instanceId = ProviderInstanceId.make("codex");
+
+      it.effect.each([
+        { status: "unchanged", advisory: "current", retired: true },
+        { status: "failed", advisory: "current", retired: true },
+        { status: "unchanged", advisory: "behind_latest", retired: false },
+        { status: "failed", advisory: "behind_latest", retired: false },
+        // The probe publishes `unknown` until the latest-version check lands.
+        { status: "unchanged", advisory: "unknown", retired: false },
+        { status: "queued", advisory: "current", retired: false },
+        { status: "running", advisory: "current", retired: false },
+        { status: "succeeded", advisory: "current", retired: false },
+        { status: "failed", advisory: "unknown", retired: false },
+      ] as const)(
+        "a $status update result is retired: $retired when a refresh reports the provider $advisory",
+        ({ status, advisory, retired }) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("behind_latest"));
+            const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const state = makeUpdateState(status);
+              yield* registry.setProviderMaintenanceActionState({
+                instanceId,
+                action: "update",
+                state,
+              });
+              yield* Ref.set(snapshot, codexUpdateSnapshot(advisory));
+
+              const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
+
+              expect(refreshed?.updateState).toEqual(retired ? undefined : state);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
+      it.effect.each(["failed", "unchanged"] as const)(
+        "keeps a %s recommended-version install after a current refresh",
+        (status) =>
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.make<ServerProvider>(codexUpdateSnapshot("current"));
+            const runtimeServices = yield* buildRegistryOverSnapshot(snapshot);
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              const state = makeUpdateState(status);
+              const input = {
+                instanceId,
+                action: "update" as const,
+                state,
+                targetVersion: "0.9.0",
+              };
+              yield* registry.setProviderMaintenanceActionState(input);
+              const [refreshed] = yield* registry.refresh(ProviderDriverKind.make("codex"));
+              expect(refreshed?.updateState).toEqual(state);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+    });
 
     it.effect("re-probes when settings change the codex binaryPath", () =>
       Effect.gen(function* () {

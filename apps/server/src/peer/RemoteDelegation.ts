@@ -677,6 +677,7 @@ const make = Effect.gen(function* () {
         view: failed ? "activity" : "messages",
         limit: 100,
         runLimit: 50,
+        maxCharsPerItem: 20_000,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
@@ -702,7 +703,7 @@ const make = Effect.gen(function* () {
         threadId: remote.threadId,
         itemId: reply.itemId,
         textOffset,
-        maxCharsPerItem: 50_000,
+        maxCharsPerItem: 20_000,
       });
       const part = rest.items[0];
       if (part === undefined) break;

@@ -288,6 +288,7 @@ function ProviderEnvironmentFieldRow(props: {
   readonly onRemove: (field: ProviderEnvironmentField) => void;
   readonly managedReason?: string | undefined;
   readonly secretSources: ReadonlyArray<SecretSource>;
+  readonly environmentId?: EnvironmentId | undefined;
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
@@ -322,6 +323,7 @@ function ProviderEnvironmentFieldRow(props: {
               spellCheck={false}
               aria-label={props.field.label}
               sources={props.secretSources}
+              environmentId={props.environmentId}
               onSecretChange={(secret) => props.onSecretChange(props.field, secret)}
             />
           )}
@@ -348,6 +350,7 @@ export function ProviderEnvironmentSection(props: {
   /** Variables an administrator's policy pins: listed by name, never editable or removable. */
   readonly managed?: { readonly names: ReadonlySet<string>; readonly reason: string } | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
+  readonly environmentId?: EnvironmentId | undefined;
 }) {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
@@ -549,6 +552,7 @@ export function ProviderEnvironmentSection(props: {
                     spellCheck={false}
                     aria-label={`Environment variable value ${index + 1}`}
                     sources={props.secretSources ?? []}
+                    environmentId={props.environmentId}
                     onSecretChange={(secret) => setVariableSecret(variable.id, secret)}
                   >
                     {(parts) => layout(parts.source, parts.value)}
@@ -1102,13 +1106,13 @@ export function ProviderInstanceCard({
       <div
         data-slot="settings-row"
         className={cn(
-          "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
+          "group relative flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
           selected ? "bg-foreground/[0.06]" : "hover:bg-muted/25",
         )}
       >
         <div
           className={cn(
-            "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
+            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
         >
@@ -1153,7 +1157,7 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center gap-1">
+        <span className="pointer-events-none relative flex h-5 shrink-0 items-center gap-1 *:pointer-events-auto">
           {projectOverride?.value !== undefined ? (
             <span className="flex items-center">
               <ProjectOverrideInheritance
@@ -1358,6 +1362,7 @@ export function ProviderInstanceCard({
                       : undefined
                   }
                   secretSources={secretSources}
+                  environmentId={environmentId}
                 />
               ))}
             </div>
@@ -1405,6 +1410,7 @@ export function ProviderInstanceCard({
             environment={genericEnvironment}
             onChange={updateGenericEnvironment}
             secretSources={secretSources}
+            environmentId={environmentId}
             managed={
               instanceLocks && {
                 names: instanceLocks.environmentNames,
