@@ -113,31 +113,7 @@ jobs:
         env:
           P12: ${{ secrets.FORK_MAC_SIGNING_P12 }}
           P12_PASSWORD: ${{ secrets.FORK_MAC_SIGNING_PASSWORD }}
-        run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/fork-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 16)"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/fork-signing.p12"
-          security import "$RUNNER_TEMP/fork-signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
-          rm "$RUNNER_TEMP/fork-signing.p12"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          # The self-hosted runner has no sudo; its host trusts this certificate already.
-          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
-            sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain .github/fork/mac-signing-cert.pem
-          fi
-          security find-identity -v -p codesigning "$keychain" | grep -F '"T3 Code Fork Signing"'
-          {
-            echo "CSC_NAME=T3 Code Fork Signing"
-            # A runner without a login session ignores the search list above in later steps.
-            echo "CSC_KEYCHAIN=$keychain"
-            # electron-builder skips signing on pull requests unless told otherwise.
-            # Only branches of this repository receive the signing secrets.
-            echo "CSC_FOR_PULL_REQUEST=true"
-          } >> "$GITHUB_ENV"
+        run: .github/fork/mac-signing-keychain.sh import
 
       - name: Install dependencies
         run: vp install
@@ -214,6 +190,12 @@ jobs:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
+
+      # The self-hosted runner keeps $RUNNER_TEMP between jobs, so an unlocked
+      # keychain left there would let any later job sign as the fork.
+      - name: Remove fork macOS signing keychain
+        if: always() && matrix.platform == 'mac'
+        run: .github/fork/mac-signing-keychain.sh cleanup
 
   # GitHub has no queue timeout for a job. If the Windows build waits 5 minutes
   # for a Blacksmith runner, this cancels the run, and blacksmith-rerun.yml
