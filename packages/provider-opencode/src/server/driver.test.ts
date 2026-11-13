@@ -92,6 +92,7 @@ const layer = Layer.mergeAll(
 const emptyOpenCodeAuth = [
   {
     name: "OPENCODE_AUTH_CONTENT",
+    sensitive: true,
     value: JSON.stringify({ "opencode-go": { type: "api", key: "" } }),
   },
 ];

@@ -107,6 +107,8 @@ const browserTestProject = {
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
+      "@xterm/addon-fit",
+      "@xterm/xterm",
       "saxes",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",

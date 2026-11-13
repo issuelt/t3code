@@ -125,10 +125,11 @@ describe("AcpClientTerminals", () => {
 
   it.live("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
     Effect.gen(function* () {
+      const environment = yield* HostProcess.Environment;
       const terminals = yield* makeAcpClientTerminals({
         defaultCwd: process.cwd(),
         shellCommands: true,
-        environment: { PATH: process.env.PATH },
+        environment: { PATH: environment.PATH },
         environmentForSession: () => ({ T3_ACP_MCP_NODE: "mailbox-probe" }),
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
