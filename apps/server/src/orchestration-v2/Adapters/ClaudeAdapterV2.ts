@@ -3661,10 +3661,9 @@ const decodeClaudeBashResult = Schema.decodeUnknownOption(
   Schema.Struct({ stdout: Schema.String, backgroundTaskId: Schema.optional(Schema.String) }),
 );
 
-// The line Claude Code appends to a Bash result when the command moves to the background,
-// e.g. "Command running in background with ID: <id>." or "... moved to the background (ID: <id>)".
+// The four lines Claude Code writes into a Bash result when the command moves to the background.
 const CLAUDE_BACKGROUND_LAUNCH_LINE =
-  /^Command (?:[^\n]*? with ID: ([^\s.]+)|[^\n]*?\(ID: ([^\s)]+)\))/gm;
+  /^Command (?:running in background|was manually backgrounded by user) with ID: ([^\s.]+)\.|^Command (?:did not complete within its \d+s timeout and was|was) moved to the background \(ID: ([^\s)]+)\)/gm;
 
 /** Whether a Bash result says its command moved to the background as `taskId`. */
 function claudeToolResultBackgroundsTask(

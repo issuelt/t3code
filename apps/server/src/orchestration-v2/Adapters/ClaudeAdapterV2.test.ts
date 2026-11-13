@@ -12261,7 +12261,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   }
 
   // Older builds list foreground tasks on the roster, so only a launch result proves a move.
-  for (const result of ["text mention", "structured foreground output"] as const) {
+  for (const result of [
+    "text mention",
+    "unrelated Command line",
+    "structured foreground output",
+  ] as const) {
     it.effect.skipIf(process.getuid === undefined)(
       `settles a foreground Bash call whose output mentions its task id (${result})`,
       () =>
@@ -12346,7 +12350,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   {
                     type: "tool_result",
                     tool_use_id: toolUseId,
-                    content: result === "text mention" ? `Waiting on ${taskId}` : stdout,
+                    content:
+                      result === "text mention"
+                        ? `Waiting on ${taskId}`
+                        : result === "unrelated Command line"
+                          ? `Command completed with ID: ${taskId}.`
+                          : stdout,
                   },
                 ],
               },
