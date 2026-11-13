@@ -5,7 +5,11 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  claudeTaskOutputRoot,
+  retainTaskOutputTail,
+  tailClaudeTaskOutput,
+} from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -3653,6 +3657,19 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
+/** A Bash result that returned while its task runs on names that task. */
+function claudeToolResultNamesBackgroundTask(
+  output: ClaudeNativeToolOutput,
+  toolResult: ClaudeToolResultContentBlock,
+  taskId: string,
+): boolean {
+  const value = claudeNativeToolOutputValue(output);
+  if (typeof value === "object" && value !== null) {
+    if (Reflect.get(value, "backgroundTaskId") === taskId) return true;
+  }
+  return jsonStringifyForTool(outputFromClaudeToolResult(toolResult) ?? "").includes(taskId);
+}
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -5562,7 +5579,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             readonly toolCall: ActiveClaudeToolCall;
             readonly context: ActiveClaudeTurnContext | null;
             readonly nativeThreadId: string;
-            readonly launchOutput: ClaudeNativeToolOutput;
           }
         >();
         // Waits for the tail's last read so its output lands before the call settles.
@@ -6863,9 +6879,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 parentNodeId: toolCall.parentNodeId,
                 ordinal: toolCall.ordinal,
                 output:
-                  output !== undefined && output.text.length > 0
-                    ? { type: "content_block", value: output.text }
-                    : held.launchOutput,
+                  output === undefined || output.text.length === 0
+                    ? NO_CLAUDE_NATIVE_TOOL_OUTPUT
+                    : { type: "content_block", value: output.text },
                 status,
                 startedAt: toolCall.startedAt,
                 updatedAt: yield* DateTime.now,
@@ -8266,11 +8282,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.toolResult.tool_use_id,
           );
           const tail = taskOutputTails.get(toolCall.nativeItemId);
-          // The call returned while its task runs on: it moved to the background.
+          // The call returned while its task runs on: it moved to the background. Older builds
+          // list foreground tasks on the roster too, so only a result naming the task proves it.
           if (
             tail !== undefined &&
             toolNonExecutionKind === undefined &&
             !isClaudeToolResultError(input.toolResult) &&
+            claudeToolResultNamesBackgroundTask(input.output, input.toolResult, tail.taskId) &&
             rosterForNativeThread(
               yield* Ref.get(pendingBackgroundTasksByNativeThread),
               tail.nativeThreadId,
@@ -8280,7 +8298,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               toolCall,
               context: input.context,
               nativeThreadId: tail.nativeThreadId,
-              launchOutput: input.output,
             });
             // The row stays as the call started it: running.
             input.registry.delete(toolCall.nativeItemId);
@@ -10939,11 +10956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   stop,
                   onChunk: (chunk) =>
                     Effect.suspend(() => {
-                      output.text += chunk;
-                      if (output.text.length > 64 * 1024) {
-                        const newline = output.text.indexOf("\n", output.text.length - 64 * 1024);
-                        output.text = newline === -1 ? "" : output.text.slice(newline + 1);
-                      }
+                      output.text = retainTaskOutputTail(output.text + chunk);
                       return emitProviderEvent({
                         type: "command_output.delta",
                         driver: CLAUDE_PROVIDER,

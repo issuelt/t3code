@@ -13,6 +13,20 @@ const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
 
+const MAX_RETAINED_OUTPUT_CHARS = 64 * 1024;
+/** How far into the kept window a cut may move to start on a whole line. */
+const LINE_ALIGN_CHARS = 1024;
+
+/** Keeps the newest output, starting on a line boundary when one is near so escape sequences stay whole. */
+export function retainTaskOutputTail(text: string): string {
+  if (text.length <= MAX_RETAINED_OUTPUT_CHARS) return text;
+  const start = text.length - MAX_RETAINED_OUTPUT_CHARS;
+  const newline = text.indexOf("\n", start);
+  return newline !== -1 && newline - start < LINE_ALIGN_CHARS
+    ? text.slice(newline + 1)
+    : text.slice(start);
+}
+
 /** Claude Code's per-user temp root, or none where it has no uid (Windows). */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
