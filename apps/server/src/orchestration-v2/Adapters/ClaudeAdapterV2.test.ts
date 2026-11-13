@@ -12139,22 +12139,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             );
           }
+          // Each row returns one of the launch results Claude Code writes for a backgrounded command.
+          const launchResult = {
+            notification: `Command running in background with ID: ${taskId}. Output is being written to: ${outputFile}.`,
+            "silent notification": `Command did not complete within its 120s timeout and was moved to the background (ID: ${taskId}). Output is being written to: ${outputFile}.`,
+            "foreground notification": `Command was manually backgrounded by user with ID: ${taskId}. Output is being written to: ${outputFile}.`,
+            "query exit": `Command was moved to the background (ID: ${taskId}) after running for 5s. Output is being written to: ${outputFile}.`,
+          }[ending];
           yield* harness.offerAndWait(
             claudeSdkFrame({
               type: "user",
               message: {
                 role: "user",
-                content: [
-                  {
-                    type: "tool_result",
-                    tool_use_id: toolUseId,
-                    content: `Command running in background with ID: ${taskId}`,
-                  },
-                ],
+                content: [{ type: "tool_result", tool_use_id: toolUseId, content: launchResult }],
               },
               parent_tool_use_id: null,
               uuid: "00000000-0000-4000-8000-000000000b03",
               session_id: WAKE_NATIVE_SESSION,
+              ...(ending === "foreground notification"
+                ? {
+                    tool_use_result: {
+                      stdout: "",
+                      stderr: "",
+                      interrupted: false,
+                      backgroundTaskId: taskId,
+                      backgroundedByUser: true,
+                    },
+                  }
+                : {}),
             }),
           );
           yield* harness.offerAndWait(
@@ -12234,6 +12246,129 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               .flatMap((event) => (event.type === "command_output.delta" ? [event.chunk] : []))
               .join(""),
             expectedOutput ?? "",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+  }
+
+  // Older builds list foreground tasks on the roster, so only a launch result proves a move.
+  for (const result of ["text mention", "structured foreground output"] as const) {
+    it.effect.skipIf(process.getuid === undefined)(
+      `settles a foreground Bash call whose output mentions its task id (${result})`,
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-foreground-mention-",
+          });
+          const harness = yield* makeWakeHarnessWithOptions({
+            environment: { CLAUDE_CODE_TMPDIR: root },
+            close: Queue.shutdown,
+          });
+          const toolUseId = "toolu_foreground_mention";
+          const taskId = "foreground-mention-task";
+          const tasks = path.join(
+            root,
+            `claude-${process.getuid?.()}`,
+            "project",
+            WAKE_NATIVE_SESSION,
+            "tasks",
+          );
+          yield* fileSystem.makeDirectory(tasks, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "");
+          const stdout = `Waiting on ${taskId}\nCommand running in background with ID: ${taskId}. Output is being written to: log.`;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-foreground-mention"),
+              text: "Show the task log.",
+              attachments: [],
+            }),
+          );
+          for (const frame of [
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_foreground_mention",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: toolUseId,
+                    name: "Bash",
+                    input: { command: "cat task.log" },
+                  },
+                ],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 1 },
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000c01",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              tool_use_id: toolUseId,
+              description: "cat task.log",
+              task_type: "local_bash",
+              uuid: "00000000-0000-4000-8000-000000000c02",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [{ task_id: taskId, task_type: "local_bash", description: "cat task.log" }],
+              uuid: "00000000-0000-4000-8000-000000000c03",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: toolUseId,
+                    content: result === "text mention" ? `Waiting on ${taskId}` : stdout,
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000c04",
+              session_id: WAKE_NATIVE_SESSION,
+              ...(result === "structured foreground output"
+                ? { tool_use_result: { stdout, stderr: "", interrupted: false } }
+                : {}),
+            }),
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c05", result: "Shown." }),
+          ]) {
+            yield* harness.offerAndWait(frame);
+          }
+          yield* harness.awaitTerminal(1);
+          const command = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+          );
+          assert.equal(
+            command?.type === "turn_item.updated" ? command.turnItem.status : null,
+            "completed",
           );
         }).pipe(
           Effect.provide(

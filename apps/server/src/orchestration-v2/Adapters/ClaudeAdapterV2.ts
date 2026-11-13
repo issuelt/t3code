@@ -3657,17 +3657,42 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
-/** A Bash result that returned while its task runs on names that task. */
-function claudeToolResultNamesBackgroundTask(
+const decodeClaudeBashResult = Schema.decodeUnknownOption(
+  Schema.Struct({ stdout: Schema.String, backgroundTaskId: Schema.optional(Schema.String) }),
+);
+
+// The line Claude Code appends to a Bash result when the command moves to the background,
+// e.g. "Command running in background with ID: <id>." or "... moved to the background (ID: <id>)".
+const CLAUDE_BACKGROUND_LAUNCH_LINE =
+  /^Command (?:[^\n]*? with ID: ([^\s.]+)|[^\n]*?\(ID: ([^\s)]+)\))/gm;
+
+/** Whether a Bash result says its command moved to the background as `taskId`. */
+function claudeToolResultBackgroundsTask(
   output: ClaudeNativeToolOutput,
   toolResult: ClaudeToolResultContentBlock,
   taskId: string,
 ): boolean {
-  const value = claudeNativeToolOutputValue(output);
-  if (typeof value === "object" && value !== null) {
-    if (Reflect.get(value, "backgroundTaskId") === taskId) return true;
+  const structured =
+    output.type === "structured_tool_use_result"
+      ? Option.getOrUndefined(decodeClaudeBashResult(output.value))
+      : undefined;
+  if (structured !== undefined) return structured.backgroundTaskId === taskId;
+  // Without the structured result, only the launch line Claude Code writes names the task.
+  const content = outputFromClaudeToolResult(toolResult);
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .flatMap((part) =>
+              typeof part === "object" && part !== null && part.type === "text" ? [part.text] : [],
+            )
+            .join("\n")
+        : "";
+  for (const match of text.matchAll(CLAUDE_BACKGROUND_LAUNCH_LINE)) {
+    if ((match[1] ?? match[2]) === taskId) return true;
   }
-  return jsonStringifyForTool(outputFromClaudeToolResult(toolResult) ?? "").includes(taskId);
+  return false;
 }
 
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
@@ -8283,12 +8308,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           const tail = taskOutputTails.get(toolCall.nativeItemId);
           // The call returned while its task runs on: it moved to the background. Older builds
-          // list foreground tasks on the roster too, so only a result naming the task proves it.
+          // list foreground tasks on the roster too, so only the launch result proves the move.
           if (
             tail !== undefined &&
             toolNonExecutionKind === undefined &&
             !isClaudeToolResultError(input.toolResult) &&
-            claudeToolResultNamesBackgroundTask(input.output, input.toolResult, tail.taskId) &&
+            claudeToolResultBackgroundsTask(input.output, input.toolResult, tail.taskId) &&
             rosterForNativeThread(
               yield* Ref.get(pendingBackgroundTasksByNativeThread),
               tail.nativeThreadId,
