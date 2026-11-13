@@ -136,8 +136,11 @@ export function AddEnvironmentDialog({
     setLastOpen(open);
     setLastInitialHost(initialHost);
     if (open && pairingAgain) setSavedBackendHost(pairAgainHost);
-    else if (open && initialHost !== null && (opened || initialHost !== lastInitialHost))
+    else if (open && initialHost !== null && (opened || initialHost !== lastInitialHost)) {
       setSavedBackendHost(initialHost);
+      // A code typed for the earlier address must not go to this one.
+      setSavedBackendPairingCode("");
+    }
   }
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
