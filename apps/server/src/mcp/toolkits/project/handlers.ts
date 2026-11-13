@@ -1,14 +1,11 @@
 import {
   type EnvironmentId,
   HOME_LAUNCHED_THREAD_ID_PREFIX,
-  CommandId,
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,7 +31,13 @@ import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  launchCommandId,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import {
   cloneProject,
   createProject,
@@ -85,18 +88,6 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       message:
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
-});
-
-/** A fixed-length id, so a long key fits in the scratch folder name derived from it. */
-const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
-  namespace: string,
-  key: string,
-) {
-  const crypto = yield* Digest.Digest;
-  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
-  const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
-  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
-  return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
 const access = Effect.gen(function* () {

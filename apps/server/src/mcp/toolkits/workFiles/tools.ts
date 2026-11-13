@@ -4,6 +4,7 @@ import {
   WorkFilesReceiveResult,
 } from "@t3tools/contracts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
+import * as Digest from "effect/crypto/Digest";
 
 import * as WorkFilesTransfer from "../../../peer/WorkFilesTransfer.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -18,6 +19,7 @@ export const WorkFilesReceiveTool = Tool.make("t3_work_files_receive", {
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [
+    Digest.Digest,
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     WorkFilesTransfer.WorkFilesTransfer,

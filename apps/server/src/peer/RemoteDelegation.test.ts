@@ -148,6 +148,8 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** Work-files uploads the box issued. */
+  readonly receives: Ref.Ref<number>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -186,6 +188,7 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    receives: yield* Ref.make(0),
   } satisfies BoxThread;
 });
 
@@ -549,9 +552,25 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ),
       ),
   });
-  return Layer.merge(
+  // The upload the box issues; once its task runs there, it has edited the files a second
+  // upload would overwrite, so the box refuses that one, as applying it would.
+  const layerBoxWorkFiles = Layer.mock(WorkFilesTransfer.WorkFilesTransfer)({
+    issueReceive: () =>
+      Effect.gen(function* () {
+        if ((yield* Ref.get(thread.launched)) !== null) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "These files would overwrite app.ts (it has local changes there).",
+          });
+        }
+        yield* Ref.update(thread.receives, (count) => count + 1);
+        return { relativeUrl: "/api/work-files/receive/token", expiresAt: 0 };
+      }),
+  });
+  return Layer.mergeAll(
     McpHttpServer.layerOrchestratorToolkit,
     McpHttpServer.layerProjectRegistration,
+    McpHttpServer.layerWorkFilesToolkit,
   ).pipe(
     Layer.provide(notHomeLayer),
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
@@ -564,6 +583,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Layer.mergeAll(
         Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
         Layer.mock(PeerLinks.PeerLinks)({}),
+        layerBoxWorkFiles,
       ),
     ),
     Layer.provide(
@@ -1364,6 +1384,58 @@ it.effect("sends the work files before launching there, and launches nothing whe
       expect(sent).toHaveLength(2);
     }),
   ).pipe(Effect.provide(layerHttpsTest)),
+);
+
+it.effect(
+  "a retry after the launch's answer was lost finds the task there and sends no files again",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers, undefined, {
+          send: (input) =>
+            input
+              .receive({
+                projectId: input.projectId,
+                head: null,
+                deletions: [],
+                ...(input.clientRequestId === undefined
+                  ? {}
+                  : { clientRequestId: input.clientRequestId }),
+              })
+              .pipe(Effect.as({ files: 1, deletions: 0 })),
+        });
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        // The box launches the task, but its answer never reaches the laptop.
+        yield* Ref.set(thread.afterLaunch, Effect.die("connection reset"));
+        const delegate = a.call("delegate_task", {
+          task: "Run the suite on the box with my edits.",
+          target: { environmentId: box.environmentId },
+          workFiles: "transfer",
+          clientRequestId: "suite-after-lost-answer",
+        });
+        const lost = yield* delegate;
+        expect(lost.isError).toBe(true);
+        const launched = yield* Ref.get(thread.launched);
+        expect(launched).not.toBeNull();
+        expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(
+          0,
+        );
+
+        yield* Ref.set(thread.afterLaunch, Effect.void);
+        const retried = yield* delegate;
+        expect(retried.isError, JSON.stringify(retried.content)).toBe(false);
+        expect(yield* Ref.get(thread.receives)).toBe(1);
+        const { subagents } = yield* a.orchestrator.getThreadProjection(parentThreadId);
+        expect(subagents.map((task) => task.remoteChild?.threadId)).toEqual([launched]);
+      }),
+    ).pipe(Effect.provide(layerHttpsTest)),
 );
 
 it.effect("refuses to transfer work files to a task on this machine", () =>

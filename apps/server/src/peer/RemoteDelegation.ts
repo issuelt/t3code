@@ -357,6 +357,7 @@ const make = Effect.gen(function* () {
       const commandId = CommandId.make(
         `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
+      const launchRequestId = `delegate:${scope.thread.threadId}:${key}`;
       // A retry of a recorded task launched it already, and its files went first.
       const recordedBefore =
         input.clientRequestId !== undefined &&
@@ -385,6 +386,8 @@ const make = Effect.gen(function* () {
             cwd,
             environmentId: target.environmentId,
             projectId,
+            // The launch's key, so a retry whose launch ran there, unrecorded here, sends none again.
+            clientRequestId: launchRequestId,
             receive: (request) =>
               forwarding.call(scope, WorkFilesReceiveTool, target.environmentId, request),
           })
@@ -411,7 +414,7 @@ const make = Effect.gen(function* () {
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
           message: task,
-          clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
+          clientRequestId: launchRequestId,
           // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {
             environmentId: hereId,

@@ -117,12 +117,14 @@ export class WorkFilesTransfer extends Context.Service<
     /**
      * Sends the work files at `cwd` to `projectId` in `environmentId`. `receive`
      * asks that environment for the upload, through the caller's own route there.
-     * A selection with nothing to carry sends nothing.
+     * A selection with nothing to carry sends nothing, and so does a retry whose
+     * launch `clientRequestId` already ran there, since its files went before it.
      */
     readonly send: (input: {
       readonly cwd: string;
       readonly environmentId: EnvironmentId;
       readonly projectId: ProjectId;
+      readonly clientRequestId?: string | undefined;
       readonly receive: (
         request: WorkFilesReceiveInput,
       ) => Effect.Effect<WorkFilesReceiveResult, OrchestratorMcpFailure>;
@@ -190,10 +192,32 @@ const make = Effect.gen(function* () {
 
   const send: WorkFilesTransfer["Service"]["send"] = Effect.fn("WorkFilesTransfer.send")(
     function* (input) {
+      // A retry whose launch already ran there needs nothing from this checkout, which may
+      // have grown past the limits since, so the target is asked before this refusal stands.
       const selection = yield* select(input.cwd).pipe(
         Effect.mapError((error) => transferFailure(error.message)),
+        Effect.filterOrFail(
+          (selected) => selected.refusal === null,
+          (selected) => transferFailure(selected.refusal ?? "The work files cannot be sent."),
+        ),
+        Effect.catch((refusal) =>
+          input.clientRequestId === undefined
+            ? Effect.fail(refusal)
+            : input
+                .receive({
+                  projectId: input.projectId,
+                  head: null,
+                  deletions: [],
+                  clientRequestId: input.clientRequestId,
+                })
+                .pipe(
+                  Effect.flatMap((ticket) =>
+                    "launched" in ticket ? Effect.succeed(null) : Effect.fail(refusal),
+                  ),
+                ),
+        ),
       );
-      if (selection.refusal !== null) return yield* transferFailure(selection.refusal);
+      if (selection === null) return { files: 0, deletions: 0 };
       if (selection.files.length === 0 && selection.deletions.length === 0) {
         return { files: 0, deletions: 0 };
       }
@@ -201,7 +225,9 @@ const make = Effect.gen(function* () {
         projectId: input.projectId,
         head: selection.head,
         deletions: selection.deletions,
+        ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
       });
+      if ("launched" in ticket) return { files: 0, deletions: 0 };
       const resolved = yield* links
         .resolve(input.environmentId)
         .pipe(Effect.mapError((error) => transferFailure(error.message)));
