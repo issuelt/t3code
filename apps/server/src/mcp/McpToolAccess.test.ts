@@ -375,16 +375,28 @@ const linkedProbe = {
   ...probe,
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
-    threadId: Schema.optional(ThreadId),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
   }),
 };
 const LinkedProbeToolkit = Toolkit.make(
   Tool.make("reads", linkedProbe),
+  Tool.make("reads_thread", {
+    ...probe,
+    parameters: Schema.Struct({
+      environmentId: OrchestratorMcpEnvironmentTarget,
+      threadId: Schema.optional(ThreadId),
+    }),
+  }),
   Tool.make("writes", linkedProbe),
   Tool.make("writes_with_capability", linkedProbe),
-  Tool.make("writes_threads", linkedProbe),
+  Tool.make("writes_threads", {
+    ...probe,
+    parameters: Schema.Struct({
+      environmentId: OrchestratorMcpEnvironmentTarget,
+      threadId: Schema.optional(ThreadId),
+    }),
+  }),
   Tool.make("starts_threads", linkedProbe),
   Tool.make("writes_environment", linkedProbe),
 );
@@ -396,6 +408,7 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
   LinkedProbeToolkit,
   McpToolAccess.toLayer(LinkedProbeToolkit, {
     reads: McpToolAccess.reads(ranHere),
+    reads_thread: McpToolAccess.reads(ranHere),
     writes: McpToolAccess.writes(ranHere),
     writes_with_capability: McpToolAccess.writesWithCapability(ranHere),
     writes_threads: McpToolAccess.writesThreads((input) => [input.threadId], ranHere),
@@ -443,6 +456,17 @@ it.effect.each([
     "writes_environment in environment-box",
   ],
   ["writes_environment", fullAccess, { environmentId: here }, "here"],
+
+  // "This thread" is here, so another environment needs a thread id from there.
+  ["reads_thread", supervised, { environmentId: box }, "invalid_request"],
+  ["writes_threads", supervised, { environmentId: box }, "invalid_request"],
+  ["reads_thread", supervised, { environmentId: here }, "here"],
+  [
+    "reads_thread",
+    supervised,
+    { environmentId: box, threadId: fullAccessThreadId },
+    "reads_thread in environment-box",
+  ],
 
   // A thread id names a thread where the call runs, and is checked there.
   [

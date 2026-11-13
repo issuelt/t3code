@@ -403,6 +403,21 @@ export const takesLinkedEnvironment = (tool: Tool.Any) => {
   );
 };
 
+/** A linked tool that takes `threadId` acts on the caller's thread without one, which is here. */
+const takesThreadId = (tool: Tool.Any) => {
+  const parameters: unknown = tool.parametersSchema;
+  return (
+    Predicate.hasProperty(parameters, "fields") &&
+    Predicate.hasProperty(parameters.fields, "threadId")
+  );
+};
+
+const threadIdRequiredThere = new OrchestratorMcpFailure({
+  code: "invalid_request",
+  message:
+    "Pass threadId: this thread is not in that environment, so name one of its threads by its id there.",
+});
+
 const linksUnavailable = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "This environment cannot reach linked environments.",
@@ -466,10 +481,19 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
     const here = handlers[name] as (
       params: object,
     ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
-    handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
+    const needsThreadIdThere = takesThreadId(tool);
+    handlers[name] = ({
+      environmentId,
+      ...params
+    }: {
+      readonly environmentId?: EnvironmentId;
+      readonly threadId?: unknown;
+    }) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
+        if (target !== undefined && needsThreadIdThere && params.threadId === undefined)
+          return yield* threadIdRequiredThere;
         if (
           Option.isSome(home) &&
           scope.thread !== undefined &&
