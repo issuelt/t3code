@@ -49,14 +49,20 @@ export const WorkFilesReceiveInput = Schema.Struct({
   /** The source checkout's HEAD; null outside git, "" before the first commit. */
   head: Schema.NullOr(Schema.String),
   deletions: Schema.Array(Schema.String).check(Schema.isMaxLength(5_000)),
+  /** The `t3_thread_launch` key these files go before; a retry after that launch gets `launched`. */
+  clientRequestId: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
 });
 export type WorkFilesReceiveInput = typeof WorkFilesReceiveInput.Type;
 
-export const WorkFilesReceiveResult = Schema.Struct({
-  /** POST the gzip tar here, on the same origin, with the link's bearer token. */
-  relativeUrl: Schema.String,
-  expiresAt: Schema.Number,
-});
+export const WorkFilesReceiveResult = Schema.Union([
+  Schema.Struct({
+    /** POST the gzip tar here, on the same origin, with the link's bearer token. */
+    relativeUrl: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  /** The launch `clientRequestId` names already ran here, so its files went before it. */
+  Schema.Struct({ launched: Schema.Literal(true) }),
+]);
 export type WorkFilesReceiveResult = typeof WorkFilesReceiveResult.Type;
 
 export const WorkFilesApplied = Schema.Struct({ files: Schema.Int, deletions: Schema.Int });

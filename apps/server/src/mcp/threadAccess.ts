@@ -12,8 +12,10 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -213,4 +215,19 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
   const random = yield* SecureRandom.SecureRandom;
   return CommandId.make(`mcp:${yield* random.uuidV4()}`);
+});
+
+/**
+ * The command of a `t3_thread_launch` with a `clientRequestId`, and the id of the thread it
+ * launches outside Home. Fixed-length, so a long key fits in the scratch folder name derived from it.
+ */
+export const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
+  namespace: string,
+  key: string,
+) {
+  const crypto = yield* Digest.Digest;
+  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
+  const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
+  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
+  return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });

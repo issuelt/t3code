@@ -117,12 +117,14 @@ export class WorkFilesTransfer extends Context.Service<
     /**
      * Sends the work files at `cwd` to `projectId` in `environmentId`. `receive`
      * asks that environment for the upload, through the caller's own route there.
-     * A selection with nothing to carry sends nothing.
+     * A selection with nothing to carry sends nothing, and so does a retry whose
+     * launch `clientRequestId` already ran there, since its files went before it.
      */
     readonly send: (input: {
       readonly cwd: string;
       readonly environmentId: EnvironmentId;
       readonly projectId: ProjectId;
+      readonly clientRequestId?: string | undefined;
       readonly receive: (
         request: WorkFilesReceiveInput,
       ) => Effect.Effect<WorkFilesReceiveResult, OrchestratorMcpFailure>;
@@ -201,7 +203,9 @@ const make = Effect.gen(function* () {
         projectId: input.projectId,
         head: selection.head,
         deletions: selection.deletions,
+        ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
       });
+      if ("launched" in ticket) return { files: 0, deletions: 0 };
       const resolved = yield* links
         .resolve(input.environmentId)
         .pipe(Effect.mapError((error) => transferFailure(error.message)));
