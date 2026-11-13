@@ -179,6 +179,7 @@ describe("newTaskDestination", () => {
       projects: options.projects,
       serverConfigs: new Map([
         [EnvironmentId.make("environment"), { homeWorkspaceRoot: "/data/home" }],
+        [EnvironmentId.make("other-environment"), { homeWorkspaceRoot: "/data/home" }],
       ]),
       requestId: "request",
       useLastProject: options.useLastProject,
@@ -264,6 +265,11 @@ describe("newTaskDestination", () => {
     const last = { environmentId: "environment", projectId: "home" };
     expect(destination({ useLastProject: true, projects, current: home })).toEqual(picker);
     expect(destination({ useLastProject: true, projects, last })).toEqual(picker);
+    // Until its environment's config loads, any project could be that environment's Home folder.
+    const loading = makeProject("home", "loading-environment", { workspaceRoot: "/data/home" });
+    expect(destination({ useLastProject: true, projects: [loading], current: loading })).toEqual(
+      picker,
+    );
   });
 
   it("always opens the picker when the preference is off", () => {

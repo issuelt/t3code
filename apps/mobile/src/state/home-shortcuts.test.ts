@@ -126,6 +126,32 @@ describe("mobile Home shortcuts", () => {
     ]);
   });
 
+  it("keeps an offline or reconnecting machine's cached Home reachable, marked by its state", () => {
+    using h = harness();
+    h.registry.set(h.environments, [
+      environment(),
+      { ...environment(remote), connectionState: "reconnecting" },
+    ]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ label, connectionState, thread }) => [
+          label,
+          connectionState,
+          thread.environmentId,
+        ]),
+    ).toEqual([
+      ["Home · mac", "connected", mac],
+      ["Home · remote", "reconnecting", remote],
+    ]);
+    h.registry.set(h.environments, [{ ...environment(), connectionState: "offline" }]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ connectionState, thread }) => [connectionState, thread.id]),
+    ).toEqual([["offline", homeId]]);
+  });
+
   it("hides unconfigured, unloaded, missing and archived Home conversations", () => {
     using h = harness();
     h.registry.set(h.settings(mac), null);
@@ -146,7 +172,7 @@ describe("mobile Home shortcuts", () => {
     expect(h.registry.get(h.shortcuts)).toEqual([]);
   });
 
-  it("replaces the destination on settings updates and removes it on disable or disconnect", () => {
+  it("replaces the destination on settings updates and removes it on disable", () => {
     using h = harness();
     const replacement = ThreadId.make("home:replacement");
     h.registry.set(h.settings(mac), {
@@ -154,8 +180,6 @@ describe("mobile Home shortcuts", () => {
     });
     expect(h.registry.get(h.shortcuts)[0]?.thread.id).toBe(replacement);
     h.registry.set(h.environments, [{ ...environment(), isEnabled: false }]);
-    expect(h.registry.get(h.shortcuts)).toEqual([]);
-    h.registry.set(h.environments, [{ ...environment(), connectionState: "reconnecting" }]);
     expect(h.registry.get(h.shortcuts)).toEqual([]);
     h.registry.set(h.environments, [environment(remote)]);
     expect(h.registry.get(h.shortcuts)[0]?.thread.environmentId).toBe(remote);

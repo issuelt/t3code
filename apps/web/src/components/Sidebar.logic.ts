@@ -1446,9 +1446,9 @@ export function sortSidebarV2ProjectGroups<
 }
 
 /**
- * Each connected environment's current Home thread, the primary's first. Home
- * rows show them and the thread list leaves them out; older Home threads stay
- * in history.
+ * Each known environment's current Home thread, the primary's first. Home rows show them, offline
+ * ones included so they stay put through reconnects, and the thread list leaves them out; older
+ * Home threads stay in history.
  */
 export function resolveHomeThreadRefs(input: {
   readonly serverConfigs: ReadonlyMap<
@@ -1456,11 +1456,10 @@ export function resolveHomeThreadRefs(input: {
     { readonly settings: { readonly home: { readonly threadId: ThreadId | null } } }
   >;
   readonly primaryEnvironmentId: EnvironmentId | null;
-  readonly connectedEnvironmentIds: readonly EnvironmentId[];
 }): ScopedThreadRef[] {
   const environmentIds = [
     ...(input.primaryEnvironmentId === null ? [] : [input.primaryEnvironmentId]),
-    ...input.connectedEnvironmentIds.filter(
+    ...[...input.serverConfigs.keys()].filter(
       (environmentId) => environmentId !== input.primaryEnvironmentId,
     ),
   ];
@@ -1470,7 +1469,16 @@ export function resolveHomeThreadRefs(input: {
   });
 }
 
-/** The project the start page opens a draft in: the most recently active open project, never Home's folder. */
+type StartPage<TProject> =
+  | { readonly kind: "waiting" }
+  | { readonly kind: "project"; readonly project: TProject }
+  | { readonly kind: "empty" };
+
+/**
+ * What the start page shows: a draft in the most recently active open project, never Home's
+ * folder. While environments still load, a project without config could be Home or the most
+ * recent one, so the page waits; after that, those projects are left out.
+ */
 export function startPageProject<
   TProject extends ScopedSidebarProject & {
     readonly workspaceRoot: string;
@@ -1481,11 +1489,20 @@ export function startPageProject<
   projects: readonly TProject[],
   threads: readonly TThread[],
   serverConfigs: ReadonlyMap<string, { readonly homeWorkspaceRoot?: string | undefined }>,
-): TProject | null {
-  const candidates = withoutHomeProjects(projects, serverConfigs).filter(
-    (project) => project.archivedAt == null,
-  );
-  return sortScopedProjectsForSidebar(candidates, threads, "updated_at")[0] ?? null;
+  bootstrapped: boolean,
+): StartPage<TProject> {
+  const open = projects.filter((project) => project.archivedAt == null);
+  if (!bootstrapped && open.some((project) => !serverConfigs.has(project.environmentId))) {
+    return { kind: "waiting" };
+  }
+  const project = sortScopedProjectsForSidebar(
+    withoutHomeProjects(open, serverConfigs),
+    threads,
+    "updated_at",
+  )[0];
+  if (project !== undefined) return { kind: "project", project };
+  // A pending environment cannot prove the workspace is empty.
+  return bootstrapped ? { kind: "empty" } : { kind: "waiting" };
 }
 
 export function sortScopedProjectsForSidebar<

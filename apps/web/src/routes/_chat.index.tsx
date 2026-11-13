@@ -46,7 +46,8 @@ function IndexDraftLanding() {
   const startedAttemptRef = useRef<number | null>(null);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject = startPageProject(projects, threads, serverConfigs);
+  const startPage = startPageProject(projects, threads, serverConfigs, bootstrapped);
+  const mostRecentProject = startPage.kind === "project" ? startPage.project : null;
   const attempt = startState.retryRequest;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index
@@ -83,8 +84,7 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
-  // A pending environment cannot prove the workspace is empty.
-  return bootstrapped ? <NoProjectsHero /> : null;
+  return startPage.kind === "empty" ? <NoProjectsHero /> : null;
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {

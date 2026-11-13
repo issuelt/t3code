@@ -1,4 +1,10 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { withoutHomeProjects } from "@t3tools/client-runtime/state/projects";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
+import { isListedThreadLineage, type EnvironmentId } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_SECONDARY_LIMIT,
@@ -9,8 +15,11 @@ import {
   type SearchMatchHint,
   type SearchRange,
   type SearchTermsMatch,
+  threadRecentUse,
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
+
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 
 export interface CommandPaletteItem {
   readonly key: string;
@@ -105,4 +114,83 @@ export function filterCommandPaletteItems(
 
 export function nextPaletteIndex(index: number, direction: -1 | 1, count: number) {
   return count === 0 ? 0 : (index + direction + count) % count;
+}
+
+/**
+ * The palette's project and thread rows. New-thread rows leave out Home's folder; thread rows
+ * keep every project's name, so older Home threads still show and match it.
+ */
+export function commandPaletteEntityItems(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly serverConfigs: ReadonlyMap<
+    EnvironmentId,
+    { readonly homeWorkspaceRoot?: string | undefined }
+  >;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly activeThread: EnvironmentThreadShell | null;
+  readonly environmentLabel: (environmentId: EnvironmentId) => string;
+  /** Thread rows match environment names when there are several environments. */
+  readonly searchEnvironments: boolean;
+  readonly openDraft: (project: EnvironmentProject) => void;
+  readonly openThread: (thread: EnvironmentThreadShell) => void;
+}) {
+  const newThreadProjects = withoutHomeProjects(input.projects, input.serverConfigs);
+  const newThreadProjectByKey = new Map(
+    newThreadProjects.map((project) => [
+      scopedProjectKey(project.environmentId, project.id),
+      project,
+    ]),
+  );
+  const projectByKey = new Map(
+    input.projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+  );
+  const { activeThread } = input;
+  const activeProject = activeThread
+    ? (newThreadProjectByKey.get(
+        scopedProjectKey(activeThread.environmentId, activeThread.projectId),
+      ) ?? null)
+    : null;
+  const openProjects = newThreadProjects.filter((project) => project.archivedAt == null);
+  const projectItems: CommandPaletteItem[] = [
+    ...openProjects.filter((project) => project.pinnedAt != null),
+    ...openProjects.filter((project) => project.pinnedAt == null),
+  ].map((project) => ({
+    key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
+    kind: "project",
+    project,
+    title: project.title,
+    detail: `New thread · ${input.environmentLabel(project.environmentId)}`,
+    searchTerms: [project.workspaceRoot, "new thread", "project"],
+    run: () => input.openDraft(project),
+  }));
+  const threadItems: CommandPaletteItem[] = input.threads
+    .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
+    .map((thread) => {
+      const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
+      const environment = input.environmentLabel(thread.environmentId);
+      return {
+        key: scopedThreadKey(thread.environmentId, thread.id),
+        kind: "thread",
+        title: thread.title || "Untitled thread",
+        detail: [project?.title, environment].filter(Boolean).join(" · "),
+        searchTerms: [],
+        threadSearch: threadSearchSubject(
+          thread,
+          project?.title,
+          input.searchEnvironments ? environment : null,
+        ),
+        // Last among threads: picking the thread already open does nothing.
+        ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
+          ? { secondary: true }
+          : {}),
+        run: () => input.openThread(thread),
+      };
+    });
+  // Recent means used recently: written in or opened, whichever is later.
+  threadItems.sort(
+    (left, right) =>
+      (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
+      (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
+  );
+  return { activeProject, projectItems, threadItems };
 }

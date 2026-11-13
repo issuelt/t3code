@@ -1068,7 +1068,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const homeThreadRefs = resolveHomeThreadRefs({
     serverConfigs,
     primaryEnvironmentId: primaryEnvironmentIdForHome,
-    connectedEnvironmentIds,
   });
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);

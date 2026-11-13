@@ -17,7 +17,8 @@ export function createHomeShortcutsAtom(input: {
 }) {
   return Atom.make((get) => {
     const homes = get(input.environmentsAtom).flatMap((environment) => {
-      if (!environment.isEnabled || environment.connectionState !== "connected") return [];
+      // Cached Home stays reachable while its machine is offline; the list leaves it out either way.
+      if (!environment.isEnabled) return [];
       const threadId = get(input.settingsValueAtom(environment.environmentId))?.home.threadId;
       if (!threadId) return [];
       const thread = get(
@@ -28,6 +29,7 @@ export function createHomeShortcutsAtom(input: {
     });
     return homes.map(({ environment, thread }) => ({
       label: homes.length > 1 ? `Home · ${environment.environmentLabel}` : "Home",
+      connectionState: environment.connectionState,
       thread,
     }));
   }).pipe(Atom.withLabel("mobile:home-shortcuts"));

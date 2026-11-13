@@ -312,6 +312,7 @@ describe("sidebar settled pagination", () => {
           {
             scratchWorkspaceRoot: null,
             shellThreadFamilies: false,
+            settings: { home: { threadId: null } },
           } as unknown as EnvironmentServerConfig,
         ],
       ]),

@@ -5,18 +5,17 @@ import { useNavigation } from "@react-navigation/native";
 import {
   claimThreadOpen,
   nextShownOrder,
-  threadSearchSubject,
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
   rankMessageMatches,
   splitSearchText,
   pickedQuery,
-  threadRecentUse,
 } from "@t3tools/shared/paletteSearch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,11 +39,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { deriveBottomControlInsets } from "../../lib/reserved-regions";
-import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
-  useNewThreadProjects,
+  useProjects,
   useServerConfigs,
   useThreadShell,
   useVisibleThreadShells,
@@ -63,6 +62,7 @@ import { useStartTriage } from "../triage/useStartTriage";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 import { useActiveNewTask } from "../../state/active-new-task";
 import {
+  commandPaletteEntityItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
   type CommandPaletteItem,
@@ -226,7 +226,7 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
-  const projects = useNewThreadProjects();
+  const projects = useProjects();
   const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
@@ -370,30 +370,40 @@ export function CommandPalette(props: {
         run: () => void startTriage(triageEnvironmentId),
       });
     }
-    const projectByKey = new Map(
-      projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
-    );
-    const activeProject = activeThread
-      ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
-      : null;
+    const openDraft = (project: EnvironmentProject) =>
+      selectDetail({
+        name: "Thread",
+        params: {
+          draft: {
+            requestId: uuidv4(),
+            environmentId: project.environmentId,
+            projectId: project.id,
+            title: project.title,
+          },
+        },
+      });
+    const { activeProject, projectItems, threadItems } = commandPaletteEntityItems({
+      projects,
+      serverConfigs,
+      threads,
+      activeThread,
+      environmentLabel: (environmentId) =>
+        savedConnectionsById[environmentId]?.environmentLabel ?? environmentId,
+      searchEnvironments: environments.length > 1,
+      openDraft,
+      openThread: (thread) =>
+        selectDetail({
+          name: "Thread",
+          params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
+        }),
+    });
     if (activeProject) {
       actions.unshift({
         key: "newThread",
         kind: "action",
         title: `New thread in ${activeProject.title}`,
         searchTerms: ["new task", "chat", "create"],
-        run: () =>
-          selectDetail({
-            name: "Thread",
-            params: {
-              draft: {
-                requestId: uuidv4(),
-                environmentId: activeProject.environmentId,
-                projectId: activeProject.id,
-                title: activeProject.title,
-              },
-            },
-          }),
+        run: () => openDraft(activeProject),
       });
     }
     if (activeThreadRef) {
@@ -413,64 +423,6 @@ export function CommandPalette(props: {
         })),
       );
     }
-    const openProjects = projects.filter((project) => project.archivedAt == null);
-    const projectItems: CommandPaletteItem[] = [
-      ...openProjects.filter((project) => project.pinnedAt != null),
-      ...openProjects.filter((project) => project.pinnedAt == null),
-    ].map((project) => ({
-      key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
-      kind: "project",
-      project,
-      title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
-      searchTerms: [project.workspaceRoot, "new thread", "project"],
-      run: () =>
-        selectDetail({
-          name: "Thread",
-          params: {
-            draft: {
-              requestId: uuidv4(),
-              environmentId: project.environmentId,
-              projectId: project.id,
-              title: project.title,
-            },
-          },
-        }),
-    }));
-    const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
-      .map((thread) => {
-        const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
-        const environment =
-          savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return {
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          kind: "thread",
-          title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
-          searchTerms: [],
-          threadSearch: threadSearchSubject(
-            thread,
-            project?.title,
-            environments.length > 1 ? environment : null,
-          ),
-          // Last among threads: picking the thread already open does nothing.
-          ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
-            ? { secondary: true }
-            : {}),
-          run: () =>
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
-            }),
-        };
-      });
-    // Recent means used recently: written in or opened, whichever is later.
-    threadItems.sort(
-      (left, right) =>
-        (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
-        (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
-    );
     return [...actions, ...projectItems, ...threadItems];
   }, [
     selectTab,
@@ -483,6 +435,7 @@ export function CommandPalette(props: {
     runCommand,
     savedConnectionsById,
     selectDetail,
+    serverConfigs,
     startTriage,
     threads,
     triageEnvironmentId,
