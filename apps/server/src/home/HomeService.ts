@@ -106,7 +106,7 @@ const EVENT_LABELS: Record<Exclude<HomeWatchEvent["kind"], "ended">, string> = {
 };
 
 /** The text Home receives for one batch of watched events. */
-function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
+export function formatWatchReport(events: ReadonlyArray<HomeWatchEvent>): string {
   const lines = events.flatMap((event) => {
     if (event.kind === "ended") return [];
     const where = event.environmentLabel ?? event.environmentId;

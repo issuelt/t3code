@@ -32,6 +32,10 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
+## Home cases
+
+`cases/home.ndjson` checks how Home talks. `setup.home` gives the thread Home's real `AGENTS.md`, and `setup.home.report` makes the turn's message the watch report HomeService sends for those events. A clean completion should get one short line with the thread's link; a failure or a status question a short reply; a request for details a full one. Length, list and header checks are regexes on the visible text.
+
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.

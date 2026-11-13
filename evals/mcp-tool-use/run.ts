@@ -17,6 +17,7 @@ import {
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
+  HomeWatchEvent,
   OrchestratorMcpTaskRole,
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
@@ -56,6 +57,9 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { HomeToolkit } from "../../apps/server/src/mcp/toolkits/home/tools.ts";
+import { formatWatchReport } from "../../apps/server/src/home/HomeService.ts";
+import { refreshHomeAgents } from "../../apps/server/src/home/HomeWorkspace.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -307,6 +311,11 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /**
+     * The thread is Home: it gets Home's AGENTS.md. With `report`, the turn's message is the watch
+     * report HomeService sends for those events, and `prompt` stays empty.
+     */
+    home: Schema.optional(Schema.Struct({ report: Schema.optional(Schema.Array(HomeWatchEvent)) })),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -456,6 +465,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  HomeToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -1019,6 +1029,9 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
   return { type: "tool_result", tool_use_id: id, content };
 };
 
+/** Home's AGENTS.md as a fresh Home folder has it, in the reminder Claude Code puts it in. */
+const homeInstructions = `Contents of /home/user/.t3/home/AGENTS.md (project instructions, checked into the codebase):\n\n${refreshHomeAgents(null)}`;
+
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
@@ -1028,8 +1041,12 @@ export const buildMessages = (sample: Sample) => {
     if (last?.role !== role) messages.push({ role, content: blocks });
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
-  const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const { role, context, delegateRole, home, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
+  const homeReport = home?.report === undefined ? undefined : formatWatchReport(home.report);
+  if (homeReport !== undefined && (testCase.prompt !== "" || role !== "top")) {
+    throw new Error(`${testCase.id}: A Home report is the whole prompt of a top-level thread.`);
+  }
   if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
       `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
@@ -1047,6 +1064,7 @@ export const buildMessages = (sample: Sample) => {
     native
       ? "You are a subagent started by the parent agent's Agent tool. Your final message goes to the parent agent, not to the user."
       : undefined,
+    home === undefined ? undefined : homeInstructions,
     context,
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
@@ -1097,7 +1115,8 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
+  if (homeReport !== undefined) push("user", text(homeReport));
+  else if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
