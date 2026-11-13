@@ -8,7 +8,10 @@ name: Fork Release
 # platform before it publishes. Linux and Android stages live in
 # fork-release-linux.yml, which picks Blacksmith for trusted events.
 # Windows uses the Blacksmith label from the version stage while this month's
-# Blacksmith tally leaves room; macOS stays hosted.
+# Blacksmith tally leaves room. macOS builds on the self-hosted runner that
+# the FORK_MAC_RUNNER variable names (plum, set up in ymln's dotfiles), since
+# hosted Apple Silicon runners often never pick the job up; unset the variable
+# to go back to hosted.
 
 on:
   push:
@@ -44,7 +47,9 @@ jobs:
     # The version stage writes blacksmith_windows only for trusted events, from a validated variable.
     runs-on: >-
       ${{ matrix.platform == 'win' && github.repository == 'issuelt/t3code' && github.ref == 'refs/heads/main'
-        && needs.version.outputs.blacksmith_windows || matrix.runner }}
+        && needs.version.outputs.blacksmith_windows
+        || matrix.platform == 'mac' && github.repository == 'issuelt/t3code' && github.ref == 'refs/heads/main'
+        && vars.FORK_MAC_RUNNER || matrix.runner }}
     # route-blacksmith.sh reserves Windows's 60 minutes; macOS keeps the default.
     timeout-minutes: ${{ matrix.timeout_minutes || 360 }}
     strategy:
@@ -118,7 +123,10 @@ jobs:
           rm "$RUNNER_TEMP/fork-signing.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain" login.keychain-db
-          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain .github/fork/mac-signing-cert.pem
+          # The self-hosted runner has no sudo; its host trusts this certificate already.
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain .github/fork/mac-signing-cert.pem
+          fi
           security find-identity -v -p codesigning "$keychain" | grep -F '"T3 Code Fork Signing"'
           echo "CSC_NAME=T3 Code Fork Signing" >> "$GITHUB_ENV"
           # electron-builder skips signing on pull requests unless told otherwise.
