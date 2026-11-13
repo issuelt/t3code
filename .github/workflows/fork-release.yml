@@ -130,10 +130,14 @@ jobs:
             sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain .github/fork/mac-signing-cert.pem
           fi
           security find-identity -v -p codesigning "$keychain" | grep -F '"T3 Code Fork Signing"'
-          echo "CSC_NAME=T3 Code Fork Signing" >> "$GITHUB_ENV"
-          # electron-builder skips signing on pull requests unless told otherwise.
-          # Only branches of this repository receive the signing secrets.
-          echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"
+          {
+            echo "CSC_NAME=T3 Code Fork Signing"
+            # A runner without a login session ignores the search list above in later steps.
+            echo "CSC_KEYCHAIN=$keychain"
+            # electron-builder skips signing on pull requests unless told otherwise.
+            # Only branches of this repository receive the signing secrets.
+            echo "CSC_FOR_PULL_REQUEST=true"
+          } >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: vp install
