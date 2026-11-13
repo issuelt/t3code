@@ -126,9 +126,14 @@ export function AddEnvironmentDialog({
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const pairingAgain = routeTarget !== null && pairAgainHost !== null;
   const [lastOpen, setLastOpen] = useState(open);
-  if (open !== lastOpen) {
+  const [lastInitialHost, setLastInitialHost] = useState(initialHost);
+  if (open !== lastOpen || initialHost !== lastInitialHost) {
+    const opened = open && !lastOpen;
     setLastOpen(open);
+    setLastInitialHost(initialHost);
     if (open && pairingAgain) setSavedBackendHost(pairAgainHost);
+    else if (open && initialHost !== null && (opened || initialHost !== lastInitialHost))
+      setSavedBackendHost(initialHost);
   }
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
