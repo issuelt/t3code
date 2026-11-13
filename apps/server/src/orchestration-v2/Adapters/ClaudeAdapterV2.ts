@@ -5545,7 +5545,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const taskOutputTails = new Map<
           string,
-          { readonly fiber: Fiber.Fiber<void>; readonly stop: Deferred.Deferred<void> }
+          {
+            readonly fiber: Fiber.Fiber<void>;
+            readonly stop: Deferred.Deferred<void>;
+            readonly taskId: string;
+            readonly nativeThreadId: string;
+            /** Latest output, kept as the settled row's output once a backgrounded command ends. */
+            readonly output: { text: string };
+          }
+        >();
+        // Backgrounded Bash calls by task id. Their row stays running, like a Codex background
+        // command, so its live output keeps streaming until Claude reports the task ended.
+        const backgroundCommands = new Map<
+          string,
+          {
+            readonly toolCall: ActiveClaudeToolCall;
+            readonly context: ActiveClaudeTurnContext | null;
+            readonly nativeThreadId: string;
+            readonly launchOutput: ClaudeNativeToolOutput;
+          }
         >();
         // Waits for the tail's last read so its output lands before the call settles.
         const stopTaskOutputTail = (toolUseId: string) =>
@@ -6436,6 +6454,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             openNativeTurns.delete(nativeThreadId);
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
+            yield* settleBackgroundCommandsForNativeThread(nativeThreadId, "interrupted");
           });
 
         const forgetAbsorbedWake = (nativeThreadId: string) =>
@@ -6818,6 +6837,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             turnItem: artifacts.turnItem,
           });
+        });
+
+        const settleBackgroundCommand = Effect.fn("ClaudeAdapterV2.settleBackgroundCommand")(
+          function* (
+            taskId: string,
+            status: Exclude<Parameters<typeof buildToolCallArtifacts>[0]["status"], "running">,
+          ) {
+            const held = backgroundCommands.get(taskId);
+            if (held === undefined) return;
+            backgroundCommands.delete(taskId);
+            const { toolCall } = held;
+            const output = taskOutputTails.get(toolCall.nativeItemId)?.output;
+            yield* stopTaskOutputTail(toolCall.nativeItemId);
+            yield* emitToolCallArtifacts(
+              buildToolCallArtifacts({
+                context: held.context,
+                nativeItemId: toolCall.nativeItemId,
+                toolName: toolCall.toolName,
+                classification: toolCall.classification,
+                toolInput: toolCall.input,
+                threadId: toolCall.threadId,
+                runId: toolCall.runId,
+                rootNodeId: toolCall.rootNodeId,
+                parentNodeId: toolCall.parentNodeId,
+                ordinal: toolCall.ordinal,
+                output:
+                  output !== undefined && output.text.length > 0
+                    ? { type: "content_block", value: output.text }
+                    : held.launchOutput,
+                status,
+                startedAt: toolCall.startedAt,
+                updatedAt: yield* DateTime.now,
+                presentation: toolCall.presentation,
+              }),
+            );
+          },
+        );
+        const settleBackgroundCommandsForNativeThread = Effect.fn(
+          "ClaudeAdapterV2.settleBackgroundCommandsForNativeThread",
+        )(function* (nativeThreadId: string, status: "interrupted" | "failed") {
+          for (const [taskId, held] of backgroundCommands) {
+            if (held.nativeThreadId === nativeThreadId) {
+              yield* settleBackgroundCommand(taskId, status);
+            }
+          }
         });
 
         // A `context: fork` skill has no Agent call and streams none of its own frames;
@@ -8201,6 +8265,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.message,
             input.toolResult.tool_use_id,
           );
+          const tail = taskOutputTails.get(toolCall.nativeItemId);
+          // The call returned while its task runs on: it moved to the background.
+          if (
+            tail !== undefined &&
+            toolNonExecutionKind === undefined &&
+            !isClaudeToolResultError(input.toolResult) &&
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              tail.nativeThreadId,
+            ).has(tail.taskId)
+          ) {
+            backgroundCommands.set(tail.taskId, {
+              toolCall,
+              context: input.context,
+              nativeThreadId: tail.nativeThreadId,
+              launchOutput: input.output,
+            });
+            // The row stays as the call started it: running.
+            input.registry.delete(toolCall.nativeItemId);
+            return;
+          }
           yield* stopTaskOutputTail(toolCall.nativeItemId);
           yield* emitToolCallArtifacts(
             buildToolCallArtifacts({
@@ -8643,6 +8728,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
           status: "interrupted" | "failed",
         ) {
+          yield* settleBackgroundCommandsForNativeThread(nativeThreadId, status);
           const settled = settledTurnByNativeThread.get(nativeThreadId);
           if (settled === undefined || subagentToolCalls.size === 0) {
             return;
@@ -9788,6 +9874,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
+            yield* settleBackgroundCommand(message.task_id, claudeTaskOutcome(message.status));
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
             yield* Ref.update(toolUseIdsByTaskId, (current) => {
               if (!current.has(message.task_id)) return current;
@@ -10836,8 +10923,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (
                 liveQuery.taskOutputRoot !== undefined &&
                 message.task_type === "local_bash" &&
-                // Older Claude Code builds omit the flag on foreground calls.
-                message.is_backgrounded !== true &&
                 tailedCall?.classification.itemType === "command_execution" &&
                 !taskOutputTails.has(tailedCall.nativeItemId)
               ) {
@@ -10846,25 +10931,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   nativeItemId: tailedCall.nativeItemId,
                 });
                 const stop = yield* Deferred.make<void>();
+                const output = { text: "" };
                 const fiber = yield* tailClaudeTaskOutput({
                   root: liveQuery.taskOutputRoot,
                   sessionId: message.session_id,
                   taskId: message.task_id,
                   stop,
                   onChunk: (chunk) =>
-                    emitProviderEvent({
-                      type: "command_output.delta",
-                      driver: CLAUDE_PROVIDER,
-                      threadId: tailedCall.threadId,
-                      itemId,
-                      chunk,
+                    Effect.suspend(() => {
+                      output.text += chunk;
+                      if (output.text.length > 64 * 1024) {
+                        const newline = output.text.indexOf("\n", output.text.length - 64 * 1024);
+                        output.text = newline === -1 ? "" : output.text.slice(newline + 1);
+                      }
+                      return emitProviderEvent({
+                        type: "command_output.delta",
+                        driver: CLAUDE_PROVIDER,
+                        threadId: tailedCall.threadId,
+                        itemId,
+                        chunk,
+                      });
                     }),
                 }).pipe(
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                   Effect.forkIn(sessionScope),
                 );
-                taskOutputTails.set(tailedCall.nativeItemId, { fiber, stop });
+                taskOutputTails.set(tailedCall.nativeItemId, {
+                  fiber,
+                  stop,
+                  taskId: message.task_id,
+                  nativeThreadId: liveQuery.nativeThreadId,
+                  output,
+                });
               }
               context.ignoredTaskIds.add(message.task_id);
               yield* applyBackgroundTaskRosterMessage({

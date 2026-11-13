@@ -554,6 +554,25 @@ export function presentRunStop(
   };
 }
 
+export function matchBackgroundTaskItem<
+  Item extends Pick<ThreadStructureTurnItem, "id" | "nativeItemRef">,
+>(
+  task: Pick<OrchestrationV2PendingBackgroundTask, "itemId" | "nativeItemId" | "taskId">,
+  items: ReadonlyArray<Item>,
+): Item | undefined {
+  const byItemId =
+    task.itemId === undefined ? undefined : items.findLast((item) => item.id === task.itemId);
+  if (byItemId !== undefined) return byItemId;
+  const byNativeId =
+    task.nativeItemId === undefined
+      ? undefined
+      : items.findLast((item) => item.nativeItemRef?.nativeId === task.nativeItemId);
+  return (
+    byNativeId ??
+    items.findLast((item) => (item.nativeItemRef?.nativeId || item.id) === task.taskId)
+  );
+}
+
 export interface PendingBackgroundWorkItem {
   readonly taskId: string;
   readonly kind: BackgroundWorkKind;

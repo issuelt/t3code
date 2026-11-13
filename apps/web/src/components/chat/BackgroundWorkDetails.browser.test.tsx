@@ -5,7 +5,9 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 vi.mock(import("./CommandOutputPanel"), () => ({
   useCommandOutputStreaming: () => true,
-  CommandOutputPanel: () => <div>Command output stream</div>,
+  CommandOutputPanel: ({ mode }: { mode?: "full" | "tail" }) => (
+    <div>{mode === "tail" ? "Command output tail" : "Command output stream"}</div>
+  ),
 }));
 
 import { render } from "../../../test/render";
@@ -37,6 +39,7 @@ it("opens full command details for short labels and keeps pending tasks current"
     description?: string,
     status: "running" | "completed" = "completed",
     explicitItem = true,
+    awaited = true,
   ) => (
     <ThreadNow
       attention={null}
@@ -52,7 +55,7 @@ it("opens full command details for short labels and keeps pending tasks current"
             kind: "command",
             description,
             command,
-            awaited: true,
+            ...(awaited ? { awaited: true as const } : {}),
           },
         ],
         turnItems: [
@@ -77,21 +80,37 @@ it("opens full command details for short labels and keeps pending tasks current"
   );
   await using screen = await render(view("Audit"));
   await screen.getByRole("button", { name: "Details", exact: true }).click();
+  await expect.element(page.getByText("Command output tail")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Show command", exact: true }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Show command", exact: true }).click();
   await vi.waitFor(() => expect(page.getByRole("dialog").element().textContent).toContain(command));
+  await page.getByRole("button", { name: "Hide command", exact: true }).click();
+  await page.getByRole("button", { name: "Full output", exact: true }).click();
+  await expect.element(page.getByText("Command output stream")).toBeVisible();
+  await page.getByRole("button", { name: /Audit/ }).click();
   await expect.element(page.getByText("Command output stream")).not.toBeInTheDocument();
-
-  await screen.rerender(view(command));
-  await expect.element(page.getByRole("heading", { name: "Command", exact: true })).toBeVisible();
-  await screen.rerender(view());
-  await expect.element(page.getByRole("heading", { name: "Command", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Audit/ }).click();
+  await expect.element(page.getByText("Command output stream")).toBeVisible();
 
   await screen.rerender(view("Check remaining modules", "running"));
-  await expect
-    .element(page.getByRole("heading", { name: "Check remaining modules" }))
-    .toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Check remaining modules/ })).toBeVisible();
   await expect.element(page.getByText("Command output stream")).toBeVisible();
   await screen.rerender(view("Native fallback", "completed", false));
   await expect.element(page.getByText("Command output stream")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Details", exact: true }).click();
+  await expect.element(page.getByText("Command output tail")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Show command", exact: true }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await screen.rerender(view("Dev server", "running", true, false));
+  await screen.getByRole("button", { name: "Details", exact: true }).click();
+  await expect
+    .element(page.getByRole("button", { name: /Dev server/ }))
+    .toHaveAttribute("aria-expanded", "false");
+  await expect.element(page.getByText("Command output tail")).not.toBeInTheDocument();
 });

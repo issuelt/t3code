@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -177,7 +177,7 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
   });
 
-  it("dedupes roster entries against turn items by native task id", () => {
+  it("dedupes roster entries against turn items by task, item, or native item id", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
       providerThreads: [
@@ -185,6 +185,8 @@ describe("derivePendingBackgroundWork", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "task-9", description: "Agent review", kind: "background_task" },
+            { taskId: "shell-1", kind: "command", itemId: TurnItemId.make("item-bash") },
+            { taskId: "shell-2", kind: "command", nativeItemId: "toolu_bash" },
           ],
         },
       ],
@@ -197,10 +199,26 @@ describe("derivePendingBackgroundWork", () => {
           nativeItemRef: { nativeId: "task-9" },
           prompt: "review the plan",
         },
+        {
+          id: "item-bash",
+          type: "command_execution",
+          status: "running",
+          title: "Build",
+          nativeItemRef: { nativeId: "toolu_bash_other" },
+        },
+        {
+          id: "item-bash-other",
+          type: "command_execution",
+          status: "running",
+          title: "Test",
+          nativeItemRef: { nativeId: "toolu_bash" },
+        },
       ],
     });
     expect(tasks).toEqual([
       { taskId: "task-9", description: "Agent review", kind: "background_task" },
+      { taskId: "shell-1", kind: "command", itemId: "item-bash" },
+      { taskId: "shell-2", kind: "command", nativeItemId: "toolu_bash" },
     ]);
   });
 
