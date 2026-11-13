@@ -182,6 +182,44 @@ it.live("sends a checkout's work to the same commit on the box, leaving no archi
   }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
 );
 
+it.live(
+  "a retry whose launch already ran there reattaches even when this checkout can no longer be sent",
+  () =>
+    Effect.gen(function* () {
+      const { source } = yield* checkouts;
+      // Past the size limit since the first attempt; sparse, so it takes no disk.
+      write(source, "big.bin", "");
+      NodeFS.truncateSync(NodePath.join(source, "big.bin"), 101 * 1024 * 1024);
+      const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+      const here = yield* layerTransfer(yield* tempDir, source).pipe(
+        Layer.provide(Layer.succeedContext(linking)),
+        Layer.provide(FetchHttpClient.layer),
+        Layer.build,
+      );
+      const transfer = Context.get(here, WorkFilesTransfer.WorkFilesTransfer);
+      const asked: Array<WorkFilesReceiveInput> = [];
+      const sending = (clientRequestId: string | undefined) =>
+        transfer.send({
+          cwd: source,
+          environmentId: box.environmentId,
+          projectId: boxProject,
+          clientRequestId,
+          receive: (request) =>
+            Effect.sync(() => {
+              asked.push(request);
+              return { launched: true } as const;
+            }),
+        });
+
+      expect(yield* sending("suite-after-lost-answer")).toEqual({ files: 0, deletions: 0 });
+      expect(asked.map((request) => request.clientRequestId)).toEqual(["suite-after-lost-answer"]);
+      // Without a retry key there is no launch to find, so the limit still refuses.
+      const refused = yield* sending(undefined).pipe(Effect.flip);
+      expect(refused.message).toContain("the limit is");
+      expect(asked).toHaveLength(1);
+    }),
+);
+
 it.live("a refusal there changes nothing and still removes the archive and staging", () =>
   Effect.gen(function* () {
     const { source, target } = yield* checkouts;

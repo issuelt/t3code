@@ -192,10 +192,33 @@ const make = Effect.gen(function* () {
 
   const send: WorkFilesTransfer["Service"]["send"] = Effect.fn("WorkFilesTransfer.send")(
     function* (input) {
+      // A retry whose launch already ran there needs nothing from this checkout, which may
+      // have grown past the limits since, so the target is asked before this refusal stands.
       const selection = yield* select(input.cwd).pipe(
         Effect.mapError((error) => transferFailure(error.message)),
+        Effect.flatMap((selected) =>
+          selected.refusal === null
+            ? Effect.succeed(selected)
+            : Effect.fail(transferFailure(selected.refusal)),
+        ),
+        Effect.catch((refusal) =>
+          input.clientRequestId === undefined
+            ? Effect.fail(refusal)
+            : input
+                .receive({
+                  projectId: input.projectId,
+                  head: null,
+                  deletions: [],
+                  clientRequestId: input.clientRequestId,
+                })
+                .pipe(
+                  Effect.flatMap((ticket) =>
+                    "launched" in ticket ? Effect.succeed(null) : Effect.fail(refusal),
+                  ),
+                ),
+        ),
       );
-      if (selection.refusal !== null) return yield* transferFailure(selection.refusal);
+      if (selection === null) return { files: 0, deletions: 0 };
       if (selection.files.length === 0 && selection.deletions.length === 0) {
         return { files: 0, deletions: 0 };
       }
