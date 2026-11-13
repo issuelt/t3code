@@ -196,10 +196,9 @@ const make = Effect.gen(function* () {
       // have grown past the limits since, so the target is asked before this refusal stands.
       const selection = yield* select(input.cwd).pipe(
         Effect.mapError((error) => transferFailure(error.message)),
-        Effect.flatMap((selected) =>
-          selected.refusal === null
-            ? Effect.succeed(selected)
-            : Effect.fail(transferFailure(selected.refusal)),
+        Effect.filterOrFail(
+          (selected) => selected.refusal === null,
+          (selected) => transferFailure(selected.refusal ?? "The work files cannot be sent."),
         ),
         Effect.catch((refusal) =>
           input.clientRequestId === undefined
