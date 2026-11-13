@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   type ModelSelection,
@@ -542,6 +543,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "ready",
   "pending",
   "exhausted",
+  "exhausted, fallback model cannot generate text",
   "not installed",
   "not installed, fallback disabled for project",
   "signed out",
@@ -608,7 +610,21 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               ],
             }
           : {}),
-        ...(primaryState === "exhausted" && instanceId === primary
+        ...(primaryState === "exhausted, fallback model cannot generate text" &&
+        instanceId === fallback
+          ? {
+              models: [
+                {
+                  slug: threadDefault.model,
+                  name: threadDefault.model,
+                  isCustom: true,
+                  supportsTextGeneration: false,
+                  capabilities: null,
+                },
+              ],
+            }
+          : {}),
+        ...(primaryState.startsWith("exhausted") && instanceId === primary
           ? {
               usageLimits: {
                 checkedAt: "1970-01-01T00:00:00Z",
@@ -686,7 +702,13 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "not installed, fallback disabled for project" ||
       primaryState === "signed out, fallback failed"
         ? selection
-        : threadDefault,
+        : primaryState === "exhausted, fallback model cannot generate text"
+          ? {
+              instanceId: fallback,
+              model:
+                DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+            }
+          : threadDefault,
     ]);
   }),
 );
