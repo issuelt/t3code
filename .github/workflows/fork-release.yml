@@ -74,6 +74,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A self-hosted runner keeps the last job's checkout and build outputs.
+          find . -mindepth 1 -delete
           git init .
           git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
