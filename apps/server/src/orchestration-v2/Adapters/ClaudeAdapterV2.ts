@@ -12239,19 +12239,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
-              const turn = yield* Ref.get(activeTurn);
               // Home rolls into a fresh session instead of compacting.
-              const idleCompaction =
-                turn !== null && isHomeThreadId(turn.input.threadId)
-                  ? "off"
-                  : Option.isSome(serverSettings)
-                    ? yield* serverSettings.value.getSettings.pipe(
-                        Effect.map((settings) =>
-                          resolveIdleCompaction(settings, adapterOptions.instanceId),
-                        ),
-                        Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
-                      )
-                    : adapterOptions.settings.idleCompaction;
+              const idleCompaction = isHomeThreadId(input.threadId)
+                ? "off"
+                : Option.isSome(serverSettings)
+                  ? yield* serverSettings.value.getSettings.pipe(
+                      Effect.map((settings) =>
+                        resolveIdleCompaction(settings, adapterOptions.instanceId),
+                      ),
+                      Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
+                    )
+                  : adapterOptions.settings.idleCompaction;
               if (idleCompaction === "off") {
                 return { behavior: "completed" as const, result: "continue" as const };
               }

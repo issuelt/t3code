@@ -309,6 +309,7 @@ function makeLocalCommandHarness(input: {
     readonly usedTokens?: number;
     readonly autoCompactThreshold?: number;
     readonly threadUsedTokens?: number;
+    readonly staleRollHandoff?: boolean;
     readonly backgroundWork?: boolean;
     readonly history?: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly chiefOfStaffAnswer?: {
@@ -786,6 +787,29 @@ function makeLocalCommandHarness(input: {
               },
               ...projection.attempts,
             ],
+    };
+  }
+  if (input.home?.staleRollHandoff) {
+    projection = {
+      ...projection,
+      contextHandoffs: [
+        {
+          id: IdAllocator.derive.homeRollContextHandoff({ providerThreadId }),
+          transferId: null,
+          threadId,
+          targetRunId: RunId.make("previous-failed-run"),
+          fromProviderThreadIds: [providerThreadId],
+          toProviderThreadId: providerThreadId,
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: "STALE_ROLL_SUMMARY",
+          createdByProviderInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
     };
   }
   let providerBusy =
@@ -2241,6 +2265,23 @@ effectIt.effect("seeds a rolled Home session's first turn with 64 KB of its own 
       `Your session restarted. These are the newest items of your own thread ${homeThreadId}`,
     );
     expect(prompt.endsWith("User message:\nContinue")).toBe(true);
+  }),
+);
+
+effectIt.effect("replaces a failed roll's handoff instead of delivering it again", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "completed" },
+      home: { idleMinutes: 1, usedTokens: 100_000, history: homeHistory, staleRollHandoff: true },
+    });
+    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00Z"));
+    yield* harness.start;
+
+    expect(harness.startTurn).toHaveBeenCalledOnce();
+    const prompt = harness.startTurn.mock.calls[0]![0].message.text;
+    expect(prompt).toContain("REPLY_11 ");
+    expect(prompt).not.toContain("STALE_ROLL_SUMMARY");
   }),
 );
 
