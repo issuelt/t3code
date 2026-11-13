@@ -33,6 +33,7 @@ import {
   deriveThreadRuntime,
   formatModelSelectionEffort,
   isBackgroundWorkStopPending,
+  matchBackgroundTaskItem,
   presentPendingBackgroundWork,
   presentProviderGoal,
   presentRunStop,
@@ -755,5 +756,41 @@ describe("presentPendingBackgroundWork", () => {
       },
     ]);
     expect(presentation?.items[0]?.label).toBe("mv a.ts b.ts\ncat > b.ts <<'EOF'\nexport {};\nEOF");
+  });
+});
+
+describe("matchBackgroundTaskItem", () => {
+  const explicit = { id: TurnItemId.make("explicit"), nativeItemRef: null };
+  const native = {
+    id: TurnItemId.make("native"),
+    nativeItemRef: {
+      driver: ProviderDriverKind.make("claude"),
+      nativeId: "tool-use-1",
+      strength: "strong" as const,
+    },
+  };
+  const fallback = { id: TurnItemId.make("task-1"), nativeItemRef: null };
+  const items = [explicit, native, fallback];
+
+  it.each([
+    {
+      task: { itemId: explicit.id, nativeItemId: "tool-use-1", taskId: "task-1" },
+      expected: explicit,
+    },
+    { task: { nativeItemId: "tool-use-1", taskId: "task-1" }, expected: native },
+    {
+      task: { itemId: TurnItemId.make("missing"), nativeItemId: "tool-use-1", taskId: "task-1" },
+      expected: native,
+    },
+    { task: { nativeItemId: "missing", taskId: "task-1" }, expected: fallback },
+    { task: { taskId: "tool-use-1" }, expected: native },
+    { task: { taskId: "missing" }, expected: undefined },
+  ])("matches by item id, native item id, then task id: $task", ({ task, expected }) => {
+    expect(matchBackgroundTaskItem(task, items)).toBe(expected);
+  });
+
+  it("uses the latest matching task item", () => {
+    const latest = { ...native, id: TurnItemId.make("latest") };
+    expect(matchBackgroundTaskItem({ taskId: "tool-use-1" }, [...items, latest])).toBe(latest);
   });
 });

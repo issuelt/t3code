@@ -7,7 +7,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 
-import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import {
+  claudeTaskOutputRoot,
+  retainTaskOutputTail,
+  tailClaudeTaskOutput,
+} from "./ClaudeTaskOutputTail.ts";
 
 const SESSION_ID = "0c91bb28-9e89-4889-bd22-3de9880233d3";
 const TASK_ID = "bk6xreeye";
@@ -18,6 +22,20 @@ const makeTaskFile = Effect.gen(function* () {
   const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
   const tasks = path.join(root, "-private-tmp-project", SESSION_ID, "tasks");
   return { root, tasks, file: path.join(tasks, `${TASK_ID}.output`) };
+});
+
+describe("retainTaskOutputTail", () => {
+  it("keeps the newest output of a line longer than the limit", () => {
+    const line = `${"x".repeat(70 * 1024)}\n`;
+    const kept = retainTaskOutputTail(line);
+    assert.equal(kept.length, 64 * 1024);
+    assert.isTrue(line.endsWith(kept));
+  });
+
+  it("starts on a line boundary near the cut", () => {
+    const rest = "b".repeat(64 * 1024 - 50);
+    assert.equal(retainTaskOutputTail(`${"a".repeat(100)}\n${rest}`), rest);
+  });
 });
 
 // TestClock cannot interleave with real filesystem I/O; tests that wait on a poll use the live clock.

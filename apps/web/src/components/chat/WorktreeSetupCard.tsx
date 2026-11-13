@@ -24,6 +24,7 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { WorkLogRow } from "./WorkLog";
+import { WorkLogOutputTail } from "./WorkLogOutputTail";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -221,32 +222,6 @@ function StageRow({
   );
 }
 
-const OUTPUT_TAIL_LINES = 4;
-const OUTPUT_TAIL_SLOTS = Array.from({ length: OUTPUT_TAIL_LINES }, (_, slot) => slot);
-
-function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
-  const rows = OUTPUT_TAIL_SLOTS.map((slot) => ({
-    slot,
-    line: lines[lines.length - OUTPUT_TAIL_LINES + slot] ?? "",
-  }));
-  return (
-    <pre
-      className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
-        failed
-          ? "border-destructive/20 bg-error-surface text-destructive-foreground"
-          : "border-border bg-code text-muted-foreground",
-      )}
-    >
-      {rows.map(({ slot, line }) => (
-        <div key={slot} className="truncate whitespace-pre">
-          {line.length === 0 ? "\u00a0" : line}
-        </div>
-      ))}
-    </pre>
-  );
-}
-
 function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   return (
     <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -347,7 +322,7 @@ export function WorktreeSetupCard({
                 scriptName={snapshot.setupScript?.name ?? null}
               />
               {stage.id === "setup-script" && showTail ? (
-                <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
+                <WorkLogOutputTail lines={stage.tail} failed={stage.status === "failed"} />
               ) : null}
             </div>
           ))}
