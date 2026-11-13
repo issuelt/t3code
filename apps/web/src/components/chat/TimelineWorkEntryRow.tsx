@@ -371,18 +371,26 @@ function AgentMessageWorkRow({
     >
       {/* Find reads the DOM, so a folded report stays mounted but hidden while find is open. */}
       {expanded || ctx.findActive ? (
-        <div ref={revealRef} hidden={!expanded} onClick={stopRowToggle} onKeyDown={stopRowToggle}>
-          <WorkLogDetails>
-            <div className="border-s ps-3">
-              <AgentMessageAttachments attachments={attachments} />
-              <ChatMarkdown
-                text={reportMarkdown ?? workEntry.detail ?? ""}
-                cwd={ctx.markdownCwd}
-                threadRef={ctx.threadRef ?? undefined}
-                parseRawHtml={false}
-              />
-            </div>
-          </WorkLogDetails>
+        <div
+          ref={revealRef}
+          hidden={!expanded}
+          className={cn(
+            "ms-4.5 mt-1 min-w-0 cursor-auto rounded-2xl bg-message px-3 py-3 text-message-foreground select-text",
+            !ctx.findActive && "max-h-96 overflow-auto",
+          )}
+          onClick={stopRowToggle}
+          onKeyDown={stopRowToggle}
+          onPointerDown={stopRowToggle}
+        >
+          <AgentMessageAttachments attachments={attachments} />
+          <ChatMarkdown
+            text={reportMarkdown ?? workEntry.detail ?? ""}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            className="text-message-foreground user-message-markdown"
+            headingLevelOffset={MESSAGE_HEADING_LEVEL}
+            parseRawHtml={false}
+          />
         </div>
       ) : null}
     </WorkLogRow>
