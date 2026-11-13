@@ -304,21 +304,16 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
   };
-  /**
-   * The thread is Home. Its previous turn ended `idleMinutes` before this one and measured
-   * `usedTokens` of a 200k window.
-   */
   readonly home?: {
     readonly idleMinutes: number;
     readonly usedTokens?: number;
-    /** Usage an ACP provider reported on the provider thread instead of on its turns. */
     readonly threadUsedTokens?: number;
-    /** Home's native session still runs background work. */
     readonly backgroundWork?: boolean;
-    /** Home's earlier items; the real handoff service seeds a fresh session from them. */
     readonly history?: ReadonlyArray<OrchestrationV2TurnItem>;
-    /** This turn's message is a chief of staff's answer to a request Home sent before the roll. */
-    readonly report?: { readonly senderThreadId: ThreadId; readonly requestMessageId: MessageId };
+    readonly chiefOfStaffAnswer?: {
+      readonly senderThreadId: ThreadId;
+      readonly requestMessageId: MessageId;
+    };
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -398,15 +393,15 @@ function makeLocalCommandHarness(input: {
     creationSource: "web",
     createdAt: now,
     updatedAt: now,
-    ...(input.home?.report === undefined
+    ...(input.home?.chiefOfStaffAnswer === undefined
       ? {}
       : {
           createdBy: "system" as const,
           creationSource: "server" as const,
-          senderThreadId: input.home.report.senderThreadId,
+          senderThreadId: input.home.chiefOfStaffAnswer.senderThreadId,
           coordination: {
             kind: "response" as const,
-            requestMessageId: input.home.report.requestMessageId,
+            requestMessageId: input.home.chiefOfStaffAnswer.requestMessageId,
             originRunId: RunId.make("previous-failed-run"),
             owner: "coordination" as const,
           },
@@ -771,7 +766,6 @@ function makeLocalCommandHarness(input: {
               }),
         },
       ],
-      // Context usage counts only for the attempt that ran in the current native conversation.
       attempts:
         input.home === undefined
           ? projection.attempts
@@ -2166,7 +2160,6 @@ const homeItem = (input: {
       }
     : { ...base, type: "assistant_message", streaming: false };
 };
-// Twelve 4 KB replies: about 48 KB of Home's recent conversation.
 const homeHistory = [
   homeItem({ id: "ask", role: "user", text: "Watch the release threads.", ordinal: 1 }),
   ...Array.from({ length: 12 }, (_, index) =>
@@ -2234,7 +2227,6 @@ effectIt.effect("seeds a rolled Home session's first turn with 64 KB of its own 
 
     expect(harness.startTurn).toHaveBeenCalledOnce();
     const prompt = harness.startTurn.mock.calls[0]![0].message.text;
-    // A 16 KB seed keeps only the newest three replies and the first request.
     for (let index = 0; index < 12; index++) expect(prompt).toContain(`REPLY_${index} `);
     expect(prompt).toContain("Watch the release threads.");
     expect(prompt).toContain(
@@ -2251,7 +2243,7 @@ effectIt.effect("delivers a chief of staff's answer that arrives after a roll", 
       idleMinutes: 1,
       usedTokens: 100_000,
       history: homeHistory,
-      report: { senderThreadId: ThreadId.make("chief-of-staff"), requestMessageId },
+      chiefOfStaffAnswer: { senderThreadId: ThreadId.make("chief-of-staff"), requestMessageId },
     });
 
     expect(harness.previousTurnEnsureThread).toHaveBeenCalledWith(

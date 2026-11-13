@@ -204,7 +204,12 @@ describe("handoff budget", () => {
         omitted,
         ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
       ],
-      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      coverage: handoffCoverage({
+        threadId,
+        targetThreadId: threadId,
+        coveredRunOrdinals: { from: 1, to: 46 },
+        items: [],
+      }),
       budget: 3_000,
     });
     assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
@@ -212,14 +217,13 @@ describe("handoff budget", () => {
   });
 
   it("tells only a restarted Home session that the history is its own thread", () => {
-    const coverage = (targetThreadId?: string) =>
+    const coverage = (targetThreadId: string) =>
       handoffCoverage({
         threadId: "home:owner",
-        ...(targetThreadId === undefined ? {} : { targetThreadId }),
+        targetThreadId,
         coveredRunOrdinals: { from: 1, to: 2 },
         items: [],
       });
-    assert.include(coverage(), "Your session restarted.");
     assert.include(coverage("home:owner"), "Your session restarted.");
     assert.notInclude(coverage("fork-of-home"), "Your session restarted.");
   });
