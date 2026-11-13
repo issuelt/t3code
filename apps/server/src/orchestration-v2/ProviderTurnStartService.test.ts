@@ -307,6 +307,7 @@ function makeLocalCommandHarness(input: {
   readonly home?: {
     readonly idleMinutes: number;
     readonly usedTokens?: number;
+    readonly autoCompactThreshold?: number;
     readonly threadUsedTokens?: number;
     readonly backgroundWork?: boolean;
     readonly history?: ReadonlyArray<OrchestrationV2TurnItem>;
@@ -761,6 +762,9 @@ function makeLocalCommandHarness(input: {
                 tokenUsage: {
                   usedTokens: input.home.usedTokens,
                   maxTokens: 200_000,
+                  ...(input.home.autoCompactThreshold === undefined
+                    ? {}
+                    : { autoCompactThreshold: input.home.autoCompactThreshold }),
                   updatedAt: DateTime.formatIso(now),
                 },
               }),
@@ -2188,6 +2192,10 @@ const startHome = (home: NonNullable<Parameters<typeof makeLocalCommandHarness>[
 effectIt.effect.each([
   { name: "measured on its last turn", home: { idleMinutes: 1, usedTokens: 100_000 } },
   { name: "reported by an ACP provider", home: { idleMinutes: 1, threadUsedTokens: 100_000 } },
+  {
+    name: "past Claude's auto-compact threshold",
+    home: { idleMinutes: 1, usedTokens: 70_000, autoCompactThreshold: 67_000 },
+  },
 ])("rolls a half-full Home thread $name into a fresh session", ({ home }) =>
   Effect.gen(function* () {
     const harness = yield* startHome(home);

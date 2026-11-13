@@ -2215,7 +2215,7 @@ describe("PiAdapterV2", () => {
       });
       const budget = (model: string) =>
         handoffBudget({
-          tokenCap: 16_000,
+          byteCap: 16_000,
           userText: "$handoff",
           attachments: [],
           providerThread,

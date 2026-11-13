@@ -148,7 +148,7 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("skips small contexts, unknown expiry, other providers, switched threads, compactions, and side chats", () => {
+  it("skips small contexts, unknown expiry, other providers, switched threads, compactions, and side chats, and Home", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
     expect(idleCompactionWindow(records(), NOW_MS)).toBeNull();
@@ -189,6 +189,9 @@ describe("idleCompactionWindow", () => {
       lineage: { ...sideChat.thread.lineage, relationshipToParent: "fork", sideChat: true },
     };
     expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
+    const home = records(cache);
+    home.thread = { ...home.thread, id: ThreadId.make("home:idle") };
+    expect(idleCompactionWindow(home, NOW_MS)).toBeNull();
   });
 });
 

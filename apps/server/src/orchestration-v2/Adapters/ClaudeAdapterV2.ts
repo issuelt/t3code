@@ -137,6 +137,7 @@ import {
   type ThreadId,
   resolveIdleCompaction,
   isDelegatedAppThread,
+  isHomeThreadId,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -12238,14 +12239,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
-              const idleCompaction = Option.isSome(serverSettings)
-                ? yield* serverSettings.value.getSettings.pipe(
-                    Effect.map((settings) =>
-                      resolveIdleCompaction(settings, adapterOptions.instanceId),
-                    ),
-                    Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
-                  )
-                : adapterOptions.settings.idleCompaction;
+              const turn = yield* Ref.get(activeTurn);
+              // Home rolls into a fresh session instead of compacting.
+              const idleCompaction =
+                turn !== null && isHomeThreadId(turn.input.threadId)
+                  ? "off"
+                  : Option.isSome(serverSettings)
+                    ? yield* serverSettings.value.getSettings.pipe(
+                        Effect.map((settings) =>
+                          resolveIdleCompaction(settings, adapterOptions.instanceId),
+                        ),
+                        Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
+                      )
+                    : adapterOptions.settings.idleCompaction;
               if (idleCompaction === "off") {
                 return { behavior: "completed" as const, result: "continue" as const };
               }

@@ -3380,6 +3380,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subagentLaunchToolUseId?: string;
     readonly subagentModel?: string;
     readonly nativeSessionId?: string;
+    readonly threadId?: ThreadId;
     readonly settings?: ClaudeSettings;
     readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
     readonly freshQueueOnReopen?: boolean;
@@ -3558,7 +3559,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assertComplete: Effect.void,
         },
       });
-      const threadId = ThreadId.make("thread-claude-wake");
+      const threadId = options?.threadId ?? ThreadId.make("thread-claude-wake");
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
@@ -7030,6 +7031,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("keeps Home's full history on resume without asking", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ threadId: ThreadId.make("home:wake") });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-home-resume-dialog"),
+          text: "continue",
+          attachments: [],
+        }),
+      );
+      const dialog = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.onUserDialog!(
+          {
+            dialogKind: "resume_return",
+            payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
+          },
+          { signal: new AbortController().signal, requestId: "dialog-home-resume" },
+        ),
+      ).pipe(Effect.forkScoped);
+      const outcome = yield* Effect.raceFirst(
+        Fiber.join(dialog),
+        Queue.take(harness.runtimeRequestReceipts).pipe(Effect.as("asked the user")),
+      );
+      assert.deepEqual(outcome, { behavior: "completed", result: "continue" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("completes a turn after the resume dialog without a failed tool row", () =>
