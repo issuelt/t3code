@@ -1356,6 +1356,38 @@ it.effect("thread search links identify the environment that returned them", () 
   ),
 );
 
+/** The orchestrator toolkit with the given Home services, for Home routing tests. */
+const homeToolkitLayer = (
+  home: Layer.Layer<
+    | HomeService.HomeService
+    | HomeWorkspace.HomeWorkspace
+    | FleetService.FleetService
+    | FleetBroker.FleetBroker
+  >,
+) =>
+  layerOrchestratorToolkit.pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId)),
+        registerCoordinationRequest: () => Effect.void,
+      }),
+    ),
+    Layer.provide(home),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+    Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+    Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+    Layer.provide(Layer.mock(PeerLinks.PeerLinks)({ get: () => Effect.succeedNone })),
+    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+  );
+
 it.effect.each([
   {
     tool: "t3_thread_wait",
@@ -1405,32 +1437,31 @@ it.effect.each([
         input: { request: { op: tool.replace("t3_thread_", "threads."), input: args } },
       },
     ]);
-  }).pipe(
-    Effect.provide(
-      layerOrchestratorToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (threadId) =>
-              Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId)),
-            registerCoordinationRequest: () => Effect.void,
-          }),
-        ),
-        Layer.provide(home),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({ get: () => Effect.succeedNone })),
-        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-      ),
-    ),
+  }).pipe(Effect.provide(homeToolkitLayer(home)));
+});
+it.effect("Home reads its own thread when it omits threadId", () => {
+  const requests: Array<unknown> = [];
+  const home = Layer.mergeAll(
+    Layer.mock(HomeService.HomeService)({ available: true, isHome: () => Effect.succeed(true) }),
+    Layer.mock(HomeWorkspace.HomeWorkspace)({ root: "/home" }),
+    Layer.mock(FleetService.FleetService)({
+      execute: (invoke) => {
+        requests.push(invoke.request);
+        return Effect.succeed({ items: [] } as never);
+      },
+    }),
+    Layer.mock(FleetBroker.FleetBroker)({}),
   );
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server
+      .callTool({ name: "t3_thread_read", arguments: {} })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(requests).toEqual([{ op: "threads.read", input: { threadId } }]);
+  }).pipe(Effect.provide(homeToolkitLayer(home)));
 });
 it.effect(
   "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",

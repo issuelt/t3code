@@ -304,6 +304,8 @@ function makeLocalCommandHarness(input: {
   };
   /** The thread is Home, and its previous turn ended this many minutes before this one. */
   readonly homeIdleMinutes?: number;
+  /** Home's native session still runs background work. */
+  readonly homeBackgroundWork?: boolean;
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
    * the provider, or an earlier run that delivered it. `nativeForkFrom` plans a native fork of the
@@ -862,6 +864,8 @@ function makeLocalCommandHarness(input: {
                     providerSession,
                     ensureThread: previousTurnEnsureThread,
                     resumeThread: previousTurnResumeThread,
+                    hasPendingBackgroundWorkForThread: () =>
+                      Effect.succeed(input.homeBackgroundWork === true),
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
@@ -2084,12 +2088,20 @@ effectIt.effect("starts an idle Home thread in a fresh session with its recent h
   }),
 );
 
-effectIt.effect("resumes a Home thread whose prompt cache is still warm", () =>
+effectIt.effect.each([
+  { name: "whose prompt cache is still warm", homeIdleMinutes: 2, homeBackgroundWork: false },
+  {
+    name: "whose session still runs background work",
+    homeIdleMinutes: 6,
+    homeBackgroundWork: true,
+  },
+])("resumes a Home thread $name", ({ homeIdleMinutes, homeBackgroundWork }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text: "Continue",
       previousTurn: { runStatus: "completed", turnStatus: "completed" },
-      homeIdleMinutes: 2,
+      homeIdleMinutes,
+      homeBackgroundWork,
     });
     // The harness dates its turns at 2026-09-04T12:00:00Z.
     yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00Z"));

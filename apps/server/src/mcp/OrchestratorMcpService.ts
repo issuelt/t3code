@@ -3270,7 +3270,7 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
-      const threadId = input.threadId ?? scope.thread?.threadId;
+      const { threadId } = input;
       if (threadId === undefined) {
         return yield* failure(
           "target_required",

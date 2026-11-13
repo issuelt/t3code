@@ -176,11 +176,18 @@ const handlers = {
       return yield* service.listThreads(scope, input);
     }),
   ),
-  t3_thread_read: McpToolAccess.reads((input) =>
+  t3_thread_read: McpToolAccess.reads((rawInput) =>
     Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      // "This thread" exists only here, so resolve it before Home routes the read.
+      const local =
+        rawInput.environmentId === undefined || rawInput.environmentId === scope.environmentId;
+      const input =
+        rawInput.threadId === undefined && local && scope.thread !== undefined
+          ? { ...rawInput, threadId: scope.thread.threadId }
+          : rawInput;
       const routed = yield* routeHome(input.environmentId, "threads.read", input);
       if (Option.isSome(routed)) return routed.value;
-      const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.readThread(scope, input);
     }),

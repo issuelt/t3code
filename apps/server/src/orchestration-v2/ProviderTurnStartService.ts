@@ -1259,7 +1259,7 @@ export const layer: Layer.Layer<
             candidate.startedAt !== null,
         );
         const nativeUsage = latestNativeContextUsage(projection, providerThread)?.usage;
-        const homeRoll = isHomeThreadId(projection.thread.id)
+        const homeRollReason = isHomeThreadId(projection.thread.id)
           ? homeSessionRollReason({
               lastTurnAt: previousTurnRun?.completedAt ?? previousTurnRun?.startedAt ?? null,
               usedTokens: nativeUsage?.usedTokens,
@@ -1269,6 +1269,17 @@ export const layer: Layer.Layer<
               now: yield* DateTime.now,
             })
           : null;
+        // A replacement session cannot adopt background work still running in the old one.
+        const homeHasBackgroundWork =
+          homeRollReason !== null &&
+          (yield* (
+            session.hasPendingBackgroundWorkForThread?.(providerThread, {
+              includeSubagents: true,
+            }) ??
+              session.hasPendingBackgroundWork ??
+              Effect.succeed(false)
+          ));
+        const homeRoll = homeHasBackgroundWork ? null : homeRollReason;
         const skipResume = uncertainDelivery
           ? "Uncertain native history injection"
           : homeRoll === null
