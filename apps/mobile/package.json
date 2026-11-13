@@ -178,6 +178,7 @@
     "autolinking": {
       "buildFromSource": [
         "expo-modules-core",
+        "expo-camera",
         "@expo/ui",
         "expo-ui",
         "expo-notifications",

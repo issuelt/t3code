@@ -32,6 +32,7 @@ responses received during callbacks. The [expo-modules-core patch](../../patches
 the permission requester registry for the same reason. Both packages must stay in Expo's
 `buildFromSource` list or their precompiled frameworks bypass the patched source.
 Building ExpoModulesCore from source also forces its dependent Expo pods to build from source.
+`expo-camera` is also listed because its prebuilt barcode scanner links ExpoModulesCore and ExpoCamera dynamically.
 Changes to these native patches require reinstalling dependencies and rebuilding the iOS app. pnpm keys each patch
 to one exact version, so an Expo upgrade must port it and update `patchedDependencies`, or the fix
 silently drops.
