@@ -1,6 +1,7 @@
 import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  connectLinkOrigin,
   applyWslEnableSelection,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
@@ -199,5 +200,17 @@ describe("resolveAccessEnvironmentId", () => {
     expect(resolveAccessEnvironmentId({ primaryEnvironmentId, environments, selected })).toBe(
       expected,
     );
+  });
+});
+
+describe("connectLinkOrigin", () => {
+  it.each([
+    ["https://devbox.example.com:3773/pair#token=SECRET", "https://devbox.example.com:3773"],
+    ["  http://192.0.2.10:3773/  ", "http://192.0.2.10:3773"],
+    ["javascript:alert(1)", null],
+    ["not a url", null],
+    [42, null],
+  ] as const)("%o: %s", (value, expected) => {
+    expect(connectLinkOrigin(value)).toBe(expected);
   });
 });

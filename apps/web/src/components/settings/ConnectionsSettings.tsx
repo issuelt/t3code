@@ -1,5 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
@@ -330,11 +330,29 @@ function ConnectionsSettingsContent({
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
-  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  // A link that names an address to pair with opens Add environment on it, also when this
+  // page is already open.
+  const navigate = useNavigate();
+  const connectHost = useSearch({
+    strict: false,
+    select: (search) => (typeof search.connect === "string" ? search.connect : null),
+  });
+  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(
+    view === "environments" && connectHost !== null,
+  );
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   // With routeTarget: the saved address whose pairing that machine refused.
   const [pairAgainHost, setPairAgainHost] = useState<string | null>(null);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
+  const [openedForConnectHost, setOpenedForConnectHost] = useState(connectHost);
+  if (connectHost !== openedForConnectHost) {
+    setOpenedForConnectHost(connectHost);
+    if (view === "environments" && connectHost !== null) {
+      setAddBackendDialogOpen(true);
+      setRouteTarget(null);
+      setPairAgainHost(null);
+    }
+  }
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
     if (open) {
@@ -342,6 +360,8 @@ function ConnectionsSettingsContent({
       setPairAgainHost(null);
     } else {
       setSavedBackendError(null);
+      // Closing forgets the link's address, so reload or Back doesn't reopen the dialog.
+      if (connectHost !== null) void navigate({ to: ".", search: {}, replace: true });
     }
   };
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
@@ -1607,6 +1627,7 @@ function ConnectionsSettingsContent({
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
               pairAgainHost={pairAgainHost}
+              initialHost={view === "environments" ? connectHost : null}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}

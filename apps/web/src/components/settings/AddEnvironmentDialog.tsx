@@ -71,6 +71,7 @@ export function AddEnvironmentDialog({
   open,
   routeTarget,
   pairAgainHost = null,
+  initialHost = null,
   error,
   savedEnvironments,
   onOpenChange,
@@ -80,6 +81,8 @@ export function AddEnvironmentDialog({
   readonly routeTarget: EnvironmentPresentation | null;
   /** With routeTarget: the saved address whose pairing that machine refused. */
   readonly pairAgainHost?: string | null;
+  /** The address to pair with when the dialog mounts open. */
+  readonly initialHost?: string | null;
   readonly error: string | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
   readonly onOpenChange: (open: boolean) => void;
@@ -113,7 +116,7 @@ export function AddEnvironmentDialog({
     return keys;
   })();
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
-  const [savedBackendHost, setSavedBackendHost] = useState("");
+  const [savedBackendHost, setSavedBackendHost] = useState(open ? (initialHost ?? "") : "");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
@@ -123,9 +126,14 @@ export function AddEnvironmentDialog({
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const pairingAgain = routeTarget !== null && pairAgainHost !== null;
   const [lastOpen, setLastOpen] = useState(open);
-  if (open !== lastOpen) {
+  const [lastInitialHost, setLastInitialHost] = useState(initialHost);
+  if (open !== lastOpen || initialHost !== lastInitialHost) {
+    const opened = open && !lastOpen;
     setLastOpen(open);
+    setLastInitialHost(initialHost);
     if (open && pairingAgain) setSavedBackendHost(pairAgainHost);
+    else if (open && initialHost !== null && (opened || initialHost !== lastInitialHost))
+      setSavedBackendHost(initialHost);
   }
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
