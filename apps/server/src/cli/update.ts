@@ -33,6 +33,7 @@ import {
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
   recordedPinnedRuntimeLaunchers,
+  resolveLauncherPath,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
@@ -232,28 +233,6 @@ export const repointRecordedLaunchers = Effect.fn("cli.update.repoint_recorded_l
     return repointed;
   },
 );
-
-/** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
-export const resolveLauncherPath = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const invokedAs = yield* HostProcess.InvokedAs;
-  const cwd = yield* HostProcess.WorkingDirectory;
-  const environment = yield* HostProcess.Environment;
-  const platform = yield* HostProcess.Platform;
-  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
-    return path.resolve(cwd, invokedAs);
-  }
-  const delimiter = platform === "win32" ? ";" : ":";
-  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
-    if (directory.length === 0) continue;
-    const candidate = path.join(directory, invokedAs);
-    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-      return candidate;
-    }
-  }
-  return undefined;
-});
 
 /** Windows executables see their own path, so find the installer shim by matching t3.cmd targets on PATH. */
 export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (

@@ -73,6 +73,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProviderAdapterRegistryV2)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
@@ -89,7 +90,6 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(FleetService)({}),
   Layer.mock(HomeService)({ available: false }),
   Layer.mock(HomeWorkspace)({ root: "" }),
-  Layer.mock(PullRequestService)({}),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");

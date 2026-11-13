@@ -4,7 +4,8 @@
     {
       "number": 15030,
       "takenSha": "10a559eb78969c6b4338baa550a8383506ffb0a2",
-      "reason": "iOS race fixes and Android keyboard parity"
+      "reason": "iOS race fixes and Android keyboard parity",
+      "closedUpstream": true
     },
     {
       "number": 15975,
@@ -18,12 +19,6 @@
       "closedUpstream": true
     },
     {
-      "number": 17618,
-      "takenSha": "ce7e86f0aece6a52073c8be09ab3db479c14d532",
-      "reason": "Claude next-prompt composer ghost text",
-      "closedUpstream": true
-    },
-    {
       "number": 17890,
       "takenSha": "8f5b0434d7404ca8d1cfa0f60c62b79a7b719b1a",
       "reason": "Android subscription usage widgets",
@@ -31,34 +26,27 @@
       "closedUpstream": true
     },
     {
-      "number": 18634,
-      "takenSha": "dc6f194db92178418f6aa34ceeb2bc4577ab0b17",
-      "reason": "Android tablets launched in landscape open full screen"
-    },
-    {
-      "number": 18839,
-      "takenSha": "9d3aac8a0ee60a1883f067185ca1a9705e385360",
-      "reason": "Android PR viewer keeps the chat back stack"
-    },
-    {
       "number": 19273,
       "takenSha": "b8d5c37cf59f7989edaf14dea2822f28ae841fdb",
-      "reason": "Local-model composer dictation"
+      "reason": "Local-model composer dictation",
+      "closedUpstream": true
     },
     {
       "number": 21709,
       "takenSha": "a381ca2331281df2d77fcb0b5ce7fd4f75205116",
-      "reason": "Pair again reconnects a computer whose 30-day login expired (diff only, branch merged newer upstream main)"
+      "reason": "Pair again reconnects a computer whose 30-day login expired (diff only, branch merged newer upstream main)",
+      "closedUpstream": true
     },
     {
       "number": 28719,
       "takenSha": "8dc3e6ff446dc1f1a714288091249ee86c91735b",
-      "reason": "Desktop cache miss lets the server hydrate PATH before provider checks"
+      "reason": "Desktop cache miss lets the server hydrate PATH before provider checks",
+      "closedUpstream": true
     },
     {
       "number": 31169,
-      "takenSha": "afede16a7a38b21be21ee696a1c3027f6f6b73e7",
-      "reason": "Providers re-check when a shell PATH arrives after startup; fork also re-checks failed checks"
+      "takenSha": "21d6fe6c7f65b32962fcea1fcfcb00b6ace178f5",
+      "reason": "Providers re-check after late shell PATH; rebuild only missing installs or Codex launch failures"
     }
   ]
 }

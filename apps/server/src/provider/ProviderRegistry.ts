@@ -4,6 +4,7 @@ import {
   isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type SecretReference,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ import {
   latestProviderVersionCacheKeys,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import { isCodexLaunchFailure } from "./CodexProvider.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -71,10 +73,16 @@ export class ProviderRegistry extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
-     * Rebuilds and re-checks enabled instances not found or whose check failed, after the host environment
-     * changed. Drivers copy the environment when built, so only a rebuild sees a later PATH.
+     * Rebuilds and re-checks enabled instances not yet found installed, plus Codex CLIs that cannot run,
+     * after the host environment changed. Drivers copy the environment when built, so only a rebuild
+     * sees a later PATH.
      */
     readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
+    /** Rebuilds and refreshes only the instances that read a secret, with the value the caller just read. */
+    readonly applySecretAndRefresh: (
+      reference: SecretReference,
+      value: string,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Only refreshed instances can verify an update; the published list still includes every row. */
     readonly refreshAfterUpdate: (
@@ -117,6 +125,7 @@ export class ProviderRegistry extends Context.Service<
       readonly instanceId: ProviderInstanceId;
       readonly action: ProviderMaintenanceActionKind;
       readonly state: ServerProviderUpdateState | null;
+      readonly targetVersion?: string | undefined;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
@@ -478,7 +487,10 @@ export const layer = Layer.effect(
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
+      ReadonlyMap<
+        ProviderInstanceId,
+        { readonly update?: ServerProviderUpdateState; readonly targetVersion?: string | undefined }
+      >
     >(new Map());
 
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
@@ -598,6 +610,21 @@ export const layer = Layer.effect(
         readonly publish?: boolean;
       },
     ) {
+      // Latest-version status cannot resolve a failed recommended-version install.
+      if (provider.versionAdvisory?.status === "current") {
+        yield* Ref.update(maintenanceActionStatesRef, (previous) => {
+          const action = previous.get(provider.instanceId);
+          if (
+            action?.targetVersion !== undefined ||
+            (action?.update?.status !== "unchanged" && action?.update?.status !== "failed")
+          ) {
+            return previous;
+          }
+          const next = new Map(previous);
+          next.delete(provider.instanceId);
+          return next;
+        });
+      }
       const providers = yield* upsertProviders([provider], options);
       yield* refreshCompatibility;
       return providers;
@@ -608,21 +635,14 @@ export const layer = Layer.effect(
         readonly instanceId: ProviderInstanceId;
         readonly action: "update";
         readonly state: ServerProviderUpdateState | null;
+        readonly targetVersion?: string | undefined;
       }) {
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
-          const previousActions = previous.get(input.instanceId);
-          const nextActions = { ...previousActions };
-          if (input.state === null || input.state.status === "idle") {
-            delete nextActions[input.action];
-          } else {
-            nextActions[input.action] = input.state;
-          }
-
           const next = new Map(previous);
-          if (Object.keys(nextActions).length === 0) {
+          if (input.state === null || input.state.status === "idle") {
             next.delete(input.instanceId);
           } else {
-            next.set(input.instanceId, nextActions);
+            next.set(input.instanceId, { update: input.state, targetVersion: input.targetVersion });
           }
           return next;
         });
@@ -745,11 +765,12 @@ export const layer = Layer.effect(
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
-    // Instances whose check passed keep running; restarting them could end live sessions. A failed
-    // check is rebuilt too: an npm launcher is found on the bare PATH but cannot find its node.
+    // Instances whose check passed keep running; restarting them could end live sessions. A Codex
+    // CLI that spawns but cannot run (its npm launcher lacks node) is rebuilt too. Auth, network,
+    // and timeout errors are not, since a rebuild would close their sessions.
     const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
       const instances = yield* instanceRegistry.listInstances;
-      yield* refresh();
+      yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
       const missing = yield* Effect.filter(instances, (instance) =>
         Effect.gen(function* () {
           // ACP also reports installed:false for setup states unrelated to executable discovery.
@@ -760,12 +781,32 @@ export const layer = Layer.effect(
           )
             return false;
           const snapshot = yield* instance.snapshot.getSnapshot;
-          return !snapshot.installed || snapshot.status === "error";
+          return (
+            !snapshot.installed ||
+            (instance.driverKind === ProviderDriverKind.make("codex") &&
+              isCodexLaunchFailure(snapshot))
+          );
         }),
       );
       if (missing.length === 0) return yield* Ref.get(providersRef);
       yield* instanceRegistryMutator.rebuild(missing);
-      return yield* refresh();
+      // A shared pass already in flight may hold the retired instances, so probe each rebuilt one.
+      yield* Effect.forEach(
+        missing,
+        (instance) =>
+          refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
+    const applySecretAndRefresh = Effect.fn("applySecretAndRefresh")(function* (
+      reference: SecretReference,
+      value: string,
+    ) {
+      const instanceIds = yield* instanceRegistryMutator.applySecret(reference, value);
+      yield* Effect.forEach(instanceIds, refreshInstance, { discard: true });
+      return yield* Ref.get(providersRef);
     });
 
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
@@ -1208,6 +1249,8 @@ export const layer = Layer.effect(
       rebuildMissingAndRefresh: rebuildMissingAndRefresh().pipe(
         Effect.catchCause(recoverRefreshFailure),
       ),
+      applySecretAndRefresh: (reference: SecretReference, value: string) =>
+        applySecretAndRefresh(reference, value).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,

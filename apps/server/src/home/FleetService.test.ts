@@ -1,24 +1,38 @@
 import { expect, it } from "@effect/vitest";
 import {
+  CommandId,
   EnvironmentId,
+  EventId,
+  FleetThreadSearchResult,
   MessageId,
+  OrchestratorMcpThreadReadResult,
   RunId,
   type FleetInput,
   type ExecutionEnvironmentDescriptor,
   type Project as ContractProject,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -31,6 +45,9 @@ import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as Repositories from "../sourceControl/SourceControlRepositoryService.ts";
 import * as FleetService from "./FleetService.ts";
 import { isCoordinationRun, requestResults } from "../orchestration-v2/CoordinationDelivery.ts";
+
+const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadSearch = Schema.decodeUnknownEffect(FleetThreadSearchResult);
 
 const actor = { environmentId: EnvironmentId.make("hub"), threadId: ThreadId.make("home") };
 const threadId = ThreadId.make("worker");
@@ -67,7 +84,7 @@ const shell = (
     ...overrides,
   }) as unknown as OrchestrationV2ThreadShell;
 
-const setup = () => {
+const setup = (threadManagement?: ThreadManagement.ThreadManagementService["Service"]) => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const sent: Array<ThreadManagement.ThreadManagementSendInput> = [];
@@ -199,6 +216,7 @@ const setup = () => {
             dispatched.push(command);
             return Effect.succeed({ sequence: 7, storedEvents: [] } as never);
           },
+          ...threadManagement,
         }),
       ),
     ),
@@ -230,6 +248,120 @@ it.effect("lists threads from every project, newest first, with snooze state", (
       request: { op: "threads.list", input: { snoozed: true } },
     });
     expect(snoozed).toMatchObject({ total: 1, threads: [{ threadId: "snoozed" }] });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reads newest thread history by default and follows explicit cursors", () => {
+  const database = SqlitePersistence.layerMemory;
+  const instanceId = ProviderInstanceId.make("codex");
+  const orchestrator = ProviderReplayHarness.layerWithRegistry(
+    { name: "fleet-thread-read" },
+    ProviderAdapterRegistry.layerFromAdapters([
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+        openSession: () => Effect.die("History reads do not execute provider turns."),
+      },
+    ]),
+    { databaseLayer: database, runEffectWorker: false },
+  );
+  const layer = ThreadManagement.layer.pipe(
+    Layer.provideMerge(orchestrator),
+    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(database))),
+    Layer.provide(database),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const commands = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* commands.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("fleet-read:create"),
+      threadId,
+      projectId: ProjectId.make("fleet-read"),
+      title: "Read history",
+      modelSelection: { instanceId, model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* commands.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fleet-read:message"),
+      threadId,
+      messageId: MessageId.make("fleet-read:message"),
+      text: "Seed history",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* threads.getThreadRecords(threadId, ["runs"])).runs[0];
+    if (run === undefined) throw new Error("The history fixture has no run.");
+    const now = yield* DateTime.now;
+    yield* sink.write({
+      events: ["oldest", "middle", "latest"].map((text, index) => ({
+        id: EventId.make(`fleet-read:item:${index}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: run.id,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`fleet-read:item:${index}`),
+          threadId,
+          runId: run.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: index + 1,
+          type: "reasoning",
+          text,
+          streaming: false,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      })),
+    });
+    const { layer: fleetLayer } = setup(threads);
+    yield* Effect.gen(function* () {
+      const fleet = yield* FleetService.FleetService;
+      const read = (cursor: { afterPosition?: number; beforePosition?: number }) =>
+        fleet
+          .execute({
+            actor,
+            request: {
+              op: "threads.read",
+              input: { threadId, view: "activity", limit: 2, ...cursor },
+            },
+          })
+          .pipe(Effect.flatMap(decodeThreadRead));
+      const latest = yield* read({});
+      expect(latest.items.map((item) => item.text)).toEqual(["middle", "latest"]);
+      expect(latest.hasMore).toBe(false);
+      const beforePosition = latest.earlierPosition;
+      if (beforePosition === undefined || beforePosition === null)
+        throw new Error("The latest page has no cursor for older history.");
+      expect(beforePosition).toBe(latest.items[0]?.position);
+      const first = yield* read({ afterPosition: -1 });
+      expect(first.items.map((item) => item.text)).toEqual(["Seed history", "oldest"]);
+      expect(first.hasMore).toBe(true);
+      const older = yield* read({ beforePosition });
+      expect(older.items).toEqual(first.items);
+      expect(older.earlierPosition).toBeNull();
+    }).pipe(Effect.provide(fleetLayer));
   }).pipe(Effect.provide(layer));
 });
 
@@ -267,6 +399,7 @@ it.effect("clones and searches in the environment that runs the operation", () =
     });
     expect(searched).toEqual([{ query: "fleet" }]);
     expect(result).toEqual({
+      currentThreadId: null,
       matches: [
         {
           threadId: "found",
@@ -277,6 +410,12 @@ it.effect("clones and searches in the environment that runs the operation", () =
         },
       ],
     });
+    const local = yield* fleet.execute({
+      actor: { ...actor, environmentId: EnvironmentId.make("studio") },
+      request: { op: "threads.search", input: { query: "fleet" } },
+    });
+    const decoded = yield* decodeThreadSearch(local);
+    expect(decoded.currentThreadId).toBe(actor.threadId);
   }).pipe(Effect.provide(layer));
 });
 

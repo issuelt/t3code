@@ -55,7 +55,6 @@ const run = <A, E>(
   effect.pipe(
     Effect.provideService(HostProcess.Addresses, Effect.succeed(new Set(["127.0.0.1"]))),
     Effect.provide(NodeServices.layer),
-    Effect.scoped,
   );
 
 const writeCookieDatabase = (file: string, count: number) =>

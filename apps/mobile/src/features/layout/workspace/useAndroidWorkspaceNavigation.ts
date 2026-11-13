@@ -1,63 +1,29 @@
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
 import { BackHandler, Keyboard, Platform } from "react-native";
-import {
-  resetAndroidWorkspace,
-  returnToAndroidWorkspaceList,
-} from "../../../lib/android-workspace-navigation";
-import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import type { WorkspaceTab } from "./workspace-tabs-state";
+import { returnToAndroidWorkspaceList } from "../../../lib/android-workspace-navigation";
 
-export function useWorkspaceListNavigation(tab: WorkspaceTab) {
+export function useWorkspaceBackNavigation() {
   const navigation = useNavigation();
-  const dispatch = useWorkspaceTabs()?.dispatch;
   return () => {
-    if (Platform.OS === "android") {
-      dispatch?.({ type: "select", tab });
-      resetAndroidWorkspace(navigation);
-    } else if (navigation.canGoBack()) navigation.goBack();
+    if (Platform.OS === "android") returnToAndroidWorkspaceList(navigation);
+    else if (navigation.canGoBack()) navigation.goBack();
     else navigation.dispatch(StackActions.replace("Home"));
   };
 }
 
-export function useWorkspaceBackNavigation(tab: WorkspaceTab) {
-  const navigation = useNavigation();
-  const dispatch = useWorkspaceTabs()?.dispatch;
-  const returnToList = useWorkspaceListNavigation(tab);
-  return () => {
-    if (Platform.OS === "android") {
-      const state = navigation.getState();
-      const current = state?.routes[state.index];
-      const previous = state?.routes[state.index - 1];
-      // PRs opened from chat and chats opened from a PR retain their contextual history.
-      if (
-        (current?.name === "PullRequest" && previous?.name === "Thread") ||
-        (current?.name === "Thread" && previous?.name === "PullRequest")
-      ) {
-        navigation.goBack();
-        return;
-      }
-      returnToAndroidWorkspaceList(navigation, () => dispatch?.({ type: "select", tab }));
-    } else returnToList();
-  };
-}
-
-export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
-  const navigation = useNavigation();
-  const dispatch = useWorkspaceTabs()?.dispatch;
-  const goBack = useWorkspaceBackNavigation(tab);
+export function useAndroidWorkspaceBack() {
+  const goBack = useWorkspaceBackNavigation();
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android") return;
-      // A chat opened from a PR, or a PR from a chat, keeps the tab it was opened from.
-      if ((navigation.getState()?.index ?? 0) <= 1) dispatch?.({ type: "select", tab });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         if (Keyboard.isVisible()) Keyboard.dismiss();
         else goBack();
         return true;
       });
       return () => subscription.remove();
-    }, [navigation, goBack, dispatch, tab]),
+    }, [goBack]),
   );
   return goBack;
 }

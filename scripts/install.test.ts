@@ -130,6 +130,58 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
   });
 });
 
+// regression: #35834
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "installer archive download",
+  () => {
+    it("names the archive when it returns 404", async () => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-archive-"));
+      const arch = HostProcess.Architecture.defaultValue() === "arm64" ? "arm64" : "x64";
+      const archive = `t3-1.2.3-linux-${arch}.tar.gz`;
+      const server = NodeHttp.createServer((request, response) => {
+        if (request.url === "/v1.2.3/SHA256SUMS")
+          return response.end(`${"0".repeat(64)}  ${archive}\n`);
+        response.writeHead(404).end();
+      });
+      try {
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+        const { code, output } = await new Promise<{ code: number | null; output: string }>(
+          (resolve, reject) => {
+            const child = NodeChildProcess.spawn(
+              "sh",
+              [NodePath.resolve(import.meta.dirname, "install.sh")],
+              {
+                env: {
+                  ...process.env,
+                  T3CODE_CHANNEL: "",
+                  T3CODE_VERSION: "1.2.3",
+                  T3CODE_HOME: NodePath.join(root, "home"),
+                  T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+                  T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+                },
+                stdio: ["ignore", "pipe", "pipe"],
+              },
+            );
+            let output = "";
+            child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+            child.on("error", reject);
+            child.on("close", (code) => resolve({ code, output }));
+          },
+        );
+        expect(code, output).not.toBe(0);
+        expect(output).toMatch(new RegExp(`t3 install: .*${archive.replaceAll(".", "\\.")}`));
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    });
+  },
+);
+
 /** Runs an installer for a version that is already unpacked, so only the t3 command step runs. */
 async function installOver(input: {
   readonly script: "install.sh" | "install.ps1";
@@ -170,6 +222,28 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       const binDir = NodePath.join(root, "bin");
       const link = NodePath.join(binDir, "t3");
       await NodeFSP.mkdir(binDir, { recursive: true });
+      const tools = NodePath.join(root, "tools");
+      await NodeFSP.mkdir(tools);
+      for (const command of [
+        "sh",
+        "uname",
+        "tar",
+        "sha256sum",
+        "cat",
+        "mkdir",
+        "readlink",
+        "dirname",
+        "ln",
+        "grep",
+        "tr",
+      ]) {
+        const executable = NodeChildProcess.execFileSync(
+          "sh",
+          ["-c", 'command -v "$1"', "sh", command],
+          { encoding: "utf8" },
+        ).trim();
+        await NodeFSP.symlink(executable, NodePath.join(tools, command));
+      }
 
       await NodeFSP.writeFile(link, "#!/bin/sh\necho mine\n");
       const foreign = await installOver({ script: "install.sh", home, binDir });
@@ -212,7 +286,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         script: "install.sh",
         home: NodePath.join(root, "alias"),
         binDir,
-        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: tools },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(
@@ -222,12 +296,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
       );
 
-      // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
+      // Bash fills an unset SHELL from passwd; an empty value exercises the missing-shell fallback.
       const noShell = await installOver({
         script: "install.sh",
         home,
         binDir,
-        env: { HOME: root, SHELL: undefined, PATH: "/usr/bin:/bin" },
+        env: { HOME: root, SHELL: "", PATH: tools },
       });
       expect(noShell.code, noShell.output).toBe(0);
       expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
@@ -237,7 +311,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         script: "install.sh",
         home,
         binDir,
-        env: { HOME: root, PATH: `${binDir}/:/usr/bin:/bin` },
+        env: { HOME: root, PATH: `${binDir}/:${tools}` },
       });
       expect(slashed.code, slashed.output).toBe(0);
       expect(slashed.output).toContain("Run t3 to use T3 Code here");
@@ -248,7 +322,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         home,
         binDir: "bin",
         cwd: root,
-        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: tools },
       });
       expect(relative.code, relative.output).toBe(0);
       expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);

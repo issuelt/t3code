@@ -92,7 +92,6 @@ export function usePullRequestThreads(
   const openThread = (thread: LinkedThread) => {
     openThreadRoute({ environmentId: params.environmentId, threadId: thread.id });
   };
-  // Opens over the pull request, so Back returns to its diff.
   const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) => {
     navigation.dispatch(StackActions.push("Thread", destination));
   };
