@@ -2080,6 +2080,7 @@ effectIt.effect("starts an idle Home thread in a fresh session with its recent h
       expect.objectContaining({ forceNewNativeThread: true }),
     );
     expect(harness.projection().contextHandoffs.at(-1)?.strategy).toBe("full_thread_summary");
+    expect(harness.projection().turnItems.filter((item) => item.type === "handoff")).toEqual([]);
   }),
 );
 

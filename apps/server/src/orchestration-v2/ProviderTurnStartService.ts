@@ -1463,7 +1463,8 @@ export const layer: Layer.Layer<
             },
           ],
         });
-        recoveryTurnItem = handoffTurnItem;
+        // A Home rollover is routine, not a recovery, so it leaves no divider in the thread.
+        recoveryTurnItem = homeRoll === null ? handoffTurnItem : undefined;
         return replacement;
       });
       if (loadedProviderThread === undefined) return;
