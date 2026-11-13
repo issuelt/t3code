@@ -25,8 +25,9 @@ so choose a model you trust with that.
 - Home links every thread it mentions. Click a link to open that thread, on any
   of your machines.
 - Home hears about the threads it started when they finish, fail, ask a question
-  or need an approval. The desktop app does not notify you about those threads; Home
-  tells you what matters in its own thread.
+  or need an approval. The desktop app does not notify you about those threads.
+  Home texts you instead: one short line when a thread finishes, and otherwise only
+  when something needs you. Ask it for details when you want them.
 - Home leaves the threads you started alone. Ask it to watch a thread, or every
   thread, when you want it to step in.
 - Home cannot delete threads or projects.
