@@ -211,6 +211,19 @@ describe("handoff budget", () => {
     assert.include(selected.context, omitted.itemId);
   });
 
+  it("tells only a restarted Home session that the history is its own thread", () => {
+    const coverage = (targetThreadId?: string) =>
+      handoffCoverage({
+        threadId: "home:owner",
+        ...(targetThreadId === undefined ? {} : { targetThreadId }),
+        coveredRunOrdinals: { from: 1, to: 2 },
+        items: [],
+      });
+    assert.include(coverage(), "Your session restarted.");
+    assert.include(coverage("home:owner"), "Your session restarted.");
+    assert.notInclude(coverage("fork-of-home"), "Your session restarted.");
+  });
+
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {
     const candidates = Array.from({ length: 500 }, (_, i) =>
       message(`item:${i}`, i % 2 ? "assistant" : "user", '\u0000\\"🧪界'.repeat(15)),

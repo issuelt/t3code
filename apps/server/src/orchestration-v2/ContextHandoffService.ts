@@ -458,6 +458,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           );
         const coverage = handoffCoverage({
           threadId: input.sourceThreadId,
+          targetThreadId: input.targetThreadId,
           coveredRunOrdinals: input.coveredRunOrdinals,
           items: input.deltaItems,
         });
@@ -536,6 +537,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       const coverage = handoffCoverage({
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
+        targetThreadId: input.threadId,
       });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {

@@ -1260,7 +1260,11 @@ export const layer: Layer.Layer<
             candidate.ordinal < run.ordinal &&
             candidate.startedAt !== null,
         );
-        const nativeUsage = latestNativeContextUsage(projection, providerThread)?.usage;
+        // ACP providers report usage on the provider thread, not on each provider turn.
+        const nativeUsage =
+          latestNativeContextUsage(projection, providerThread)?.usage ??
+          providerThread.contextUsage ??
+          undefined;
         const homeFull =
           isHomeThreadId(projection.thread.id) &&
           homeContextHalfFull({

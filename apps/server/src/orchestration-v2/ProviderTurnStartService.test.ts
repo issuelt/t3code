@@ -311,6 +311,8 @@ function makeLocalCommandHarness(input: {
   readonly home?: {
     readonly idleMinutes: number;
     readonly usedTokens?: number;
+    /** Usage an ACP provider reported on the provider thread instead of on its turns. */
+    readonly threadUsedTokens?: number;
     /** Home's native session still runs background work. */
     readonly backgroundWork?: boolean;
     /** Home's earlier items; the real handoff service seeds a fresh session from them. */
@@ -742,6 +744,9 @@ function makeLocalCommandHarness(input: {
             nativeId: "existing-native-conversation",
             strength: "strong",
           },
+          ...(input.home?.threadUsedTokens === undefined
+            ? {}
+            : { contextUsage: { usedTokens: input.home.threadUsedTokens, maxTokens: 200_000 } }),
         },
       ],
       providerTurns: [
@@ -2187,9 +2192,12 @@ const startHome = (home: NonNullable<Parameters<typeof makeLocalCommandHarness>[
     return harness;
   });
 
-effectIt.effect("rolls a half-full Home thread into a fresh session", () =>
+effectIt.effect.each([
+  { name: "measured on its last turn", home: { idleMinutes: 1, usedTokens: 100_000 } },
+  { name: "reported by an ACP provider", home: { idleMinutes: 1, threadUsedTokens: 100_000 } },
+])("rolls a half-full Home thread $name into a fresh session", ({ home }) =>
   Effect.gen(function* () {
-    const harness = yield* startHome({ idleMinutes: 1, usedTokens: 100_000 });
+    const harness = yield* startHome(home);
 
     expect(harness.previousTurnResumeThread).not.toHaveBeenCalled();
     expect(harness.previousTurnEnsureThread).toHaveBeenCalledWith(

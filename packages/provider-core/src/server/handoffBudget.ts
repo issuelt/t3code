@@ -301,6 +301,8 @@ export function selectHistory(input: {
 
 export function handoffCoverage(input: {
   readonly threadId: string;
+  /** The thread receiving the handoff, when it differs from the source, as in a fork. */
+  readonly targetThreadId?: string;
   readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
 }): string {
@@ -308,7 +310,8 @@ export function handoffCoverage(input: {
     `Provider context handoff. Thread: ${input.threadId}. Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}.`,
     `Source item range: ${input.items.at(0)?.id ?? "none"} through ${input.items.at(-1)?.id ?? "none"}.`,
     `Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Items included below need no read. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
-    ...(isHomeThreadId(input.threadId)
+    ...(isHomeThreadId(input.threadId) &&
+    (input.targetThreadId ?? input.threadId) === input.threadId
       ? [
           `Your session restarted. These are the newest items of your own thread ${input.threadId}. Before you answer from memory about earlier work, read it with t3_thread_read.`,
         ]
