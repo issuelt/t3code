@@ -330,7 +330,15 @@ function ConnectionsSettingsContent({
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
-  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  // A link that names an address to pair with opens Add environment on it. The settings
+  // layout remounts this page when the link changes.
+  const connectHost = useSearch({
+    strict: false,
+    select: (search) => (typeof search.connect === "string" ? search.connect : null),
+  });
+  const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(
+    view === "environments" && connectHost !== null,
+  );
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   // With routeTarget: the saved address whose pairing that machine refused.
   const [pairAgainHost, setPairAgainHost] = useState<string | null>(null);
@@ -1607,6 +1615,7 @@ function ConnectionsSettingsContent({
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
               pairAgainHost={pairAgainHost}
+              initialHost={view === "environments" ? connectHost : null}
               error={savedBackendError}
               savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
