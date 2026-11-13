@@ -1,6 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
+import { openContinueOnMachineDialog } from "../components/chat/continueOnMachineDialogState";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -28,6 +29,7 @@ import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
+  readEnvironmentCanContinueElsewhere,
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
@@ -152,6 +154,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        canContinueElsewhere: readEnvironmentCanContinueElsewhere(threadRef.environmentId),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -264,6 +267,9 @@ export function useThreadActionMenu(input: {
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);
+          return;
+        case "continue-elsewhere":
+          openContinueOnMachineDialog(threadRef);
           return;
         case "turn-into-project": {
           const result = await turnThreadIntoProject(threadRef);

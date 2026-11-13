@@ -142,6 +142,7 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  readEnvironmentCanContinueElsewhere,
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
@@ -164,6 +165,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openContinueOnMachineDialog } from "./chat/continueOnMachineDialogState";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -2698,6 +2700,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canContinueElsewhere: readEnvironmentCanContinueElsewhere(threadRef.environmentId),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2821,6 +2824,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
+            return;
+          case "continue-elsewhere":
+            openContinueOnMachineDialog(threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
