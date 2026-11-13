@@ -18,6 +18,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
+import { createListThreadShellsAtom } from "./home-shortcuts";
 import {
   pendingThreadCreationOutcomesAtom,
   selectThreadCreationDetail,
@@ -59,11 +60,14 @@ const steadyShells = createSteadyShellAtoms({
  * changes once when environments connect, not once per environment.
  */
 export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
-export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
-  catalogValueAtom: environmentCatalog.catalogValueAtom,
-  snapshotAtom: steadyShells.snapshotAtom,
-  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
-}).navigationThreadShellsAtom;
+export const steadyNavigationThreadShellsAtom = createListThreadShellsAtom({
+  threadsAtom: createEnvironmentThreadShellAtoms({
+    catalogValueAtom: environmentCatalog.catalogValueAtom,
+    snapshotAtom: steadyShells.snapshotAtom,
+    hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+  }).navigationThreadShellsAtom,
+  settingsValueAtom: serverEnvironment.settingsValueAtom,
+});
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,

@@ -4,7 +4,11 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../test-fixtures";
-import { createHomeShortcutsAtom, type HomeShortcutEnvironment } from "./home-shortcuts";
+import {
+  createHomeShortcutsAtom,
+  createListThreadShellsAtom,
+  type HomeShortcutEnvironment,
+} from "./home-shortcuts";
 
 const mac = EnvironmentId.make("mac");
 const remote = EnvironmentId.make("remote");
@@ -84,6 +88,41 @@ describe("mobile Home shortcuts", () => {
     ).toEqual([
       [mac, homeId],
       [remote, remoteHomeId],
+    ]);
+  });
+
+  it("lists each environment's current Home thread only as its shortcut", () => {
+    using h = harness();
+    const remoteHomeId = ThreadId.make("home:remote-current");
+    h.registry.set(h.environments, [environment(), environment(remote)]);
+    h.registry.set(h.settings(remote), {
+      home: { threadId: remoteHomeId, watches: [], watchAll: false },
+    });
+    const thread = (environmentId: EnvironmentId, id: string) =>
+      makeThreadShellFixture({ environmentId, id: ThreadId.make(id) });
+    const list = createListThreadShellsAtom({
+      threadsAtom: Atom.make<ReadonlyArray<EnvironmentThreadShell>>([
+        thread(mac, homeId),
+        thread(mac, "work"),
+        thread(mac, "home:superseded"),
+        thread(remote, remoteHomeId),
+        thread(remote, "work"),
+      ]),
+      settingsValueAtom: h.settings,
+    });
+
+    expect(h.registry.get(list).map((shell) => [shell.environmentId, shell.id])).toEqual([
+      [mac, "work"],
+      [mac, "home:superseded"],
+      [remote, "work"],
+    ]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ label, thread }) => [label, thread.environmentId, thread.id]),
+    ).toEqual([
+      ["Home · mac", mac, homeId],
+      ["Home · remote", remote, remoteHomeId],
     ]);
   });
 

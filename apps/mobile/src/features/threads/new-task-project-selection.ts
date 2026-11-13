@@ -1,5 +1,6 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { withoutHomeProjects } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
@@ -149,14 +150,16 @@ type ProjectRef = { readonly environmentId: string; readonly projectId: string }
 
 export function newTaskDestination(options: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "homeWorkspaceRoot">>;
   readonly requestId: string;
   readonly useLastProject: boolean | undefined;
   readonly currentProject: ProjectRef | undefined;
   readonly lastProject: ProjectRef | undefined;
 }) {
+  const projects = withoutHomeProjects(options.projects, options.serverConfigs);
   const find = (ref: ProjectRef | undefined) =>
     ref &&
-    options.projects.find(
+    projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
     );
   // A remembered project that was archived since opens the picker; the current one still wins.

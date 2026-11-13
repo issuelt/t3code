@@ -26,6 +26,8 @@ import {
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
+  startPageProject,
+  resolveHomeThreadRefs,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
   type SidebarListItem,
@@ -776,6 +778,48 @@ describe("sortScopedProjectsForSidebar", () => {
       "Visible project",
       "Archived-only project",
     ]);
+  });
+});
+
+describe("resolveHomeThreadRefs", () => {
+  it("reaches each connected environment's current Home thread, the primary's first", () => {
+    const remote = EnvironmentId.make("environment-remote");
+    const offline = EnvironmentId.make("environment-offline");
+    const home = (threadId: string | null) => ({
+      settings: { home: { threadId: threadId === null ? null : ThreadId.make(threadId) } },
+    });
+    const serverConfigs = new Map([
+      [remote, home("home:remote")],
+      [localEnvironmentId, home("home:local")],
+      [offline, home("home:offline")],
+    ]);
+
+    expect(
+      resolveHomeThreadRefs({
+        serverConfigs,
+        primaryEnvironmentId: localEnvironmentId,
+        connectedEnvironmentIds: [remote, localEnvironmentId],
+      }),
+    ).toEqual([
+      { environmentId: localEnvironmentId, threadId: "home:local" },
+      { environmentId: remote, threadId: "home:remote" },
+    ]);
+  });
+});
+
+describe("startPageProject", () => {
+  it("never opens the start page's draft in Home's folder", () => {
+    const home = makeProject({
+      id: ProjectId.make("project-home"),
+      title: "Home",
+      workspaceRoot: "/data/home",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const app = makeProject({ id: ProjectId.make("project-app"), title: "App" });
+    const serverConfigs = new Map([[localEnvironmentId, { homeWorkspaceRoot: "/data/home" }]]);
+
+    expect(startPageProject([home, app], [], serverConfigs)?.title).toBe("App");
+    expect(startPageProject([home], [], serverConfigs)).toBeNull();
   });
 });
 

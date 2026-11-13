@@ -1,6 +1,7 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { withoutHomeProjects } from "@t3tools/client-runtime/state/projects";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -1442,6 +1443,49 @@ export function sortSidebarV2ProjectGroups<
     filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent),
     sortOrder,
   );
+}
+
+/**
+ * Each connected environment's current Home thread, the primary's first. Home
+ * rows show them and the thread list leaves them out; older Home threads stay
+ * in history.
+ */
+export function resolveHomeThreadRefs(input: {
+  readonly serverConfigs: ReadonlyMap<
+    EnvironmentId,
+    { readonly settings: { readonly home: { readonly threadId: ThreadId | null } } }
+  >;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly connectedEnvironmentIds: readonly EnvironmentId[];
+}): ScopedThreadRef[] {
+  const environmentIds = [
+    ...(input.primaryEnvironmentId === null ? [] : [input.primaryEnvironmentId]),
+    ...input.connectedEnvironmentIds.filter(
+      (environmentId) => environmentId !== input.primaryEnvironmentId,
+    ),
+  ];
+  return environmentIds.flatMap((environmentId) => {
+    const threadId = input.serverConfigs.get(environmentId)?.settings.home.threadId ?? null;
+    return threadId === null ? [] : [scopeThreadRef(environmentId, threadId)];
+  });
+}
+
+/** The project the start page opens a draft in: the most recently active open project, never Home's folder. */
+export function startPageProject<
+  TProject extends ScopedSidebarProject & {
+    readonly workspaceRoot: string;
+    readonly archivedAt?: string | null | undefined;
+  },
+  TThread extends ScopedSidebarThread,
+>(
+  projects: readonly TProject[],
+  threads: readonly TThread[],
+  serverConfigs: ReadonlyMap<string, { readonly homeWorkspaceRoot?: string | undefined }>,
+): TProject | null {
+  const candidates = withoutHomeProjects(projects, serverConfigs).filter(
+    (project) => project.archivedAt == null,
+  );
+  return sortScopedProjectsForSidebar(candidates, threads, "updated_at")[0] ?? null;
 }
 
 export function sortScopedProjectsForSidebar<

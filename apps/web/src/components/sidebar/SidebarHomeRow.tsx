@@ -71,10 +71,13 @@ const SIDEBAR_TOP_STATUS: Record<
  */
 export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
+  /** Names the machine when more than one environment runs Home. */
+  environmentLabel: string | null;
   isActive: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
-  const { isActive, onActivate, threadRef } = props;
+  const { environmentLabel, isActive, onActivate, threadRef } = props;
+  const label = environmentLabel === null ? "Home" : `Home · ${environmentLabel}`;
   const thread = useQuietThreadShell(threadRef);
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -96,7 +99,7 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
       <div
         role="button"
         tabIndex={0}
-        aria-label={topStatus ? `Home, ${topStatus.label}` : "Home"}
+        aria-label={topStatus ? `${label}, ${topStatus.label}` : label}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
@@ -113,7 +116,7 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
         }}
       >
         <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Home</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
         {topStatus ? (
           <span
             className={cn(

@@ -45,7 +45,7 @@ vi.mock("../../state/atom-registry", () => ({
   },
 }));
 vi.mock("../../state/entities", () => ({
-  useProjects: mocks.projects,
+  useNewThreadProjects: mocks.projects,
   useThreadShells: () => [],
   useEnvironmentServerConfig: () => mocks.serverConfig() ?? null,
   useServerConfigs: () => new Map(),

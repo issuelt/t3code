@@ -177,6 +177,9 @@ describe("newTaskDestination", () => {
   }) {
     return newTaskDestination({
       projects: options.projects,
+      serverConfigs: new Map([
+        [EnvironmentId.make("environment"), { homeWorkspaceRoot: "/data/home" }],
+      ]),
       requestId: "request",
       useLastProject: options.useLastProject,
       currentProject: options.current && {
@@ -253,6 +256,14 @@ describe("newTaskDestination", () => {
         current: makeProject("removed"),
       }),
     ).toEqual(picker);
+  });
+
+  it("never starts in Home's folder, current or remembered", () => {
+    const home = makeProject("home", "environment", { workspaceRoot: "/data/home" });
+    const projects = [home, makeProject("app")];
+    const last = { environmentId: "environment", projectId: "home" };
+    expect(destination({ useLastProject: true, projects, current: home })).toEqual(picker);
+    expect(destination({ useLastProject: true, projects, last })).toEqual(picker);
   });
 
   it("always opens the picker when the preference is off", () => {

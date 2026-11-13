@@ -151,11 +151,7 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-  primaryServerConfigAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerConfigAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -197,6 +193,7 @@ import {
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolveHomeThreadRefs,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
@@ -357,7 +354,7 @@ type SidebarOptimisticDrop = {
 };
 
 interface SidebarThreadPartitionInput {
-  readonly homeThreadRef: ScopedThreadRef | null;
+  readonly homeThreadRefs: readonly ScopedThreadRef[];
   readonly threads: readonly EnvironmentThreadShell[];
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
@@ -425,7 +422,7 @@ function routeThreadOnly(
 
 // Separate hooks cache maps independently of later Sidebar hooks and preserve dnd-kit inputs.
 function useSidebarThreads(input: {
-  readonly homeThreadRef: ScopedThreadRef | null;
+  readonly homeThreadRefs: readonly ScopedThreadRef[];
   readonly projectScopeKey: string | null;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
@@ -491,7 +488,7 @@ function useSidebarThreads(input: {
 
   const partition = partitionSidebarThreads({
     threads,
-    homeThreadRef: input.homeThreadRef,
+    homeThreadRefs: input.homeThreadRefs,
     scopedProjectKeys,
     delegatedUnderParent,
     serverConfigs,
@@ -642,9 +639,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     delegatedUnderParent,
   ).filter(
     (thread) =>
-      input.homeThreadRef === null ||
-      thread.environmentId !== input.homeThreadRef.environmentId ||
-      thread.id !== input.homeThreadRef.threadId,
+      !input.homeThreadRefs.some(
+        (ref) => ref.environmentId === thread.environmentId && ref.threadId === thread.id,
+      ),
   );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
@@ -948,14 +945,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const primaryEnvironmentIdForHome = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
-  const homeThreadRef =
-    primaryEnvironmentIdForHome !== null && homeThreadId !== null
-      ? scopeThreadRef(primaryEnvironmentIdForHome, homeThreadId)
-      : null;
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1076,6 +1065,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlightKey, setSearchHighlightKey] = useState<string | null>(null);
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const homeThreadRefs = resolveHomeThreadRefs({
+    serverConfigs,
+    primaryEnvironmentId: primaryEnvironmentIdForHome,
+    connectedEnvironmentIds,
+  });
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const [renamingThreadRef, setRenamingThreadRef] = useState<ScopedThreadRef | null>(null);
@@ -1393,7 +1387,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     pinnedKeysById,
     activeKeysById,
   } = useSidebarThreads({
-    homeThreadRef,
+    homeThreadRefs,
     projectScopeKey,
     scopedProjectKeys,
     serverConfigs,
@@ -3347,7 +3341,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             0 &&
           (settledCount === 0 || scopedProjectGroups.length > 0) &&
           // Home is a thread, so a plain "No threads yet" would sit right above it.
-          (homeThreadRef === null || projects.length === 0 || scopedProjectGroups.length > 0) ? (
+          (homeThreadRefs.length === 0 ||
+            projects.length === 0 ||
+            scopedProjectGroups.length > 0) ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
@@ -3537,14 +3533,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
-                        homeThreadRef === null ? null : (
+                        ...homeThreadRefs.map((homeRef) => (
                           <SidebarHomeRow
-                            key="home"
-                            threadRef={homeThreadRef}
-                            isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
+                            key={`home:${scopedThreadKey(homeRef)}`}
+                            threadRef={homeRef}
+                            environmentLabel={
+                              homeThreadRefs.length > 1
+                                ? (environmentLabelById.get(homeRef.environmentId) ?? null)
+                                : null
+                            }
+                            isActive={routeThreadKey === scopedThreadKey(homeRef)}
                             onActivate={navigateToThread}
                           />
-                        ),
+                        )),
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
