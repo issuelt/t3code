@@ -282,8 +282,15 @@ const make = Effect.gen(function* () {
     }),
 
     "threads.read": Effect.fn("FleetService.threads.read")(function* (input) {
+      const { threadId } = input;
+      if (threadId === undefined) {
+        return yield* failure(
+          "target_required",
+          "Pass threadId to read a thread on another environment.",
+        );
+      }
       const target = yield* threads
-        .getThreadRecords(input.threadId, [
+        .getThreadRecords(threadId, [
           "runs",
           "runtimeRequests",
           "contextTransfers",
@@ -291,15 +298,15 @@ const make = Effect.gen(function* () {
         ])
         .pipe(Effect.mapError(threadManagementFailure));
       if (target.thread.deletedAt !== null) {
-        return yield* failure("thread_not_found", `Thread ${input.threadId} was not found.`);
+        return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
       }
       const shell = yield* threads
-        .getThreadShell(input.threadId)
+        .getThreadShell(threadId)
         .pipe(Effect.mapError(threadManagementFailure));
       if (shell === null || shell.deletedAt !== null) {
-        return yield* failure("thread_not_found", `Thread ${input.threadId} was not found.`);
+        return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
       }
-      const link = formatThreadLink({ environmentId, threadId: input.threadId });
+      const link = formatThreadLink({ environmentId, threadId: threadId });
       return (yield* readThreadPage(threads, target, shell, input, link, {
         newestFirst: input.beforePosition !== undefined || input.afterPosition === undefined,
       })).result;

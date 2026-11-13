@@ -26,6 +26,16 @@ across every project and connected environment. User guide:
 - Home thread ids start with `home:` so any client can label Home's messages
   without knowing which environment sent them.
 
+## Sessions roll instead of compacting
+
+Home is one thread that lives for weeks, so it never compacts. When its next turn starts more than
+five minutes after the last one (the provider's prompt cache has gone cold) or its native context is
+half full, `ProviderTurnStartService` skips the resume and takes the fresh-session recovery path: a
+new native session seeded with a summary of the thread's recent history
+(`orchestration-v2/homeSessionRoll.ts`). Steering an active turn is unaffected. The summary clips
+each message, so Home's instructions tell it to read its own thread for full text; `t3_thread_read`
+defaults to the caller's thread for that.
+
 ## Reaching other environments
 
 Every server runs `FleetService`, which executes a fixed set of operations with
