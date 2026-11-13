@@ -14,6 +14,7 @@ import {
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -21,6 +22,7 @@ import {
   contextUsageForHandoff,
   handoffBudget,
   handoffCoverage,
+  handoffByteCapConfig,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -204,11 +206,28 @@ describe("handoff budget", () => {
         omitted,
         ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
       ],
-      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      coverage: handoffCoverage({
+        threadId,
+        targetThreadId: threadId,
+        coveredRunOrdinals: { from: 1, to: 46 },
+        items: [],
+      }),
       budget: 3_000,
     });
     assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
     assert.include(selected.context, omitted.itemId);
+  });
+
+  it("tells only a restarted Home session that the history is its own thread", () => {
+    const coverage = (targetThreadId: string) =>
+      handoffCoverage({
+        threadId: "home:owner",
+        targetThreadId,
+        coveredRunOrdinals: { from: 1, to: 2 },
+        items: [],
+      });
+    assert.include(coverage("home:owner"), "Your session restarted.");
+    assert.notInclude(coverage("fork-of-home"), "Your session restarted.");
   });
 
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {
@@ -243,7 +262,7 @@ describe("handoff budget", () => {
 
   it("subtracts native usage, input, attachments, instructions and space for work", () => {
     const base = {
-      tokenCap: 16_000,
+      byteCap: 16_000,
       userText: "Continue",
       attachments: [],
       providerThread,
@@ -280,7 +299,7 @@ describe("handoff budget", () => {
       assert.equal(
         handoffBudget({
           ...base,
-          tokenCap: 64_000,
+          byteCap: 64_000,
           modelContextWindow: 1_000_000,
           userText: "x".repeat(70_000),
           attachments,
@@ -292,8 +311,27 @@ describe("handoff budget", () => {
         64_000,
       );
     }
-    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+    assert.equal(handoffBudget({ ...base, byteCap: 2_000 }), 2_000);
   });
+
+  it.effect.each([
+    { name: "the byte cap", env: { T3CODE_CONTEXT_HANDOFF_BYTE_CAP: "32000" }, cap: 32_000 },
+    {
+      name: "the legacy token cap",
+      env: { T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "24000" },
+      cap: 24_000,
+    },
+    {
+      name: "the byte cap over the legacy token cap",
+      env: { T3CODE_CONTEXT_HANDOFF_BYTE_CAP: "32000", T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "24000" },
+      cap: 32_000,
+    },
+    { name: "the default", env: {}, cap: 16_000 },
+  ])("reads the history cap from $name", ({ env, cap }) =>
+    Effect.gen(function* () {
+      assert.equal(yield* handoffByteCapConfig, cap);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
+  );
 
   it("keeps measured occupancy across a model change", () => {
     const previous = {
@@ -355,7 +393,7 @@ describe("handoff budget", () => {
     });
     assert.equal(
       handoffBudget({
-        tokenCap: 16_000,
+        byteCap: 16_000,
         userText: "Continue work",
         attachments: [
           {
@@ -381,7 +419,7 @@ describe("handoff budget", () => {
     );
     assert.equal(
       handoffBudget({
-        tokenCap: 16_000,
+        byteCap: 16_000,
         userText: "Continue work",
         attachments: [],
         providerThread,
@@ -394,7 +432,7 @@ describe("handoff budget", () => {
     let previousBudget = 16_000;
     for (let count = 1; count <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS; count++) {
       const input = {
-        tokenCap: 16_000,
+        byteCap: 16_000,
         userText: "Compare these screenshots",
         providerThread,
         nativeContextEstimate: 0,

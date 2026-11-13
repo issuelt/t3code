@@ -1,4 +1,8 @@
-import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  isHomeThreadId,
+  isListedThreadLineage,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -51,6 +55,8 @@ export function idleCompactionWindow(
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
     return null;
   if (!isListedThreadLineage(thread.lineage)) return null;
+  // Home rolls into a fresh session instead of compacting.
+  if (isHomeThreadId(thread.id)) return null;
   // A removed or steered queued message leaves a cancelled run that never started.
   const latestRun = runs
     .filter((run) => run.status !== "cancelled" || run.startedAt !== null)

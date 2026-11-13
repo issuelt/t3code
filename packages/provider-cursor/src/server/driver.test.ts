@@ -26,7 +26,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Deferred from "effect/Deferred";
 
 import {
-  DEFAULT_HANDOFF_TOKEN_CAP,
+  DEFAULT_HANDOFF_BYTE_CAP,
   handoffBudget,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -332,7 +332,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           model: sentModels.at(-1),
           window,
           allowance: handoffBudget({
-            tokenCap: DEFAULT_HANDOFF_TOKEN_CAP,
+            byteCap: DEFAULT_HANDOFF_BYTE_CAP,
             userText: "Continue.",
             attachments: [],
             providerThread,
@@ -386,12 +386,12 @@ it.layer(layerTest)("CursorDriver", (it) => {
         beforeCatalog: {
           model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
-          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+          allowance: DEFAULT_HANDOFF_BYTE_CAP,
         },
         catalogDefault: {
           model: { id: "claude-opus-5-5" },
           window: 1_000_000,
-          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+          allowance: DEFAULT_HANDOFF_BYTE_CAP,
         },
         explicitWindow: {
           model: { id: "claude-opus-5-5", params: [{ id: "context", value: "500k" }] },

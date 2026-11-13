@@ -163,6 +163,13 @@ export interface IdAllocatorV2Derive {
     readonly runId: RunId;
     readonly signal: string;
   }) => TurnItemId;
+  // One record per provider thread, so each Home roll replaces the previous roll's.
+  readonly homeRollContextHandoff: (input: {
+    readonly providerThreadId: ProviderThreadId;
+  }) => ContextHandoffId;
+  readonly homeRollContextTransfer: (input: {
+    readonly providerThreadId: ProviderThreadId;
+  }) => ContextTransferId;
   readonly providerThread: (input: {
     readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
@@ -296,6 +303,14 @@ export const derive: IdAllocatorV2Derive = {
   userTurnItem: (input) => TurnItemId.make(joinId("turn-item", "message", input.messageId)),
   runSignalTurnItem: (input) =>
     TurnItemId.make(joinId("turn-item", "run", input.runId, "signal", input.signal)),
+  homeRollContextHandoff: (input) =>
+    ContextHandoffId.make(
+      joinId("context-handoff", "home-roll", "provider-thread", input.providerThreadId),
+    ),
+  homeRollContextTransfer: (input) =>
+    ContextTransferId.make(
+      joinId("context-transfer", "home-roll", "provider-thread", input.providerThreadId),
+    ),
   providerThread: deriveProviderThread,
   providerTurn: (input) =>
     ProviderTurnId.make(

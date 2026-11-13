@@ -16,8 +16,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import {
-  DEFAULT_HANDOFF_TOKEN_CAP,
-  handoffTokenCapConfig,
+  DEFAULT_HANDOFF_BYTE_CAP,
+  handoffByteCapForThread,
+  handoffByteCapConfig,
   handoffCoverage,
   historicalMessage,
   renderHistory,
@@ -68,6 +69,7 @@ export interface ContextHandoffServiceV2Shape {
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2ContextHandoff, ContextHandoffServiceV2Error>;
   readonly prepareProviderHandoff: (input: {
+    readonly id?: OrchestrationV2ContextHandoff["id"];
     readonly threadId: ThreadId;
     /** Thread the items came from, when it is not `threadId` (a fork's source). */
     readonly sourceThreadId?: ThreadId;
@@ -358,8 +360,8 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
   function* () {
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const tokenCap = yield* handoffTokenCapConfig.pipe(
-      Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
+    const byteCap = yield* handoffByteCapConfig.pipe(
+      Effect.orElseSucceed(() => DEFAULT_HANDOFF_BYTE_CAP),
     );
 
     const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
@@ -389,14 +391,18 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                 }),
             ),
           );
-        const coverage = handoffCoverage({ ...input, coveredRunOrdinals: { from: 1, to: 1 } });
+        const coverage = handoffCoverage({
+          ...input,
+          targetThreadId: input.threadId,
+          coveredRunOrdinals: { from: 1, to: 1 },
+        });
         const selected = selectHistory({
           messages: input.items.flatMap((item) => {
             const message = historicalMessage(item);
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: byteCap,
         });
         return {
           id: handoffId,
@@ -457,6 +463,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           );
         const coverage = handoffCoverage({
           threadId: input.sourceThreadId,
+          targetThreadId: input.targetThreadId,
           coveredRunOrdinals: input.coveredRunOrdinals,
           items: input.deltaItems,
         });
@@ -466,7 +473,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: byteCap,
         });
         return {
           id: handoffId,
@@ -495,46 +502,32 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
 
     const prepareProviderHandoff = Effect.fn(
       "orchestrationV2.contextHandoff.prepareProviderHandoff",
-    )(function* (input: {
-      readonly threadId: ThreadId;
-      readonly sourceThreadId?: ThreadId;
-      readonly targetRunId: RunId;
-      readonly transferId: OrchestrationV2ContextHandoff["transferId"];
-      readonly fromProviderThreadIds: ReadonlyArray<ProviderThreadId>;
-      readonly toProviderThreadId: ProviderThreadId;
-      readonly fromProviderInstanceId: ProviderInstanceId;
-      readonly toProviderInstanceId: ProviderInstanceId;
-      readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
-      readonly runs?: ReadonlyArray<OrchestrationV2Run>;
-      readonly strategy: Extract<
-        OrchestrationV2ContextHandoff["strategy"],
-        "delta_since_target_last_seen" | "full_thread_summary"
-      >;
-      readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-      readonly createdAt: DateTime.Utc;
-    }) {
-      const handoffId = yield* idAllocator.allocate
-        .contextHandoff({
-          threadId: input.threadId,
-          fromProviderInstanceId: input.fromProviderInstanceId,
-          toProviderInstanceId: input.toProviderInstanceId,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ContextHandoffPrepareError({
-                threadId: input.threadId,
-                targetRunId: input.targetRunId,
-                fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
-                toProviderThreadId: input.toProviderThreadId,
-                cause,
-              }),
-          ),
-        );
+    )(function* (input: Parameters<ContextHandoffServiceV2Shape["prepareProviderHandoff"]>[0]) {
+      const handoffId =
+        input.id ??
+        (yield* idAllocator.allocate
+          .contextHandoff({
+            threadId: input.threadId,
+            fromProviderInstanceId: input.fromProviderInstanceId,
+            toProviderInstanceId: input.toProviderInstanceId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ContextHandoffPrepareError({
+                  threadId: input.threadId,
+                  targetRunId: input.targetRunId,
+                  fromProviderThreadIds: Array.from(input.fromProviderThreadIds),
+                  toProviderThreadId: input.toProviderThreadId,
+                  cause,
+                }),
+            ),
+          ));
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
       const coverage = handoffCoverage({
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
+        targetThreadId: input.threadId,
       });
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
@@ -549,7 +542,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               ];
         }),
         coverage,
-        budget: tokenCap,
+        budget: handoffByteCapForThread(input.threadId, byteCap),
       });
       return {
         id: handoffId,

@@ -11,7 +11,7 @@ import {
   type WorkFilesSummary,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_HANDOFF_TOKEN_CAP,
+  DEFAULT_HANDOFF_BYTE_CAP,
   historicalMessage,
   renderHistory,
   selectHistory,
@@ -196,7 +196,7 @@ const make = Effect.gen(function* () {
         `This thread continues thread "${thread.title}" (${thread.id}) from ${here.label} (environment ${here.environmentId}), moved here by the user.`,
         filesLine,
       ].join("\n"),
-      budget: DEFAULT_HANDOFF_TOKEN_CAP,
+      budget: DEFAULT_HANDOFF_BYTE_CAP,
     });
     const message = `${renderHistory(selected.messages, selected.context)}\n\nContinue the work from where it stopped.`;
 

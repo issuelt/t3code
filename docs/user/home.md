@@ -46,9 +46,9 @@ or update a project. Cloning needs a connection that may write to source control
 **Settings → Home → Instructions** opens Home's `AGENTS.md`. Add standing
 instructions below T3 Code's section. Home can also keep notes in its folder.
 
-Home never needs compacting. When its conversation gets long, or after a few
-idle minutes, it continues in a fresh session that carries its recent messages,
-and it can read the rest of its thread when it needs to.
+Home never needs compacting. When its conversation fills about half of the
+model's context, it continues in a fresh session that carries its recent
+messages, and it can read the rest of its thread when it needs to.
 
 **Start fresh** gives Home a new thread with the same model. The old thread
 stays in your history, and its notes and instructions carry over.
