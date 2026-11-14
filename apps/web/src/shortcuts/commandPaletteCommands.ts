@@ -16,6 +16,7 @@ import { type CommandHandler, type CommandScopeOptions, registerCommands } from 
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPrimaryEnvironmentId } from "../state/environments";
+import { hasFleetChiefsAtom } from "../state/fleet";
 import { primaryServerSettingsAtom } from "../state/server";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 
@@ -111,6 +112,12 @@ export function installCommandPaletteCommands(
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(scopeThreadRef(environmentId, homeThreadId)),
         });
+      },
+      "fleet.open": (event) => {
+        if (!appAtomRegistry.get(hasFleetChiefsAtom)) return false;
+        consume(event);
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        void router.navigate({ to: "/fleet" });
       },
       "commandPalette.toggle": toggleOverlay("commandPalette.toggle"),
       "filePicker.toggle": toggleOverlay("filePicker.toggle"),

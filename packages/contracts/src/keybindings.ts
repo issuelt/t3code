@@ -87,6 +87,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.open",
   "decisions.open",
   "home.open",
+  "fleet.open",
   "theme.select",
   "appearance.cycle",
   "themeEditor.toggle",

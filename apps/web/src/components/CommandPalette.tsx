@@ -75,6 +75,7 @@ import {
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
+  ShipIcon,
   MonitorIcon,
   PinIcon,
   PinOffIcon,
@@ -120,6 +121,7 @@ import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
+import { hasFleetChiefsAtom } from "../state/fleet";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -493,6 +495,7 @@ function OpenCommandPaletteDialog(props: {
     primaryServerSettingsAtom,
     (settings) => settings.home.threadId,
   );
+  const hasFleetChiefs = useAtomValue(hasFleetChiefsAtom);
   const homeWorkspaceRoot = useAtomValue(
     primaryServerConfigAtom,
     (config) => config?.homeWorkspaceRoot ?? null,
@@ -1747,6 +1750,20 @@ function OpenCommandPaletteDialog(props: {
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(scopeThreadRef(primaryEnvironmentId, homeThreadId)),
         });
+      },
+    });
+  }
+
+  if (hasFleetChiefs) {
+    actionItems.push({
+      kind: "action",
+      value: "action:fleet",
+      searchTerms: ["fleet", "chief of staff", "chiefs of staff", "jobs", "board"],
+      title: "Open fleet board",
+      icon: <ShipIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "fleet.open",
+      run: async () => {
+        await navigate({ to: "/fleet" });
       },
     });
   }

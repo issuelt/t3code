@@ -53,6 +53,7 @@ import {
   applyProviderInstanceSettings,
   brandProviderInstanceEntries,
   deriveProviderInstanceEntries,
+  providerModelLabel,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -680,16 +681,10 @@ function HandoffEndpoint(props: {
   const entry = props.entries.find((candidate) => candidate.instanceId === props.instanceId);
   const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, props.entries);
   const model = props.model?.trim();
-  const providerModel =
-    model === undefined || model.length === 0
-      ? undefined
-      : entry?.models.find((candidate) => candidate.slug === model);
   const label =
-    providerModel !== undefined
-      ? getTriggerDisplayModelName(providerModel, entry?.driverKind)
-      : model !== undefined && model.length > 0
-        ? model
-        : (entry?.displayName ?? props.instanceId);
+    model !== undefined && model.length > 0
+      ? providerModelLabel(entry, model)
+      : (entry?.displayName ?? props.instanceId);
   const labelColor = providerTextColor(
     entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
   );

@@ -3,44 +3,42 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CircleDotDashedIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
 
-import type { SidebarV2TopStatusKind } from "../Sidebar.logic";
+import type { SidebarThreadStatus, SidebarV2TopStatusKind } from "../Sidebar.logic";
 
+// No shimmer: a label that animates forever is noise in a list full of them
+// (and repaints every vsync on high-refresh displays).
 export const SIDEBAR_TOP_STATUS: Record<
   SidebarV2TopStatusKind,
-  { label: string; icon: SidebarV2TopStatusKind | null; Icon: LucideIcon | null; className: string }
+  { readonly label: string; readonly Icon: LucideIcon; readonly className: string }
 > = {
-  // No shimmer: a label that animates forever is noise in a sidebar full of
-  // them (and repaints every vsync on high-refresh displays).
-  working: { label: "Working", icon: "working", Icon: CircleDashedIcon, className: "text-info" },
-  // Waiting is calm background presence (post-settle background roster), not
-  // active progress, so the label keeps full strength.
-  waiting: { label: "Waiting", icon: null, Icon: null, className: "text-muted-foreground" },
-  approval: {
-    label: "Approval",
-    icon: "approval",
-    Icon: ShieldQuestionIcon,
-    className: "text-warning-foreground",
-  },
+  working: { label: "Working", Icon: CircleDashedIcon, className: "text-info-foreground" },
+  waiting: { label: "Waiting", Icon: CircleDotDashedIcon, className: "text-muted-foreground" },
+  approval: { label: "Approval", Icon: ShieldQuestionIcon, className: "text-warning-foreground" },
   input: {
     label: "Input",
-    icon: "input",
     Icon: MessageCircleQuestionIcon,
     className: "text-indigo-600 dark:text-indigo-300",
   },
-  request: {
-    label: "Request",
-    icon: "request",
-    Icon: UserRoundIcon,
-    className: "text-guest-foreground",
-  },
-  limited: { label: "Limited", icon: "failed", Icon: CircleAlertIcon, className: "text-warning" },
-  failed: { label: "Failed", icon: "failed", Icon: CircleAlertIcon, className: "text-error" },
-  woke: { label: "Woke", icon: "woke", Icon: AlarmClockIcon, className: "text-warning" },
-  done: { label: "Done", icon: "done", Icon: CircleCheckIcon, className: "text-success" },
+  request: { label: "Request", Icon: UserRoundIcon, className: "text-guest-foreground" },
+  limited: { label: "Limited", Icon: CircleAlertIcon, className: "text-warning-foreground" },
+  failed: { label: "Failed", Icon: CircleAlertIcon, className: "text-error-foreground" },
+  woke: { label: "Woke", Icon: AlarmClockIcon, className: "text-warning-foreground" },
+  done: { label: "Done", Icon: CircleCheckIcon, className: "text-success-foreground" },
 };
+
+export function sidebarTopStatusKind(
+  status: SidebarThreadStatus,
+  attention: { readonly isUnread: boolean; readonly isWoke?: boolean },
+): SidebarV2TopStatusKind | null {
+  if (status === "preparing") return "working";
+  if (status !== "ready") return status;
+  if (attention.isWoke) return "woke";
+  return attention.isUnread ? "done" : null;
+}

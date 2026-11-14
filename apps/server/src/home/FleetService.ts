@@ -335,6 +335,9 @@ const make = Effect.gen(function* () {
       if (input.threadId !== undefined && !isHomeLaunchedThreadId(input.threadId)) {
         return yield* failure("invalid_request", "A launched thread id must be a Home launch id.");
       }
+      if (input.job !== undefined && input.threadId === undefined) {
+        return yield* failure("invalid_request", "Only a Home launch can name a job.");
+      }
       if (
         input.scratch === true &&
         (input.projectId !== undefined || input.workspaceStrategy !== undefined)
@@ -375,6 +378,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId ?? ThreadId.make(id),
           projectId,
           title: input.title,
+          ...(input.job === undefined ? {} : { homeJob: input.job }),
           modelSelection,
           runtimeMode: input.runtimeMode ?? current.defaultRuntimeMode,
           interactionMode: input.interactionMode ?? "default",

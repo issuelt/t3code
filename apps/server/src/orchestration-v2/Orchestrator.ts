@@ -76,6 +76,7 @@ import {
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  isHomeLaunchedThreadId,
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
@@ -134,6 +135,7 @@ import {
   isRestartContinuationSource,
   runOutcome,
 } from "./RestartBackgroundNote.ts";
+import { lastReportLine } from "./latestRunResult.ts";
 import {
   isBufferedProviderNotification,
   isUndeliveredMailboxSteer,
@@ -523,6 +525,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadLinkMetadata: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>, OrchestratorV2Error>;
+  readonly getLatestRunResults: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
@@ -3642,6 +3647,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
         ? {}
         : { delegatedFrom: command.delegatedFrom }),
+      ...(command.homeJob === undefined || !isHomeLaunchedThreadId(command.threadId)
+        ? {}
+        : { homeJob: command.homeJob }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
@@ -16118,6 +16126,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadLinkMetadata(threadIds)
         .pipe(Effect.mapError(shellProjectionError));
     }),
+    getLatestRunResults: Effect.fn("OrchestratorV2.getLatestRunResults")(function* (threadIds) {
+      const runs = yield* projectionStore.getLatestRunsWithResult(threadIds);
+      const lines = yield* Effect.forEach(runs, (run) =>
+        projectionStore
+          .getThreadRecords(run.threadId, ["messages", "turnItems"], {
+            messageRoles: ["assistant"],
+            messageRunIds: [run.id],
+            turnItemRunIds: [run.id],
+            turnItemTypes: ["assistant_message", "error"],
+          })
+          .pipe(
+            Effect.map((records) => {
+              const line = lastReportLine(
+                subagentResultForRun({ ...records, providerTurns: [] }, run).text,
+              );
+              return line === null ? [] : [[run.threadId, line] as const];
+            }),
+          ),
+      );
+      return Object.fromEntries(lines.flat());
+    }, Effect.mapError(shellProjectionError)),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
       return projectionStore.getThreadTitles(threadIds).pipe(Effect.mapError(shellProjectionError));
     }),

@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  ShipIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -14,6 +20,7 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { hasFleetChiefsAtom } from "../../state/fleet";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -226,6 +233,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const hasFleetChiefs = useAtomValue(hasFleetChiefsAtom);
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -241,6 +249,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleSettingsClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
+  };
+
+  const handleFleetClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/fleet" });
   };
 
   const handleUsageClick = () => {
@@ -277,6 +290,9 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               label="Pull requests"
               onClick={handlePullRequestsClick}
             />
+          ) : null}
+          {hasFleetChiefs ? (
+            <SidebarUtilityItem icon={<ShipIcon />} label="Fleet" onClick={handleFleetClick} />
           ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}

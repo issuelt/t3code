@@ -623,6 +623,9 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, ProjectionStoreV2Error>;
+  readonly getLatestRunsWithResult: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<
@@ -1742,6 +1745,7 @@ export function threadShellFromProjection(
     ...(projection.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
+    ...(projection.thread.homeJob === undefined ? {} : { homeJob: projection.thread.homeJob }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -2026,6 +2030,7 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.homeJob === undefined ? {} : { homeJob: input.state.thread.homeJob }),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -8751,6 +8756,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getLatestRunsWithResult = Effect.fn("ProjectionStore.getLatestRunsWithResult")(function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) {
+      if (threadIds.length === 0) return [];
+      const rows = yield* sql<PayloadRow>`
+        SELECT run.payload_json
+        FROM orchestration_v2_projection_threads AS thread
+        JOIN orchestration_v2_projection_runs AS run ON run.run_id = (
+          SELECT candidate.run_id FROM orchestration_v2_projection_runs AS candidate
+          WHERE candidate.thread_id = thread.thread_id
+            AND candidate.completed_at IS NOT NULL
+            AND candidate.status <> 'rolled_back'
+            AND (
+              candidate.status = 'failed' OR EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_messages AS message
+                WHERE message.run_id = candidate.run_id AND message.role = 'assistant'
+              )
+            )
+          ORDER BY candidate.completed_at DESC, candidate.ordinal DESC LIMIT 1
+        )
+        WHERE thread.deleted_at IS NULL AND thread.thread_id IN ${sql.in(threadIds)}
+      `;
+      return yield* Effect.forEach(rows, (row) => decodeRunPayload(row.payload_json));
+    }, Effect.mapError(shellSnapshotReadError));
+
     const getThreadTitles = Effect.fn("ProjectionStore.getThreadTitles")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -8931,6 +8961,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),
+      getLatestRunsWithResult: readOnReader(getLatestRunsWithResult),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getOpenRemoteDelegatedTasks: getOpenRemoteDelegatedTasks.pipe(NodeSqliteClient.readOnly),
       getThreadProjection: readOnReader(getThreadProjection),

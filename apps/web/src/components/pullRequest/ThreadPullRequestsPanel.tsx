@@ -4,6 +4,7 @@ import {
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  isOpenOrPendingPullRequest,
   type PullRequestListLine,
   pullRequestListLines,
   resolveThreadPullRequestChains,
@@ -385,9 +386,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   // Derive lines before later hooks to preserve compiler caching and avoid LegendList renders.
   const links = visibleThreadPullRequests(thread?.pullRequests ?? []);
   const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
-  const openCount = links.filter(
-    (link) => link.snapshot === null || link.snapshot.state === "open",
-  ).length;
+  const openCount = links.filter(isOpenOrPendingPullRequest).length;
   const lastSynced = latestSyncedAt(links);
   const linkCount = links.length;
   const modifiers = useShortcutModifierState(true);

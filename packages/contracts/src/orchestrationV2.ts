@@ -140,6 +140,10 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
+/** The job Home launched a thread for. Jobs match by exact spelling after trimming. */
+export const HomeJob = ThreadTag;
+export type HomeJob = typeof HomeJob.Type;
+
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
  * then, for a client that cannot reach that environment. `senderThreadId` names only a
@@ -481,6 +485,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  homeJob: Schema.optional(HomeJob),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -2180,6 +2185,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  homeJob: Schema.optional(HomeJob),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3127,6 +3133,8 @@ export const OrchestrationV2Command = Schema.Union([
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    /** Only the server sets this, for a thread Home launched for a job. */
+    homeJob: Schema.optional(HomeJob),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3845,6 +3853,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getLatestRunResults: "orchestration.getLatestRunResults",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -4532,6 +4541,13 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getLatestRunResults: {
+    input: Schema.Struct({
+      threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(200)),
+    }),
+    /** The last line of each thread's latest finished run's result; threads without one are absent. */
+    output: Schema.Record(ThreadId, Schema.String),
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,

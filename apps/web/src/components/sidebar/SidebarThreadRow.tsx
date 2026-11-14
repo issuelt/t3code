@@ -41,18 +41,13 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
-  MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
-  ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
-  UserRoundIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -94,6 +89,7 @@ import {
   useSidebarRowSubscriptionLease,
   setFileDragActive,
 } from "../Sidebar.logic";
+import { SIDEBAR_TOP_STATUS, sidebarTopStatusKind } from "./sidebarTopStatus";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
@@ -112,8 +108,11 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
-import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import {
+  providerModelLabel,
+  shouldShowInstanceBadge,
+  type ProviderEntrySummary,
+} from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -124,21 +123,6 @@ import { SidebarThreadCards, threadCardsHeight } from "./SidebarThreadCards";
 import { resolveThreadCards } from "@t3tools/client-runtime/thread-cards";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
-// The fields thread rows show. Provider status pushes refresh `checkedAt`,
-// status and auth on every provider; leaving those out keeps each
-// environment's map, and every memoized row, stable across them.
-export type SidebarProviderEntry = Pick<
-  ProviderInstanceEntry,
-  | "instanceId"
-  | "driverKind"
-  | "iconDriverKind"
-  | "enabled"
-  | "displayName"
-  | "accentColor"
-  | "acpRegistryAgentId"
-  | "acpRegistryIconUrl"
-  | "models"
->;
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -187,7 +171,7 @@ function terminalProcessLabel(count: number): string {
 
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
-  providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  providerEntryByInstanceId: ReadonlyMap<string, ProviderEntrySummary>;
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
@@ -253,8 +237,8 @@ function SidebarThreadTooltip({
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
-  providerEntry: SidebarProviderEntry | null;
-  providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  providerEntry: ProviderEntrySummary | null;
+  providerEntryByInstanceId: ReadonlyMap<string, ProviderEntrySummary>;
   showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
@@ -529,22 +513,6 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
-const TOP_STATUS_ICONS = {
-  working: CircleDashedIcon,
-  waiting: CircleDotDashedIcon,
-  input: MessageCircleQuestionIcon,
-  request: UserRoundIcon,
-  approval: ShieldQuestionIcon,
-  failed: CircleAlertIcon,
-  done: CircleCheckIcon,
-  woke: AlarmClockIcon,
-} as const;
-
-function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: string }) {
-  const Icon = TOP_STATUS_ICONS[props.icon];
-  return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
-}
-
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
@@ -576,7 +544,7 @@ type SidebarThreadRowProps = {
   scratchMachineLabel: string | null;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  providerEntryByInstanceId: ReadonlyMap<string, ProviderEntrySummary>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -745,68 +713,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
+  const topStatusKind = sidebarTopStatusKind(status, { isWoke, isUnread });
   const topStatus =
-    status === "preparing" || status === "working"
-      ? {
+    topStatusKind === null
+      ? null
+      : {
+          ...SIDEBAR_TOP_STATUS[topStatusKind],
           label:
             status === "preparing"
               ? "Setting up"
-              : thread.goal?.status === "active"
+              : status === "working" && thread.goal?.status === "active"
                 ? "Goal"
-                : "Working",
-          icon: "working" as const,
-          className: "text-info-foreground",
-        }
-      : status === "waiting"
-        ? {
-            label: "Waiting",
-            icon: "waiting" as const,
-            className: "text-muted-foreground",
-          }
-        : status === "approval"
-          ? {
-              label: "Approval",
-              icon: "approval" as const,
-              className: "text-warning-foreground",
-            }
-          : status === "input"
-            ? {
-                label: "Input",
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
-            : status === "request"
-              ? {
-                  label: "Request",
-                  icon: "request" as const,
-                  className: "text-guest-foreground",
-                }
-              : status === "limited"
-                ? {
-                    label: "Limited",
-                    icon: "failed" as const,
-                    className: "text-warning-foreground",
-                  }
-                : status === "failed"
-                  ? {
-                      label: "Failed",
-                      icon: "failed" as const,
-                      className: "text-error-foreground",
-                    }
-                  : isWoke
-                    ? {
-                        label: "Woke",
-                        icon: "woke" as const,
-                        className: "text-warning-foreground",
-                      }
-                    : isUnread
-                      ? {
-                          label: "Done",
-                          icon: "done" as const,
-                          className: "text-success-foreground",
-                        }
-                      : null;
-  const isWokeStatus = topStatus?.icon === "woke";
+                : SIDEBAR_TOP_STATUS[topStatusKind].label,
+        };
+  const isWokeStatus = topStatusKind === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -821,12 +741,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
-  const selectedModel = providerEntry?.models.find(
-    (model) => model.slug === thread.modelSelection.model,
-  );
-  const modelLabel = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : thread.modelSelection.model;
+  const modelLabel = providerModelLabel(providerEntry, thread.modelSelection.model);
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
   const showsScratchMachine = !checkoutThread.branch && props.scratchMachineLabel !== null;
@@ -1346,7 +1261,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           topStatus.className,
                         )}
                       >
-                        <TopStatusIcon icon={topStatus.icon} className="size-3" />
+                        <topStatus.Icon aria-hidden className="size-3 shrink-0" />
                         {topStatus.label}
                       </span>
                     ) : (
@@ -1538,7 +1453,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
-                          <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          <topStatus.Icon aria-hidden className="size-4 shrink-0" />
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
@@ -1659,7 +1574,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
-  providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  providerEntryByInstanceId: ReadonlyMap<string, ProviderEntrySummary>;
   isHighlighted: boolean;
   isRouteActive: boolean;
   resultId: string;
@@ -1721,12 +1636,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
-  const selectedModel = providerEntry?.models.find(
-    (model) => model.slug === thread.modelSelection.model,
-  );
-  const modelLabel = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : thread.modelSelection.model;
+  const modelLabel = providerModelLabel(providerEntry, thread.modelSelection.model);
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,

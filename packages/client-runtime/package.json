@@ -199,6 +199,10 @@
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"
     },
+    "./state/fleetBoard": {
+      "types": "./src/state/fleetBoard.ts",
+      "default": "./src/state/fleetBoard.ts"
+    },
     "./state/filesystem": {
       "types": "./src/state/filesystem.ts",
       "default": "./src/state/filesystem.ts"

@@ -34,6 +34,10 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
+export function isOpenOrPendingPullRequest(link: Pick<ThreadPullRequestLink, "snapshot">): boolean {
+  return link.snapshot === null || link.snapshot.state === "open";
+}
+
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);

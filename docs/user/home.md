@@ -32,6 +32,20 @@ so choose a model you trust with that.
   thread, when you want it to step in.
 - Home cannot delete threads or projects.
 
+## Fleet board
+
+The Fleet board lists every thread Home started that is not settled or
+archived, on every machine this app is connected to, grouped by the job Home
+named when it started the thread. Each row shows the thread's status, model and
+machine, the last line of its latest reply, and its open pull requests. Click a
+row to open the thread.
+
+Open it from Fleet in the sidebar footer, "Open fleet board" in the command
+palette, or Mod+Shift+9. These appear once Home has started a thread. Threads
+from a machine that is not connected right now are marked Offline and keep
+their last known reply. A thread leaves the board when you settle or archive it,
+or when auto-settle settles it (Settings → Threads → Auto-settle).
+
 ## Other machines
 
 Home reaches your other machines through the desktop app's own connections.

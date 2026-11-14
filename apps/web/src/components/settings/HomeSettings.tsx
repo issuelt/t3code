@@ -16,7 +16,11 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../../modelSelection";
-import { deriveProviderInstanceEntries, providerInstanceEntriesFor } from "../../providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
+  providerModelLabel,
+} from "../../providerInstances";
 import { useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment } from "../../state/home";
@@ -24,7 +28,6 @@ import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import {
@@ -180,13 +183,8 @@ function HomeOnRows(props: {
         (entry) => entry.instanceId === modelSelection.instanceId,
       )
     : undefined;
-  const model = modelEntry?.models.find((option) => option.slug === modelSelection?.model);
   const modelLabel =
-    modelSelection === null
-      ? null
-      : model
-        ? getTriggerDisplayModelName(model, modelEntry?.driverKind)
-        : modelSelection.model;
+    modelSelection === null ? null : providerModelLabel(modelEntry, modelSelection.model);
 
   const runStartFresh = async () => {
     setPending(true);

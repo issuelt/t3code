@@ -41,6 +41,7 @@ import {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  HomeJob,
   OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 import { Project, ProjectCreatePayload, ProjectUpdatePayload } from "./project.ts";
@@ -199,6 +200,8 @@ export const FleetThreadLaunchInput = Schema.Struct({
     }),
   ),
   title: TrimmedNonEmptyString,
+  /** Set once on the new thread; only with a Home launch `threadId`. */
+  job: Schema.optional(HomeJob),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),

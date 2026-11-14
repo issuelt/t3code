@@ -352,6 +352,41 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
+
+      const homeLaunched = ThreadId.make("home-launched:job");
+      yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create:home-job"),
+        threadId: homeLaunched,
+        projectId,
+        title: "Release audit",
+        modelSelection: { instanceId, model: "gpt-5" },
+        runtimeMode: "auto",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        homeJob: "Release audit",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal((yield* projections.getThreadShell(homeLaunched))?.homeJob, "Release audit");
+      const plainJob = ThreadId.make("thread:plain-job");
+      yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create:plain-job"),
+        threadId: plainJob,
+        projectId,
+        title: "Plain",
+        modelSelection: { instanceId, model: "gpt-5" },
+        runtimeMode: "auto",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        homeJob: "Release audit",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal((yield* projections.getThreadShell(plainJob))?.homeJob, undefined);
     }),
   );
 

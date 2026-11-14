@@ -1921,6 +1921,120 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+const latestRunResultsSkipUnfinishedRuns = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = ThreadId.make("thread:latest-run-results");
+  yield* store.apply({
+    id: EventId.make("event:latest-run-results:created"),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make("project:latest-run-results"),
+      title: "Release audit",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  const addRun = Effect.fn("addRun")(function* (
+    ordinal: number,
+    status: "completed" | "running" | "rolled_back",
+    messages: ReadonlyArray<{ readonly text: string; readonly streaming: boolean }>,
+    finishedAfterSeconds = 0,
+  ) {
+    const runId = RunId.make(`run:latest-run-results:${ordinal}`);
+    const finished = status !== "running";
+    yield* store.apply({
+      id: EventId.make(`event:latest-run-results:run:${ordinal}`),
+      type: "run.created",
+      threadId,
+      runId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: runId,
+        threadId,
+        ordinal,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make(`message:latest-run-results:${ordinal}:user`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: finished ? DateTime.add(now, { seconds: finishedAfterSeconds }) : null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    for (const [index, message] of messages.entries()) {
+      yield* store.apply({
+        id: EventId.make(`event:latest-run-results:message:${ordinal}:${index}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`message:latest-run-results:${ordinal}:${index}`),
+          threadId,
+          runId,
+          nodeId: null,
+          role: "assistant",
+          text: message.text,
+          attachments: [],
+          streaming: message.streaming,
+          createdBy: "agent",
+          creationSource: "mcp",
+          createdAt: DateTime.add(now, { seconds: index }),
+          updatedAt: DateTime.add(now, { seconds: index }),
+        },
+      });
+    }
+    return runId;
+  });
+  // A held run can finish after a run queued behind it.
+  const reported = yield* addRun(
+    1,
+    "completed",
+    [
+      { text: "Looking at the checks.", streaming: false },
+      { text: "Merged the fix.\nPR example-org/harbor-api#12, head abc123\n", streaming: false },
+    ],
+    60,
+  );
+  yield* addRun(2, "rolled_back", [{ text: "Rolled back.", streaming: false }]);
+  yield* addRun(3, "running", [{ text: "Still checking", streaming: true }]);
+  yield* addRun(4, "completed", [{ text: "Finished first.", streaming: false }], 10);
+
+  assert.deepEqual(
+    (yield* store.getLatestRunsWithResult([
+      threadId,
+      ThreadId.make("thread:latest-run-results:none"),
+    ])).map((run) => run.id),
+    [reported],
+  );
+});
+
 const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -3504,6 +3618,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "worktree path and title lookups skip deleted threads, and can include archived ones",
     () => threadWorktreePathsIncludeArchivedOnRequest,
+  );
+  it.effect(
+    "the latest reported run is the last finished one that replied, not a running or rolled-back one",
+    () => latestRunResultsSkipUnfinishedRuns,
   );
 
   it.effect(
