@@ -21,8 +21,9 @@ export function SidebarTopRow({
 }) {
   return (
     <li className="list-none">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         aria-label={label}
         aria-current={isActive ? "page" : undefined}
         data-testid={testId}
@@ -33,11 +34,16 @@ export function SidebarTopRow({
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
         )}
         onClick={onActivate}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onActivate();
+        }}
       >
         {icon}
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {trailing}
-      </button>
+      </div>
     </li>
   );
 }

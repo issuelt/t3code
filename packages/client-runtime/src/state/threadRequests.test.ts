@@ -780,6 +780,7 @@ it("keeps secret cards while their run is live and link cards until someone writ
     linkStatus: "pending" as const,
   });
   const userMessage = (seconds: number) => ({
+    id: MessageId.make(`user-${seconds}`),
     role: "user" as const,
     text: "carry on",
     createdBy: "user" as const,
@@ -790,14 +791,32 @@ it("keeps secret cards while their run is live and link cards until someone writ
     turnItems: [
       secret("live-secret", "live-run"),
       secret("old-secret", "done-run"),
+      secret("compaction-secret", "idle-compaction-run"),
       link("old-link", 2),
       link("new-link", 6),
     ],
     runs: [
-      { id: RunId.make("live-run"), status: "running" },
-      { id: RunId.make("done-run"), status: "completed" },
+      { id: RunId.make("live-run"), status: "running", userMessageId: MessageId.make("go") },
+      { id: RunId.make("done-run"), status: "completed", userMessageId: MessageId.make("old") },
+      // T3 Code's own idle compaction is running, but shells treat it as silent.
+      {
+        id: RunId.make("idle-compaction-run"),
+        status: "running",
+        userMessageId: MessageId.make("idle-compact"),
+      },
     ],
-    messages: [userMessage(4)],
+    messages: [
+      userMessage(4),
+      {
+        id: MessageId.make("idle-compact"),
+        role: "user" as const,
+        text: "/compact",
+        createdBy: "agent" as const,
+        creationSource: "server" as const,
+        idleCompaction: "beforeCacheExpires" as const,
+        updatedAt: at(3),
+      },
+    ],
   });
   expect(pending.map((request) => request.itemId)).toEqual(["live-secret", "new-link"]);
 });

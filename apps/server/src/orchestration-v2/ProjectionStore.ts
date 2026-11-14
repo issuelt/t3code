@@ -1,5 +1,14 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { linkCardStillAsks, pendingGuestMessageCount, userOnlyCardWaits } from "@t3tools/contracts";
+import {
+  isActivityRunForShell,
+  isInterruptibleRunForShell,
+  isLiveRunForShell,
+  isSilentRunForShell,
+  linkCardStillAsks,
+  pendingGuestMessageCount,
+  type ShellActivityRunStatus,
+  userOnlyCardWaits,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1651,7 +1660,9 @@ export function threadShellFromProjection(
   const activityRun =
     runs.filter(isActivityRunForShell).toSorted((left, right) => right.ordinal - left.ordinal)[0] ??
     null;
-  const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
+  const liveRunIds = new Set(
+    projection.runs.filter((run) => isLiveRunForShell(run, projection)).map((run) => run.id),
+  );
   let pendingRuntimeRequest = pendingRuntimeRequestSummary(
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -1823,21 +1834,6 @@ function activeProviderGoalForShell(
   return providerThreads.find((thread) => thread.id === activeProviderThreadId)?.goal ?? null;
 }
 
-function isSilentRunForShell(
-  run: OrchestrationV2ThreadProjection["runs"][number],
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
-): boolean {
-  return (
-    run.status !== "failed" &&
-    projection.messages.some(
-      (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
-    ) &&
-    !projection.turnItems.some(
-      (item) => item.runId === run.id && item.type === "compaction" && item.status === "failed",
-    )
-  );
-}
-
 const BACKGROUND_WAKE_SOURCE_KINDS = new Set(["background_task", "command", "monitor"]);
 
 function isBackgroundWakeRunForShell(
@@ -1855,20 +1851,6 @@ function isBackgroundWakeRunForShell(
       (candidate) => candidate.runId === run.id && candidate.createdBy === "user",
     )
   );
-}
-
-function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
-  return run.status === "preparing" || run.status === "starting" || run.status === "running";
-}
-
-type ShellActivityRunStatus = "preparing" | "running" | "starting" | "waiting";
-
-function isActivityRunForShell(
-  run: OrchestrationV2ThreadProjection["runs"][number],
-): run is OrchestrationV2ThreadProjection["runs"][number] & {
-  readonly status: ShellActivityRunStatus;
-} {
-  return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
 type ShellThreadState = {

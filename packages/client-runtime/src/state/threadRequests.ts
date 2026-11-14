@@ -1,5 +1,6 @@
 import {
   idleCompactionOf,
+  isLiveRunForShell,
   userOnlyCardWaits,
   type EnvironmentId,
   type ScopedThreadRef,
@@ -372,16 +373,16 @@ export interface ThreadPendingUserOnlyRequest {
   readonly label: string | null;
 }
 
-const LIVE_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
-
 /** Secret and link cards still waiting, by the rule the server's shell uses. */
 export function derivePendingUserOnlyRequests(projection: {
   readonly turnItems: ThreadStructure["turnItems"];
-  readonly runs: ReadonlyArray<Pick<ThreadStructure["runs"][number], "id" | "status">>;
+  readonly runs: ReadonlyArray<
+    Pick<ThreadStructure["runs"][number], "id" | "status" | "userMessageId">
+  >;
   readonly messages: ReadonlyArray<
     Pick<
       ThreadStructure["messages"][number],
-      "role" | "text" | "createdBy" | "creationSource" | "idleCompaction" | "updatedAt"
+      "id" | "role" | "text" | "createdBy" | "creationSource" | "idleCompaction" | "updatedAt"
     >
   >;
 }): ReadonlyArray<ThreadPendingUserOnlyRequest> {
@@ -391,7 +392,7 @@ export function derivePendingUserOnlyRequests(projection: {
   );
   if (candidates.length === 0) return [];
   const liveRunIds = new Set(
-    projection.runs.flatMap((run) => (LIVE_RUN_STATUSES.has(run.status) ? [run.id] : [])),
+    projection.runs.flatMap((run) => (isLiveRunForShell(run, projection) ? [run.id] : [])),
   );
   let latestUserMessageAt: DateTime.Utc | null = null;
   for (const message of projection.messages) {

@@ -2272,6 +2272,47 @@ export function isLiveSubagentShell(
   );
 }
 
+export type ShellActivityRunStatus = "preparing" | "running" | "starting" | "waiting";
+
+export function isInterruptibleRunForShell(run: Pick<OrchestrationV2Run, "status">): boolean {
+  return run.status === "preparing" || run.status === "starting" || run.status === "running";
+}
+
+export function isActivityRunForShell<Run extends Pick<OrchestrationV2Run, "status">>(
+  run: Run,
+): run is Run & { readonly status: ShellActivityRunStatus } {
+  return isInterruptibleRunForShell(run) || run.status === "waiting";
+}
+
+interface ShellRunProjection {
+  readonly messages: ReadonlyArray<CompactionMessageFields & { readonly id: MessageId }>;
+  readonly turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId" | "type" | "status">>;
+}
+
+/** T3 Code's own idle compactions stay out of shells unless they fail. */
+export function isSilentRunForShell(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
+  projection: ShellRunProjection,
+): boolean {
+  return (
+    run.status !== "failed" &&
+    projection.messages.some(
+      (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
+    ) &&
+    !projection.turnItems.some(
+      (item) => item.runId === run.id && item.type === "compaction" && item.status === "failed",
+    )
+  );
+}
+
+/** A run that is working or waiting, as shells count it. */
+export function isLiveRunForShell(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
+  projection: ShellRunProjection,
+): boolean {
+  return isActivityRunForShell(run) && !isSilentRunForShell(run, projection);
+}
+
 /** A link card stops asking once anyone writes in the thread after it. */
 export function linkCardStillAsks(
   item: Pick<OrchestrationV2TurnItem, "startedAt" | "updatedAt">,
