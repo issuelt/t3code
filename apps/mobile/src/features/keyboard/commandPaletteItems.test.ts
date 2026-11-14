@@ -1,6 +1,13 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterCommandPaletteItems, type CommandPaletteItem } from "./commandPaletteItems";
+import { makeThreadShellFixture } from "../../test-fixtures";
+import {
+  commandPaletteEntityItems,
+  filterCommandPaletteItems,
+  type CommandPaletteItem,
+} from "./commandPaletteItems";
 
 const NOW = Date.UTC(2026, 9, 23);
 
@@ -52,5 +59,45 @@ describe("filterCommandPaletteItems", () => {
       ["siva:one", true],
     ]);
     expect(filterCommandPaletteItems(items, "> layout", ["siva:one"], NOW)).toEqual([]);
+  });
+});
+
+describe("commandPaletteEntityItems", () => {
+  it("offers no new thread in Home's folder but still names Home on its threads", () => {
+    const mac = EnvironmentId.make("mac");
+    const project = (id: string, workspaceRoot: string): EnvironmentProject => ({
+      environmentId: mac,
+      id: ProjectId.make(id),
+      title: id === "home" ? "Home" : "App",
+      workspaceRoot,
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    const homeThread = makeThreadShellFixture({
+      environmentId: mac,
+      id: ThreadId.make("home:older"),
+      projectId: ProjectId.make("home"),
+      title: "Weekly sweep",
+    });
+    const { activeProject, projectItems, threadItems } = commandPaletteEntityItems({
+      projects: [project("home", "/data/home"), project("app", "/work/app")],
+      serverConfigs: new Map([[mac, { homeWorkspaceRoot: "/data/home" }]]),
+      threads: [homeThread],
+      activeThread: homeThread,
+      environmentLabel: () => "mac",
+      searchEnvironments: false,
+      openDraft: () => {},
+      openThread: () => {},
+    });
+
+    expect(projectItems.map((item) => item.title)).toEqual(["App"]);
+    expect(activeProject).toBeNull();
+    expect(threadItems[0]?.detail).toBe("Home · mac");
+    expect(filterCommandPaletteItems(threadItems, "Home", [], NOW).map((item) => item.key)).toEqual(
+      [threadItems[0]?.key],
+    );
   });
 });

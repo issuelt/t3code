@@ -4,7 +4,11 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../test-fixtures";
-import { createHomeShortcutsAtom, type HomeShortcutEnvironment } from "./home-shortcuts";
+import {
+  createHomeShortcutsAtom,
+  createListThreadShellsAtom,
+  type HomeShortcutEnvironment,
+} from "./home-shortcuts";
 
 const mac = EnvironmentId.make("mac");
 const remote = EnvironmentId.make("remote");
@@ -87,6 +91,67 @@ describe("mobile Home shortcuts", () => {
     ]);
   });
 
+  it("lists each environment's current Home thread only as its shortcut", () => {
+    using h = harness();
+    const remoteHomeId = ThreadId.make("home:remote-current");
+    h.registry.set(h.environments, [environment(), environment(remote)]);
+    h.registry.set(h.settings(remote), {
+      home: { threadId: remoteHomeId, watches: [], watchAll: false },
+    });
+    const thread = (environmentId: EnvironmentId, id: string) =>
+      makeThreadShellFixture({ environmentId, id: ThreadId.make(id) });
+    const list = createListThreadShellsAtom({
+      threadsAtom: Atom.make<ReadonlyArray<EnvironmentThreadShell>>([
+        thread(mac, homeId),
+        thread(mac, "work"),
+        thread(mac, "home:superseded"),
+        thread(remote, remoteHomeId),
+        thread(remote, "work"),
+      ]),
+      settingsValueAtom: h.settings,
+    });
+
+    expect(h.registry.get(list).map((shell) => [shell.environmentId, shell.id])).toEqual([
+      [mac, "work"],
+      [mac, "home:superseded"],
+      [remote, "work"],
+    ]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ label, thread }) => [label, thread.environmentId, thread.id]),
+    ).toEqual([
+      ["Home · mac", mac, homeId],
+      ["Home · remote", remote, remoteHomeId],
+    ]);
+  });
+
+  it("keeps an offline or reconnecting machine's cached Home reachable, marked by its state", () => {
+    using h = harness();
+    h.registry.set(h.environments, [
+      environment(),
+      { ...environment(remote), connectionState: "reconnecting" },
+    ]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ label, connectionState, thread }) => [
+          label,
+          connectionState,
+          thread.environmentId,
+        ]),
+    ).toEqual([
+      ["Home · mac", "connected", mac],
+      ["Home · remote", "reconnecting", remote],
+    ]);
+    h.registry.set(h.environments, [{ ...environment(), connectionState: "offline" }]);
+    expect(
+      h.registry
+        .get(h.shortcuts)
+        .map(({ connectionState, thread }) => [connectionState, thread.id]),
+    ).toEqual([["offline", homeId]]);
+  });
+
   it("hides unconfigured, unloaded, missing and archived Home conversations", () => {
     using h = harness();
     h.registry.set(h.settings(mac), null);
@@ -107,7 +172,7 @@ describe("mobile Home shortcuts", () => {
     expect(h.registry.get(h.shortcuts)).toEqual([]);
   });
 
-  it("replaces the destination on settings updates and removes it on disable or disconnect", () => {
+  it("replaces the destination on settings updates and removes it on disable", () => {
     using h = harness();
     const replacement = ThreadId.make("home:replacement");
     h.registry.set(h.settings(mac), {
@@ -115,8 +180,6 @@ describe("mobile Home shortcuts", () => {
     });
     expect(h.registry.get(h.shortcuts)[0]?.thread.id).toBe(replacement);
     h.registry.set(h.environments, [{ ...environment(), isEnabled: false }]);
-    expect(h.registry.get(h.shortcuts)).toEqual([]);
-    h.registry.set(h.environments, [{ ...environment(), connectionState: "reconnecting" }]);
     expect(h.registry.get(h.shortcuts)).toEqual([]);
     h.registry.set(h.environments, [environment(remote)]);
     expect(h.registry.get(h.shortcuts)[0]?.thread.environmentId).toBe(remote);

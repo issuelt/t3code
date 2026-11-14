@@ -16,6 +16,7 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { withoutHomeProjects } from "@t3tools/client-runtime/state/projects";
 import {
   guessThreadLinkRef,
   hasThreadLinks,
@@ -189,6 +190,15 @@ export function waitForProject(
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
+}
+
+const newThreadProjectsAtom = Atom.make((get) =>
+  withoutHomeProjects(get(environmentProjects.projectsAtom), get(environmentServerConfigsAtom)),
+).pipe(Atom.withLabel("mobile:new-thread-projects"));
+
+/** Projects a new thread may start in: every project but each environment's Home folder. */
+export function useNewThreadProjects(): ReadonlyArray<EnvironmentProject> {
+  return useAtomValue(newThreadProjectsAtom);
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {

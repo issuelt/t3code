@@ -152,6 +152,23 @@ export function isHomeProject(
   return isScratchProject(project, homeWorkspaceRoot);
 }
 
+/**
+ * Projects a new thread may start in. Each environment's Home folder belongs to Home alone, and a
+ * project whose environment config has not loaded yet could be that folder.
+ */
+export function withoutHomeProjects<
+  EnvironmentId,
+  Project extends { readonly environmentId: EnvironmentId; readonly workspaceRoot: string },
+>(
+  projects: ReadonlyArray<Project>,
+  serverConfigs: ReadonlyMap<EnvironmentId, { readonly homeWorkspaceRoot?: string | undefined }>,
+): ReadonlyArray<Project> {
+  return projects.filter((project) => {
+    const config = serverConfigs.get(project.environmentId);
+    return config !== undefined && !isHomeProject(project, config.homeWorkspaceRoot);
+  });
+}
+
 export function inferProjectTitleFromPath(value: string): string {
   const normalized = normalizeProjectPathForDispatch(value);
   const absolutePath = splitAbsolutePath(normalized);

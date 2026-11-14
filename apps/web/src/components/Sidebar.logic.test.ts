@@ -26,6 +26,8 @@ import {
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
+  startPageProject,
+  resolveHomeThreadRefs,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
   type SidebarListItem,
@@ -776,6 +778,71 @@ describe("sortScopedProjectsForSidebar", () => {
       "Visible project",
       "Archived-only project",
     ]);
+  });
+});
+
+describe("resolveHomeThreadRefs", () => {
+  it("reaches each known environment's current Home thread, the primary's first, even offline", () => {
+    const remote = EnvironmentId.make("environment-remote");
+    const offline = EnvironmentId.make("environment-offline");
+    const home = (threadId: string | null) => ({
+      settings: { home: { threadId: threadId === null ? null : ThreadId.make(threadId) } },
+    });
+    const serverConfigs = new Map([
+      [remote, home("home:remote")],
+      [localEnvironmentId, home("home:local")],
+      [offline, home("home:offline")],
+    ]);
+
+    expect(
+      resolveHomeThreadRefs({
+        serverConfigs,
+        primaryEnvironmentId: localEnvironmentId,
+      }),
+    ).toEqual([
+      { environmentId: localEnvironmentId, threadId: "home:local" },
+      { environmentId: remote, threadId: "home:remote" },
+      { environmentId: offline, threadId: "home:offline" },
+    ]);
+  });
+});
+
+describe("startPageProject", () => {
+  it("never opens the start page's draft in Home's folder", () => {
+    const home = makeProject({
+      id: ProjectId.make("project-home"),
+      title: "Home",
+      workspaceRoot: "/data/home",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const app = makeProject({ id: ProjectId.make("project-app"), title: "App" });
+    const serverConfigs = new Map([[localEnvironmentId, { homeWorkspaceRoot: "/data/home" }]]);
+
+    expect(startPageProject([home, app], [], serverConfigs, true)).toEqual({
+      kind: "project",
+      project: app,
+    });
+    expect(startPageProject([home], [], serverConfigs, true)).toEqual({ kind: "empty" });
+  });
+
+  it("waits for each environment's config before choosing, since any project could be Home", () => {
+    const loading = EnvironmentId.make("environment-loading");
+    const home = makeProject({
+      id: ProjectId.make("project-home"),
+      environmentId: loading,
+      workspaceRoot: "/data/home",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const app = makeProject({ id: ProjectId.make("project-app"), title: "App" });
+    const serverConfigs = new Map([[localEnvironmentId, { homeWorkspaceRoot: "/data/home" }]]);
+
+    expect(startPageProject([home, app], [], serverConfigs, false)).toEqual({ kind: "waiting" });
+    expect(startPageProject([], [], serverConfigs, false)).toEqual({ kind: "waiting" });
+    // Once every environment has loaded or given up, one that never sent config offers nothing.
+    expect(startPageProject([home, app], [], serverConfigs, true)).toEqual({
+      kind: "project",
+      project: app,
+    });
   });
 });
 

@@ -17,7 +17,8 @@ export function createHomeShortcutsAtom(input: {
 }) {
   return Atom.make((get) => {
     const homes = get(input.environmentsAtom).flatMap((environment) => {
-      if (!environment.isEnabled || environment.connectionState !== "connected") return [];
+      // Cached Home stays reachable while its machine is offline; the list leaves it out either way.
+      if (!environment.isEnabled) return [];
       const threadId = get(input.settingsValueAtom(environment.environmentId))?.home.threadId;
       if (!threadId) return [];
       const thread = get(
@@ -28,7 +29,36 @@ export function createHomeShortcutsAtom(input: {
     });
     return homes.map(({ environment, thread }) => ({
       label: homes.length > 1 ? `Home · ${environment.environmentLabel}` : "Home",
+      connectionState: environment.connectionState,
       thread,
     }));
   }).pipe(Atom.withLabel("mobile:home-shortcuts"));
+}
+
+/**
+ * The thread list leaves each environment's current Home thread to the Home
+ * shortcuts. Older Home threads stay in history, as on web.
+ */
+export function createListThreadShellsAtom(input: {
+  readonly threadsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly settingsValueAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<Pick<ServerSettings, "home"> | null>;
+}) {
+  return Atom.make((get) => {
+    const threads = get(input.threadsAtom);
+    const homeThreadIdByEnvironment = new Map<EnvironmentId, string | null>();
+    const homeThreadIdOf = (environmentId: EnvironmentId) => {
+      if (!homeThreadIdByEnvironment.has(environmentId)) {
+        homeThreadIdByEnvironment.set(
+          environmentId,
+          get(input.settingsValueAtom(environmentId))?.home.threadId ?? null,
+        );
+      }
+      return homeThreadIdByEnvironment.get(environmentId);
+    };
+    const listed = threads.filter((thread) => homeThreadIdOf(thread.environmentId) !== thread.id);
+    // Keep the source array when nothing is hidden, so its identity checks still hold.
+    return listed.length === threads.length ? threads : listed;
+  }).pipe(Atom.withLabel("mobile:list-thread-shells"));
 }

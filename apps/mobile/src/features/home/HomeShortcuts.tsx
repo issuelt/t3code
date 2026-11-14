@@ -8,6 +8,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { cn } from "../../lib/cn";
+import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { createHomeShortcutsAtom } from "../../state/home-shortcuts";
 import { serverEnvironment } from "../../state/server";
@@ -34,14 +35,14 @@ export function HomeShortcuts(props: {
             props.selectedEnvironmentId === null ||
             thread.environmentId === props.selectedEnvironmentId,
         )
-        .map(({ label, thread }) => {
+        .map(({ label, connectionState, thread }) => {
           const key = scopedThreadKey(thread.environmentId, thread.id);
           const selected = props.selectedThreadKey === key;
           return (
             <RowPressable
               key={key}
               accessibilityRole="button"
-              accessibilityLabel={label}
+              accessibilityLabel={connectionState === "connected" ? label : `${label}, Offline`}
               accessibilityState={{ selected }}
               className={cn(
                 "min-h-12 flex-row items-center gap-3 rounded-xl px-4 py-3",
@@ -62,6 +63,9 @@ export function HomeShortcuts(props: {
               <AppText textRole="body" className="flex-1 text-foreground" numberOfLines={1}>
                 {label}
               </AppText>
+              {connectionState === "connected" ? null : (
+                <ConnectionStatusDot state={connectionState} pulse={false} size={6} />
+              )}
             </RowPressable>
           );
         })}
