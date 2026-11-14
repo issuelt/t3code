@@ -30,6 +30,22 @@ class T3AgentNotificationsModule : Module() {
       appContext.reactContext?.let { AgentNotifications.showcase(it, scheme, data) }
     }
 
+    Function("finishApprovalAction") { notificationId: Int ->
+      appContext.reactContext?.let { AgentNotifications.cancelAlert(it, notificationId) }
+    }
+
+    Function("failApprovalAction") { notificationId: Int, environmentLabel: String ->
+      appContext.reactContext?.let {
+        AgentNotifications.showApprovalFailure(it, notificationId, environmentLabel)
+      }
+    }
+
+    Function("cancelResolvedApprovals") { environmentId: String, pendingRequestIds: List<String> ->
+      appContext.reactContext?.let {
+        AgentNotifications.cancelResolvedApprovals(it, environmentId, pendingRequestIds.toSet())
+      }
+    }
+
     Function("setThreadOnScreen") { path: String? ->
       AgentNotifications.setThreadOnScreen(path)
     }
