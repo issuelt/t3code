@@ -11,14 +11,18 @@ import * as Layer from "effect/Layer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import { loadPersistedCatalog } from "../connection/registry.ts";
+import type { ConnectionRoute } from "../connection/catalog.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
+import { routeEntry, usableRoutes } from "../connection/routes.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 
-const RESPOND_TIMEOUT_MS = 15_000;
+// Android gives the headless task 30 s and the iOS patch holds the action for 25 s; the alert
+// needs the rest to show the outcome.
+const ANSWER_BUDGET_MS = 20_000;
 
 export const respondToRuntimeRequestOverHttp = Effect.fn(
   "clientRuntime.state.respondToRuntimeRequestOverHttp",
@@ -28,6 +32,7 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
   readonly requestId: RuntimeRequestId;
   readonly decision: ProviderApprovalDecision;
 }) {
+  // One id for every route: a route that answered before failing replays its receipt.
   const commandIdForThisTap = CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
   const { entries } = yield* loadPersistedCatalog();
   const entry = entries.get(input.environmentId);
@@ -35,29 +40,33 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
     return { _tag: "Unreachable", environmentLabel: null } as const;
   }
   const resolver = yield* ConnectionResolver.ConnectionResolver;
+  const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+  );
   const params = { threadId: input.threadId, requestId: input.requestId };
-  return yield* resolver.prepare(entry).pipe(
-    Effect.flatMap(
-      Effect.fnUntraced(function* (prepared) {
-        return yield* executeAuthenticatedEnvironmentHttpRequest({
+  const answerOver = (route: ConnectionRoute) =>
+    resolver.prepare(routeEntry(entry, route)).pipe(
+      Effect.flatMap((prepared) =>
+        executeAuthenticatedEnvironmentHttpRequest({
           group: "orchestration",
           prepared,
-          signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
-          remoteAuthorization: yield* Effect.serviceOption(
-            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-          ),
+          signer,
+          remoteAuthorization,
           method: "POST",
           url: (urls) => urls.respondToRuntimeRequest({ params }),
-          timeoutMs: RESPOND_TIMEOUT_MS,
+          timeoutMs: ANSWER_BUDGET_MS,
           request: ({ client, headers }) =>
             client.respondToRuntimeRequest({
               params,
               headers: withOrchestrationProtocolHeader(headers),
               payload: { commandId: commandIdForThisTap, decision: input.decision },
             }),
-        });
-      }),
-    ),
+        }),
+      ),
+    );
+  return yield* Effect.firstSuccessOf(usableRoutes(entry).map(answerOver)).pipe(
+    Effect.timeout(ANSWER_BUDGET_MS),
     Effect.map((result) => ({ _tag: "Answered", result }) as const),
     Effect.catch((cause) =>
       Effect.logWarning("Could not answer the runtime request.", { cause }).pipe(

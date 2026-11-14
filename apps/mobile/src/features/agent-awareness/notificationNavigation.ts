@@ -40,7 +40,8 @@ export function installAgentNotificationNavigation(navigate: (href: string) => v
       const key = `${approval.notificationIdentifier}\n${approval.actionIdentifier}`;
       if (!handledResponseIds.has(key)) {
         handledResponseIds.add(key);
-        void handleIosApprovalResponse(approval);
+        // A failed answer reposts the same notification; its next tap must answer again.
+        void handleIosApprovalResponse(approval).finally(() => handledResponseIds.delete(key));
       }
       return;
     }
