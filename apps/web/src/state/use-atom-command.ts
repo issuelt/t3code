@@ -3,9 +3,11 @@ import {
   type AtomCommand,
   type AtomCommandOptions,
   type AtomCommandResult,
+  isAtomCommandInterrupted,
   runAtomCommand,
+  squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 
 export function useAtomCommand<A, E, W>(
   command: AtomCommand<W, A, E>,
@@ -18,4 +20,24 @@ export function useAtomCommand<A, E, W>(
 
   return (value: W) =>
     runAtomCommand(registry, command, value, { label, reportFailure, reportDefect });
+}
+
+export function useCommandStatus() {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async <A, E>(
+    send: () => Promise<AtomCommandResult<A, E>>,
+    fallbackMessage: string,
+  ): Promise<AtomCommandResult<A, E>> => {
+    setPending(true);
+    setError(null);
+    const result = await send();
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : fallbackMessage);
+    }
+    setPending(false);
+    return result;
+  };
+  return { pending, error, run };
 }

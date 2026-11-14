@@ -123,3 +123,17 @@ export function threadRefsEqual(
 export function arrayElementsEqual<A>(left: ReadonlyArray<A>, right: ReadonlyArray<A>): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
+
+export function arrayElementsEqualBy<A extends object>(
+  left: ReadonlyArray<A>,
+  right: ReadonlyArray<A>,
+  equals: (left: A, right: A) => boolean,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => {
+      const other = right[index];
+      return other !== undefined && equals(value, other);
+    })
+  );
+}

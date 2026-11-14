@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -26,6 +27,8 @@ import {
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
+  type OrchestratorMcpUserDecisionInput,
+  type OrchestratorMcpUserDecisionResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
@@ -86,6 +89,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -206,6 +210,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  readonly userDecision: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpUserDecisionInput,
+  ) => Effect.Effect<OrchestratorMcpUserDecisionResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -2610,6 +2618,94 @@ const make = Effect.gen(function* () {
         );
       }
       return { status, secretRef: secretRef.value };
+    }),
+
+    userDecision: Effect.fn("OrchestratorMcpService.userDecision")(function* (scope, input) {
+      const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "t3_user_decision");
+      const threadId = threadScope.thread.threadId;
+      const readStatus = Effect.fn("OrchestratorMcpService.readUserDecision")(function* (
+        requestId: RuntimeRequestId,
+      ) {
+        const { runtimeRequests } = yield* threadManagement
+          .getThreadRecords(threadId, ["runtimeRequests"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        const request = runtimeRequests.find((candidate) => candidate.id === requestId);
+        if (request === undefined || request.kind !== "user_input")
+          return yield* failure(
+            "invalid_request",
+            "No decision with this requestId in this thread.",
+          );
+        return {
+          requestId,
+          status:
+            request.status === "pending"
+              ? ("pending" as const)
+              : request.status === "resolved" && request.decision !== "cancel"
+                ? ("answered" as const)
+                : ("cancelled" as const),
+        };
+      });
+      if (input.action === "withdraw") {
+        if (input.requestId === undefined)
+          return yield* failure("invalid_request", "withdraw needs the decision's `requestId`.");
+        const current = yield* readStatus(input.requestId);
+        if (current.status !== "pending") return current;
+        const dismissed = yield* threadManagement
+          .dispatch({
+            type: "thread.user-input.dismiss",
+            commandId: stableCommandId({
+              scope,
+              requestKey: yield* requestKey(input.clientRequestId),
+              operation: "user-decision-withdraw",
+            }),
+            threadId,
+            requestId: input.requestId,
+          })
+          .pipe(Effect.result);
+        const after = yield* readStatus(input.requestId);
+        // The user can answer between the read and the dismiss; the answer stands.
+        if (Result.isFailure(dismissed) && after.status === "pending")
+          return yield* threadManagementFailure(dismissed.failure);
+        return after;
+      }
+      if (input.question === undefined)
+        return yield* failure("invalid_request", "ask needs the `question`.");
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Leaving a decision requires an active run owned by this MCP provider session.",
+        );
+      }
+      const key = yield* requestKey(input.clientRequestId);
+      const requestId = RuntimeRequestId.make(
+        `runtime-request:user-decision:${stablePart(threadId)}:${stablePart(key)}`,
+      );
+      yield* threadManagement
+        .dispatch({
+          type: "user_decision.record",
+          commandId: stableCommandId({ scope, requestKey: key, operation: "user-decision" }),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          requestId,
+          question: {
+            id: "decision",
+            header: input.header ?? "Decision",
+            question: input.question,
+            options: input.options ?? [],
+            ...(input.multiSelect === undefined ? {} : { multiSelect: input.multiSelect }),
+            ...(input.allowCustomAnswer === undefined
+              ? {}
+              : { allowCustomAnswer: input.allowCustomAnswer }),
+          },
+        })
+        .pipe(Effect.mapError(threadManagementFailure));
+      return yield* readStatus(requestId);
     }),
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {

@@ -39,9 +39,11 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./t
 import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
+  derivePendingUserOnlyRequests,
   type PendingThreadRequests,
+  type ThreadPendingUserOnlyRequest,
 } from "./threadRequests.ts";
-import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
+import { arrayElementsEqual, arrayElementsEqualBy, parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
@@ -667,6 +669,27 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-pending-requests:${key}`));
   });
 
+  const pendingUserOnlyRequestsAtomFamily = Atom.family((key: string) => {
+    let previous: ReadonlyArray<ThreadPendingUserOnlyRequest> = [];
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      const next = projection === null ? [] : derivePendingUserOnlyRequests(projection);
+      if (
+        arrayElementsEqualBy(
+          next,
+          previous,
+          (left, right) => left.itemId === right.itemId && left.label === right.label,
+        )
+      )
+        return previous;
+      previous = next;
+      return next;
+    }).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-pending-user-only-requests:${key}`),
+    );
+  });
+
   const statusAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => get(threadStateValueAtomFamily(key)).status).pipe(
       Atom.setIdleTTL(0),
@@ -708,6 +731,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     updatedAtAtom: (ref: ScopedThreadRef) => updatedAtAtomFamily(threadKey(ref)),
     lastVisitedAtAtom: (ref: ScopedThreadRef) => lastVisitedAtAtomFamily(threadKey(ref)),
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
+    pendingUserOnlyRequestsAtom: (ref: ScopedThreadRef) =>
+      pendingUserOnlyRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
     runStopAtom: (ref: ScopedThreadRef) => runStopAtomFamily(threadKey(ref)),

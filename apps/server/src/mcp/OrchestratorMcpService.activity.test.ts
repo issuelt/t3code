@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   SECRET_REQUEST_UNSAVED_NOTE,
   ThreadId,
@@ -951,6 +952,10 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .requestSecret(makeScope(), { label: "Secret", reason: "requires a run" })
       .pipe(Effect.flip);
     expect(secret.code).toBe("parent_not_active");
+    const decision = yield* service
+      .userDecision(makeScope(), { action: "ask", question: "requires a run" })
+      .pipe(Effect.flip);
+    expect(decision.code).toBe("parent_not_active");
 
     parentShell = { ...parentShell, providerInstanceId: customCodexInstanceId };
     const switchedScope = {
@@ -1100,6 +1105,133 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
     expect(asRef.message).not.toContain("482916");
     expect(saved).toHaveLength(1);
     expect(dispatched).toEqual([]);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("userDecision leaves one decision per retry key and withdraws it once", async () => {
+  const requests: Array<{ id: string; kind: "user_input"; status: string; decision?: string }> = [];
+  const dispatched: Array<{ readonly type: string; readonly [key: string]: unknown }> = [];
+  const projection = () =>
+    ({
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [
+        { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId },
+      ],
+      runtimeRequests: requests,
+    }) as unknown as OrchestrationV2ThreadProjection;
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          getThreadShell: () =>
+            Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+          dispatch: (command) => {
+            dispatched.push(command);
+            if (
+              command.type === "user_decision.record" &&
+              !requests.some((r) => r.id === command.requestId)
+            )
+              requests.push({ id: command.requestId, kind: "user_input", status: "pending" });
+            const request =
+              command.type === "thread.user-input.dismiss"
+                ? requests.find((r) => r.id === command.requestId)
+                : undefined;
+            if (request !== undefined && request.id.endsWith(":answered-first")) {
+              // The user's answer commits first, so the dismiss finds nothing pending.
+              request.status = "resolved";
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "This question has already been answered.",
+                }),
+              );
+            }
+            if (request !== undefined)
+              Object.assign(request, { status: "resolved", decision: "cancel" });
+            return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });
+          },
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const ask = {
+      action: "ask",
+      question: "Deploy 2.0 to production?",
+      clientRequestId: "deploy",
+    } as const;
+    const asked = yield* service.userDecision(makeScope(), ask);
+    const requestId = `runtime-request:user-decision:${parentThreadId}:deploy`;
+    expect(asked).toEqual({ requestId, status: "pending" });
+    expect(yield* service.userDecision(makeScope(), ask)).toEqual(asked);
+    expect(dispatched[0]).toMatchObject({
+      type: "user_decision.record",
+      runId: activeRunId,
+      nodeId: taskId,
+      requestId,
+      question: {
+        id: "decision",
+        header: "Decision",
+        question: "Deploy 2.0 to production?",
+        options: [],
+      },
+    });
+    expect(dispatched[1]).toEqual(dispatched[0]);
+
+    const withdraw = { action: "withdraw", requestId: asked.requestId } as const;
+    expect(yield* service.userDecision(makeScope(), withdraw)).toEqual({
+      requestId,
+      status: "cancelled",
+    });
+    expect(yield* service.userDecision(makeScope(), withdraw)).toEqual({
+      requestId,
+      status: "cancelled",
+    });
+    expect(dispatched.map((command) => command.type)).toEqual([
+      "user_decision.record",
+      "user_decision.record",
+      "thread.user-input.dismiss",
+    ]);
+
+    const raced = yield* service.userDecision(makeScope(), {
+      action: "ask",
+      question: "Rotate the staging key?",
+      clientRequestId: "answered-first",
+    });
+    expect(
+      yield* service.userDecision(makeScope(), { action: "withdraw", requestId: raced.requestId }),
+    ).toEqual({ requestId: raced.requestId, status: "answered" });
+
+    const noQuestion = yield* service
+      .userDecision(makeScope(), { action: "ask" })
+      .pipe(Effect.flip);
+    expect(noQuestion.code).toBe("invalid_request");
+    const unknown = yield* service
+      .userDecision(makeScope(), {
+        action: "withdraw",
+        requestId: RuntimeRequestId.make("runtime-request:other"),
+      })
+      .pipe(Effect.flip);
+    expect(unknown.code).toBe("invalid_request");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

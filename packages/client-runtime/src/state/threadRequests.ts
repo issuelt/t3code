@@ -1,23 +1,31 @@
-import type {
-  EnvironmentId,
-  ScopedThreadRef,
-  ThreadId,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2UserInputQuestion,
-  ProviderApprovalFullAccessOverride,
-  ProviderApprovalOption,
-  ProviderApprovalDecision,
-  ProviderRequestKind,
-  RuntimeRequestId,
+import {
+  idleCompactionOf,
+  isLiveRunForShell,
+  userOnlyCardWaits,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ThreadId,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalFullAccessOverride,
+  type ProviderApprovalOption,
+  type ProviderApprovalDecision,
+  type ProviderRequestKind,
+  type RuntimeRequestId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { parseThreadKey, threadKey } from "./entities.ts";
+import { arrayElementsEqualBy, parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 import * as DateTime from "effect/DateTime";
 import type { AtomCommandResult } from "./runtime.ts";
-import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
+import type {
+  ThreadStructure,
+  ThreadStructureTurnItem,
+  ThreadStructureVisibleTurnItem,
+} from "./models.ts";
 
 export type ApprovalResponder = (
   requestId: RuntimeRequestId,
@@ -359,6 +367,55 @@ export function createQuestionHistoryProjector<
   };
 }
 
+export interface ThreadPendingUserOnlyRequest {
+  readonly itemId: TurnItemId;
+  readonly createdAt: string;
+  readonly label: string | null;
+}
+
+/** Secret and link cards still waiting, by the rule the server's shell uses. */
+export function derivePendingUserOnlyRequests(projection: {
+  readonly turnItems: ThreadStructure["turnItems"];
+  readonly runs: ReadonlyArray<
+    Pick<ThreadStructure["runs"][number], "id" | "status" | "userMessageId">
+  >;
+  readonly messages: ReadonlyArray<
+    Pick<
+      ThreadStructure["messages"][number],
+      "id" | "role" | "text" | "createdBy" | "creationSource" | "idleCompaction" | "updatedAt"
+    >
+  >;
+}): ReadonlyArray<ThreadPendingUserOnlyRequest> {
+  const candidates = projection.turnItems.filter(
+    (item): item is Extract<ThreadStructureTurnItem, { type: "secret_request" | "link_request" }> =>
+      (item.type === "secret_request" || item.type === "link_request") && item.status === "waiting",
+  );
+  if (candidates.length === 0) return [];
+  const liveRunIds = new Set(
+    projection.runs.flatMap((run) => (isLiveRunForShell(run, projection) ? [run.id] : [])),
+  );
+  let latestUserMessageAt: DateTime.Utc | null = null;
+  for (const message of projection.messages) {
+    if (message.role !== "user" || idleCompactionOf(message) !== undefined) continue;
+    if (
+      latestUserMessageAt === null ||
+      DateTime.isGreaterThan(message.updatedAt, latestUserMessageAt)
+    )
+      latestUserMessageAt = message.updatedAt;
+  }
+  return candidates.flatMap((item) =>
+    userOnlyCardWaits(item, liveRunIds, latestUserMessageAt)
+      ? [
+          {
+            itemId: item.id,
+            createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
+            label: item.label ?? null,
+          },
+        ]
+      : [],
+  );
+}
+
 export interface ChildThreadApproval {
   readonly thread: ScopedThreadRef;
   readonly title: string;
@@ -402,4 +459,93 @@ export function createChildThreadApprovalsAtom(input: {
   });
   const empty = Atom.make<ReadonlyArray<ChildThreadApproval>>([]);
   return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
+}
+
+interface OpenDecisionBase {
+  readonly thread: ScopedThreadRef;
+  readonly title: string;
+  readonly createdAt: string;
+}
+
+export type OpenDecision =
+  | (OpenDecisionBase & { readonly kind: "approval"; readonly approval: ThreadPendingApproval })
+  | (OpenDecisionBase & { readonly kind: "question"; readonly userInput: ThreadPendingUserInput })
+  | (OpenDecisionBase & {
+      readonly kind: "userOnly";
+      readonly request: ThreadPendingUserOnlyRequest;
+    });
+
+const decisionRequestId = (decision: OpenDecision) =>
+  decision.kind === "approval"
+    ? decision.approval.requestId
+    : decision.kind === "question"
+      ? decision.userInput.requestId
+      : decision.request.itemId;
+
+const decisionRequest = (decision: OpenDecision) =>
+  decision.kind === "approval"
+    ? decision.approval
+    : decision.kind === "question"
+      ? decision.userInput
+      : decision.request;
+
+export function openDecisionKey(decision: OpenDecision): string {
+  return JSON.stringify([threadKey(decision.thread), decision.kind, decisionRequestId(decision)]);
+}
+
+type AskingThread = Pick<EnvironmentThreadShell, "environmentId" | "id" | "title">;
+
+const sameAskingThread = (left: AskingThread, right: AskingThread) =>
+  left.environmentId === right.environmentId && left.id === right.id && left.title === right.title;
+
+const sameDecision = (left: OpenDecision, right: OpenDecision) =>
+  left.kind === right.kind &&
+  left.title === right.title &&
+  left.createdAt === right.createdAt &&
+  threadKey(left.thread) === threadKey(right.thread) &&
+  decisionRequest(left) === decisionRequest(right);
+
+export function createOpenDecisionsAtoms(input: {
+  readonly threadShellsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
+  readonly pendingUserOnlyRequestsAtom: (
+    ref: ScopedThreadRef,
+  ) => Atom.Atom<ReadonlyArray<ThreadPendingUserOnlyRequest>>;
+}) {
+  let previousAsking: ReadonlyArray<AskingThread> = [];
+  const askingThreadsAtom = Atom.make((get) => {
+    const next = get(input.threadShellsAtom).filter(
+      (shell) => shell.hasPendingApprovals || shell.hasPendingUserInput,
+    );
+    if (arrayElementsEqualBy(next, previousAsking, sameAskingThread)) return previousAsking;
+    previousAsking = next;
+    return previousAsking;
+  }).pipe(Atom.withLabel("open-decision-threads"));
+
+  let previous: ReadonlyArray<OpenDecision> = [];
+  const decisionsAtom = Atom.make((get) => {
+    const next: OpenDecision[] = [];
+    for (const shell of get(askingThreadsAtom)) {
+      const base = {
+        thread: { environmentId: shell.environmentId, threadId: shell.id },
+        title: shell.title,
+      };
+      for (const request of get(input.pendingUserOnlyRequestsAtom(base.thread)))
+        next.push({ ...base, kind: "userOnly", createdAt: request.createdAt, request });
+      const requests = get(input.pendingRequestsAtom(base.thread));
+      for (const approval of requests?.approvals ?? [])
+        next.push({ ...base, kind: "approval", createdAt: approval.createdAt, approval });
+      for (const userInput of requests?.userInputs ?? [])
+        next.push({ ...base, kind: "question", createdAt: userInput.createdAt, userInput });
+    }
+    next.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    if (arrayElementsEqualBy(next, previous, sameDecision)) return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel("open-decisions"));
+
+  const askingThreadCountAtom = Atom.make((get) => get(askingThreadsAtom).length).pipe(
+    Atom.withLabel("open-decision-thread-count"),
+  );
+  return { decisionsAtom, askingThreadCountAtom };
 }

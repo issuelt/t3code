@@ -30,7 +30,7 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
-  type NodeId,
+  NodeId,
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
@@ -684,6 +684,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "user_decision.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -10292,6 +10293,115 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchUserDecisionRecord = Effect.fn("orchestrationV2.dispatch.userDecisionRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "user_decision.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "attempts", "providerTurns", "turnItems"], {
+          turnItemTypes: ["user_input_request"],
+          messageRoles: [],
+        })
+        .pipe(mapDispatchError(command));
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.rootNodeId !== command.nodeId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      const existing = projection.turnItems.find(
+        (item) => item.type === "user_input_request" && item.requestId === command.requestId,
+      );
+      if (existing !== undefined) {
+        return yield* emit(
+          events,
+          command,
+        )({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          ...(existing.runId === null ? {} : { runId: existing.runId }),
+          ...(existing.nodeId === null ? {} : { nodeId: existing.nodeId }),
+          occurredAt: now,
+          payload: existing,
+        });
+      }
+      const providerTurnId = providerTurnForRun(projection, run)?.id ?? null;
+      const nodeId = NodeId.make(`node:user-decision:${command.requestId}`);
+      const base = {
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+      };
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        ...base,
+        type: "node.updated",
+        payload: {
+          id: nodeId,
+          threadId: command.threadId,
+          runId: command.runId,
+          parentNodeId: command.nodeId,
+          rootNodeId: command.nodeId,
+          kind: "user_input_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId: run.providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: command.requestId,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* emitEvent({
+        ...base,
+        type: "runtime-request.updated",
+        payload: {
+          id: command.requestId,
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      yield* emitEvent({
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: TurnItemId.make(`turn-item:user-decision:${command.requestId}`),
+          threadId: command.threadId,
+          runId: command.runId,
+          nodeId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal(projection),
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "user_input_request",
+          requestId: command.requestId,
+          questions: [command.question],
+          responseMode: "message",
+        },
+      });
+    },
+  );
+
   /**
    * Records or updates the card for a link an agent asked the user to make.
    * The pairing code goes straight to the link and never through orchestration.
@@ -15004,6 +15114,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
+      case "user_decision.record":
+        yield* dispatchUserDecisionRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

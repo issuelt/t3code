@@ -2610,3 +2610,123 @@ it.effect("a running provider-turn update reads only the thread's queued and run
     );
   }),
 );
+
+it.effect("user_decision.record leaves a question the user answers or dismisses by message", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:user-decision");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-user-decision"),
+      threadId,
+      projectId: ProjectId.make("project:user-decision"),
+      title: "Decision",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-user-decision"),
+      threadId,
+      messageId: MessageId.make("message:user-decision"),
+      text: "Prepare the release",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const record = (commandId: string, requestId: RuntimeRequestId, nodeId = run.rootNodeId!) =>
+      orchestrator.dispatch({
+        type: "user_decision.record",
+        commandId: CommandId.make(commandId),
+        threadId,
+        runId: run.id,
+        nodeId,
+        requestId,
+        question: {
+          id: "decision",
+          header: "Release",
+          question: "Ship 2.0 today?",
+          options: [
+            { label: "Ship", description: "Tag and publish now" },
+            { label: "Wait", description: "Hold until Monday" },
+          ],
+        },
+      });
+    const answered = RuntimeRequestId.make("request:user-decision:answered");
+    const withdrawn = RuntimeRequestId.make("request:user-decision:withdrawn");
+    yield* record("record-user-decision", answered);
+    yield* record("record-user-decision-retry", answered);
+    yield* record("record-user-decision-withdrawn", withdrawn);
+    const wrongNode = yield* Effect.result(
+      record(
+        "record-user-decision-wrong-node",
+        RuntimeRequestId.make("request:x"),
+        NodeId.make("node:x"),
+      ),
+    );
+    assert.isTrue(Result.isFailure(wrongNode));
+
+    const recorded = yield* projections.getThreadRecords(threadId, [
+      "runtimeRequests",
+      "turnItems",
+    ]);
+    assert.deepStrictEqual(
+      recorded.runtimeRequests.map((request) => [
+        request.id,
+        request.status,
+        request.responseCapability.type,
+      ]),
+      [
+        [answered, "pending", "message"],
+        [withdrawn, "pending", "message"],
+      ],
+    );
+    const questions = recorded.turnItems.filter((item) => item.type === "user_input_request");
+    assert.deepStrictEqual(
+      questions.map(
+        (item) => item.type === "user_input_request" && [item.requestId, item.responseMode],
+      ),
+      [
+        [answered, "message"],
+        [withdrawn, "message"],
+      ],
+    );
+
+    yield* orchestrator.dispatch({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-user-decision"),
+      threadId,
+      requestId: answered,
+      answers: { decision: "Ship" },
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.user-input.dismiss",
+      commandId: CommandId.make("withdraw-user-decision"),
+      threadId,
+      requestId: withdrawn,
+    });
+
+    const after = yield* projections.getThreadRecords(threadId, ["runtimeRequests", "messages"]);
+    assert.deepStrictEqual(
+      after.runtimeRequests.map((request) => [request.id, request.status, request.decision]),
+      [
+        [answered, "resolved", undefined],
+        [withdrawn, "resolved", "cancel"],
+      ],
+    );
+    assert.deepStrictEqual(
+      after.messages
+        .filter((message) => message.id.startsWith("async-answer:"))
+        .map((message) => [message.id, message.text]),
+      [[`async-answer:${answered}`, "Ship 2.0 today?\nShip"]],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);

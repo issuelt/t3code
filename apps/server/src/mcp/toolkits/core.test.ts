@@ -907,19 +907,21 @@ const dispatched: Array<string> = [];
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({
-        name: "delegate_task",
-        arguments: { task: "Review", mode: "async" },
-      })
-      .pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          clientScope("full-access"),
-        ),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+    for (const call of [
+      { name: "delegate_task", arguments: { task: "Review", mode: "async" } },
+      { name: "t3_user_decision", arguments: { action: "ask", question: "Ship it?" } },
+    ]) {
+      const result = yield* server
+        .callTool(call)
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+    }
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(

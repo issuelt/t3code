@@ -2272,6 +2272,74 @@ export function isLiveSubagentShell(
   );
 }
 
+export type ShellActivityRunStatus = "preparing" | "running" | "starting" | "waiting";
+
+export function isInterruptibleRunForShell(run: Pick<OrchestrationV2Run, "status">): boolean {
+  return run.status === "preparing" || run.status === "starting" || run.status === "running";
+}
+
+export function isActivityRunForShell<Run extends Pick<OrchestrationV2Run, "status">>(
+  run: Run,
+): run is Run & { readonly status: ShellActivityRunStatus } {
+  return isInterruptibleRunForShell(run) || run.status === "waiting";
+}
+
+interface ShellRunProjection {
+  readonly messages: ReadonlyArray<CompactionMessageFields & { readonly id: MessageId }>;
+  readonly turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId" | "type" | "status">>;
+}
+
+/** T3 Code's own idle compactions stay out of shells unless they fail. */
+export function isSilentRunForShell(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
+  projection: ShellRunProjection,
+): boolean {
+  return (
+    run.status !== "failed" &&
+    projection.messages.some(
+      (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
+    ) &&
+    !projection.turnItems.some(
+      (item) => item.runId === run.id && item.type === "compaction" && item.status === "failed",
+    )
+  );
+}
+
+/** A run that is working or waiting, as shells count it. */
+export function isLiveRunForShell(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "userMessageId">,
+  projection: ShellRunProjection,
+): boolean {
+  return isActivityRunForShell(run) && !isSilentRunForShell(run, projection);
+}
+
+/** A link card stops asking once anyone writes in the thread after it. */
+export function linkCardStillAsks(
+  item: Pick<OrchestrationV2TurnItem, "startedAt" | "updatedAt">,
+  latestUserMessageAt: DateTime.Utc | null,
+): boolean {
+  return (
+    latestUserMessageAt === null ||
+    !DateTime.isGreaterThan(latestUserMessageAt, item.startedAt ?? item.updatedAt)
+  );
+}
+
+/**
+ * Secret and link cards only the user can answer. A secret card waits while its agent waits in
+ * the run. A link card's agent asked without waiting, so it waits past its run until someone
+ * writes in the thread again; agent-driven threads may never get a message from the user.
+ */
+export function userOnlyCardWaits<
+  Item extends Pick<
+    OrchestrationV2TurnItem,
+    "type" | "status" | "runId" | "startedAt" | "updatedAt"
+  >,
+>(item: Item, liveRunIds: ReadonlySet<RunId>, latestUserMessageAt: DateTime.Utc | null): boolean {
+  if (item.status !== "waiting") return false;
+  if (item.type === "link_request") return linkCardStillAsks(item, latestUserMessageAt);
+  return item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId);
+}
+
 /**
  * A settled top-level thread settled before `beforeMs`. Shells that omit older settled threads
  * count every such thread, so the server and clients share this one rule.
@@ -3720,6 +3788,15 @@ const OrchestrationV2InternalCommand = Schema.Union([
     placeholder: Schema.optional(Schema.String),
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("user_decision.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    requestId: RuntimeRequestId,
+    question: OrchestrationV2UserInputQuestion,
   }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no

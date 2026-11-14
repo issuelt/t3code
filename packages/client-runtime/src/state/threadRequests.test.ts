@@ -8,6 +8,7 @@ import {
   type ScopedThreadRef,
   NodeId,
   ProviderSessionId,
+  RunId,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
@@ -15,11 +16,14 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
   createChildThreadApprovalsAtom,
+  createOpenDecisionsAtoms,
+  derivePendingUserOnlyRequests,
   type PendingThreadRequests,
   derivePendingThreadRequests,
   declinePendingApprovals,
@@ -33,6 +37,7 @@ import {
   type ApprovalResponder,
   type ThreadRequestsResolved,
   type ThreadPendingApproval,
+  type ThreadPendingUserOnlyRequest,
 } from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
@@ -641,4 +646,177 @@ it("loads only child approvals and retains their destination across environments
   expect(readDetails).not.toHaveBeenCalled();
   unmount();
   registry.dispose();
+});
+
+it("lists every environment's open decisions oldest first, reading details only for threads that ask", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+  const shell = (environmentId: EnvironmentId, id: string, flags: object) => ({
+    ...presentThreadShell(environmentId, v2ThreadShell),
+    id: ThreadId.make(id),
+    title: id,
+    ...flags,
+  });
+  const shells = Atom.make([
+    shell(local, "approval", { hasPendingApprovals: true }),
+    shell(remote, "question", { hasPendingUserInput: true }),
+    shell(local, "link-and-decision", { hasPendingUserInput: true }),
+    shell(remote, "idle", {}),
+  ]);
+  const approval: ThreadPendingApproval = {
+    requestId: RuntimeRequestId.make("approval"),
+    requestKind: "command",
+    createdAt: "2026-10-19T00:00:03Z",
+    responseCapability: "live",
+  };
+  const userInput = {
+    requestId: RuntimeRequestId.make("question"),
+    createdAt: "2026-10-19T00:00:01Z",
+    questions: [],
+    responseCapability: "message" as const,
+    responseMode: "message" as const,
+    dismissible: true,
+  };
+  const decision = {
+    ...userInput,
+    requestId: RuntimeRequestId.make("decision"),
+    createdAt: "2026-10-19T00:00:04Z",
+  };
+  const linkAndDecision = threadKey({
+    environmentId: local,
+    threadId: ThreadId.make("link-and-decision"),
+  });
+  const details = Atom.family((key: string) =>
+    Atom.make<PendingThreadRequests | null>(
+      key === threadKey({ environmentId: local, threadId: ThreadId.make("approval") })
+        ? { approvals: [approval], userInputs: [] }
+        : key === threadKey({ environmentId: remote, threadId: ThreadId.make("question") })
+          ? { approvals: [], userInputs: [userInput] }
+          : key === linkAndDecision
+            ? { approvals: [], userInputs: [decision] }
+            : { approvals: [], userInputs: [] },
+    ),
+  );
+  // The shell names only the newer decision; the link card comes from the thread's details.
+  const userOnly = Atom.family((key: string) =>
+    Atom.make<ReadonlyArray<ThreadPendingUserOnlyRequest>>(
+      key === linkAndDecision
+        ? [
+            {
+              itemId: TurnItemId.make("link-card"),
+              createdAt: "2026-10-19T00:00:02Z",
+              label: "Staging box",
+            },
+          ]
+        : [],
+    ),
+  );
+  const readDetails = vi.fn((ref: ScopedThreadRef) => details(threadKey(ref)));
+  const { decisionsAtom, askingThreadCountAtom } = createOpenDecisionsAtoms({
+    threadShellsAtom: shells,
+    pendingRequestsAtom: readDetails,
+    pendingUserOnlyRequestsAtom: (ref) => userOnly(threadKey(ref)),
+  });
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(decisionsAtom);
+  const decisions = registry.get(decisionsAtom);
+  expect(decisions.map((decision) => [decision.kind, decision.thread])).toEqual([
+    ["question", { environmentId: remote, threadId: "question" }],
+    ["userOnly", { environmentId: local, threadId: "link-and-decision" }],
+    ["approval", { environmentId: local, threadId: "approval" }],
+    ["question", { environmentId: local, threadId: "link-and-decision" }],
+  ]);
+  expect(registry.get(askingThreadCountAtom)).toBe(3);
+  expect(readDetails.mock.calls.map(([ref]) => ref.threadId)).not.toContain("idle");
+
+  registry.set(shells, [...registry.get(shells)]);
+  expect(registry.get(decisionsAtom)).toBe(decisions);
+  registry.set(details(threadKey({ environmentId: remote, threadId: ThreadId.make("question") })), {
+    approvals: [],
+    userInputs: [],
+  });
+  expect(registry.get(decisionsAtom).map((decision) => decision.kind)).toEqual([
+    "userOnly",
+    "approval",
+    "question",
+  ]);
+  unmount();
+  registry.dispose();
+});
+
+it("keeps secret cards while their run is live and link cards until someone writes after them", () => {
+  const at = (seconds: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 19, 0, 0, seconds));
+  const base = {
+    threadId: ThreadId.make("thread"),
+    nodeId: NodeId.make("node"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "waiting" as const,
+    title: null,
+    completedAt: null,
+    reason: "Needed for the deploy",
+  };
+  const secret = (id: string, runId: string) => ({
+    ...base,
+    id: TurnItemId.make(id),
+    runId: RunId.make(runId),
+    startedAt: at(1),
+    updatedAt: at(1),
+    type: "secret_request" as const,
+    label: "Deploy token",
+    secretStatus: "pending" as const,
+  });
+  const link = (id: string, seconds: number) => ({
+    ...base,
+    id: TurnItemId.make(id),
+    runId: RunId.make("done-run"),
+    startedAt: at(seconds),
+    updatedAt: at(seconds),
+    type: "link_request" as const,
+    label: "Staging box",
+    linkStatus: "pending" as const,
+  });
+  const userMessage = (seconds: number) => ({
+    id: MessageId.make(`user-${seconds}`),
+    role: "user" as const,
+    text: "carry on",
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    updatedAt: at(seconds),
+  });
+  const pending = derivePendingUserOnlyRequests({
+    turnItems: [
+      secret("live-secret", "live-run"),
+      secret("old-secret", "done-run"),
+      secret("compaction-secret", "idle-compaction-run"),
+      link("old-link", 2),
+      link("new-link", 6),
+    ],
+    runs: [
+      { id: RunId.make("live-run"), status: "running", userMessageId: MessageId.make("go") },
+      { id: RunId.make("done-run"), status: "completed", userMessageId: MessageId.make("old") },
+      // T3 Code's own idle compaction is running, but shells treat it as silent.
+      {
+        id: RunId.make("idle-compaction-run"),
+        status: "running",
+        userMessageId: MessageId.make("idle-compact"),
+      },
+    ],
+    messages: [
+      userMessage(4),
+      {
+        id: MessageId.make("idle-compact"),
+        role: "user" as const,
+        text: "/compact",
+        createdBy: "agent" as const,
+        creationSource: "server" as const,
+        idleCompaction: "beforeCacheExpires" as const,
+        updatedAt: at(3),
+      },
+    ],
+  });
+  expect(pending.map((request) => request.itemId)).toEqual(["live-secret", "new-link"]);
 });
