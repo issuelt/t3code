@@ -1218,7 +1218,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : null;
 
   const threadCards = (
-    <SidebarThreadCards threadRef={threadRef} pullRequests={thread.pullRequests} />
+    <SidebarThreadCards
+      threadRef={threadRef}
+      projectId={thread.projectId}
+      pullRequests={thread.pullRequests}
+    />
   );
 
   if (variant !== "card") {

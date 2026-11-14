@@ -50,20 +50,24 @@ export function PullRequestCheckList({
               still={dense}
               {...(dense && { className: "size-3" })}
             />
-            {dense && check.url !== null ? (
-              <button
-                type="button"
-                className="min-w-0 truncate text-left hover:underline"
-                onClick={() => open(check.url)}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  dense && check.url !== null ? (
+                    <button
+                      type="button"
+                      className="min-w-0 truncate text-left hover:underline"
+                      onClick={() => open(check.url)}
+                    />
+                  ) : (
+                    <span className="min-w-0 truncate" />
+                  )
+                }
               >
                 {check.name}
-              </button>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-              </Tooltip>
-            )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+            </Tooltip>
             <span className="justify-self-end whitespace-nowrap text-muted-foreground">
               {pullRequestCheckStatusLabel(check)}
             </span>

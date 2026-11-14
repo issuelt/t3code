@@ -90,9 +90,20 @@ export const ThreadPullRequestWatchCheck = Schema.Struct({
 });
 export type ThreadPullRequestWatchCheck = typeof ThreadPullRequestWatchCheck.Type;
 
-/** The head's checks at the last read, failures first; `total` counts ones past the limit. */
+/** Every check on the head, including ones past the run limit. Neutral checks count as skipped. */
+export const ThreadPullRequestWatchCheckCounts = Schema.Struct({
+  failed: NonNegativeInt,
+  awaiting: NonNegativeInt,
+  running: NonNegativeInt,
+  queued: NonNegativeInt,
+  passed: NonNegativeInt,
+  skipped: NonNegativeInt,
+});
+export type ThreadPullRequestWatchCheckCounts = typeof ThreadPullRequestWatchCheckCounts.Type;
+
+/** The head's checks at the last read: counts of all of them, and the first runs in display order. */
 export const ThreadPullRequestWatchChecks = Schema.Struct({
-  total: NonNegativeInt,
+  counts: ThreadPullRequestWatchCheckCounts,
   runs: Schema.Array(ThreadPullRequestWatchCheck).check(
     Schema.isMaxLength(THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT),
   ),

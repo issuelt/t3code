@@ -3602,7 +3602,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         headSha: "abc123",
         failedChecks: ["lint"],
         wakes: 1,
-        checks: { total: 1, runs: [{ name: "lint", status: "failure" as const, url: null }] },
+        checks: {
+          counts: { failed: 1, awaiting: 0, running: 0, queued: 0, passed: 0, skipped: 0 },
+          runs: [{ name: "lint", status: "failure" as const, url: null }],
+        },
       };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",

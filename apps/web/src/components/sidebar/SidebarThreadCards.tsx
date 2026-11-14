@@ -1,30 +1,34 @@
 import type {
+  ProjectId,
+  PullRequestRef,
   ScopedThreadRef,
   ThreadPullRequestLink,
+  ThreadPullRequestWatchCheck,
   ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
-import { resolveThreadCards } from "@t3tools/client-runtime/thread-cards";
+import { resolveThreadCards, summarizeWatchChecks } from "@t3tools/client-runtime/thread-cards";
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { useState } from "react";
 
 import { threadEnvironment } from "~/state/threads";
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { PullRequestCheckList } from "../pullRequest/PullRequestCheckList";
 import { groupPullRequestChecks } from "../pullRequest/pullRequestDetail.logic";
-import {
-  PULL_REQUEST_WATCHING_HINT,
-  summarizePullRequestChecks,
-} from "../pullRequest/pullRequestPresentation";
+import { PULL_REQUEST_WATCHING_HINT } from "../pullRequest/pullRequestPresentation";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function SidebarThreadCards({
   threadRef,
+  projectId,
   pullRequests,
 }: {
   threadRef: ScopedThreadRef;
+  projectId: ProjectId;
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
 }) {
   const cards = resolveThreadCards(pullRequests);
@@ -38,8 +42,10 @@ export function SidebarThreadCards({
               <PullRequestChecksCard
                 key={threadPullRequestKeyOf(card.link)}
                 threadRef={threadRef}
+                projectId={projectId}
                 link={card.link}
                 checks={card.checks}
+                total={card.total}
               />
             );
           default:
@@ -52,18 +58,21 @@ export function SidebarThreadCards({
 
 function PullRequestChecksCard({
   threadRef,
+  projectId,
   link,
   checks,
+  total,
 }: {
   threadRef: ScopedThreadRef;
+  projectId: ProjectId;
   link: ThreadPullRequestLink;
   checks: ThreadPullRequestWatchChecks;
+  total: number;
 }) {
   const [showAll, setShowAll] = useState(false);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const { attention, running, completed } = groupPullRequestChecks(checks.runs);
-  const visible = [...attention, ...running, ...(showAll ? completed : [])];
-  const unlisted = checks.total - checks.runs.length;
+  const unlisted = total - checks.runs.length;
   const stopWatching = () =>
     void watch({
       environmentId: threadRef.environmentId,
@@ -75,6 +84,7 @@ function PullRequestChecksCard({
         watching: false,
       },
     });
+  const stored = [...attention, ...running, ...(showAll ? completed : [])];
   return (
     <section
       aria-label={`Checks for #${link.number}`}
@@ -83,8 +93,8 @@ function PullRequestChecksCard({
     >
       <div className="flex h-5 min-w-0 items-center gap-1.5 text-2xs text-secondary-label">
         <span className="font-mono tabular-nums">#{link.number}</span>
-        <span className="min-w-0 flex-1 truncate">{summarizePullRequestChecks(checks.runs)}</span>
-        {completed.length > 0 ? (
+        <span className="min-w-0 flex-1 truncate">{summarizeWatchChecks(checks.counts)}</span>
+        {completed.length > 0 || unlisted > 0 ? (
           <Button
             variant="ghost-muted"
             size="icon-micro"
@@ -113,12 +123,66 @@ function PullRequestChecksCard({
           <TooltipPopup side="top">{PULL_REQUEST_WATCHING_HINT}</TooltipPopup>
         </Tooltip>
       </div>
-      {visible.length > 0 ? (
-        <PullRequestCheckList dense checks={visible} threadRef={threadRef} />
-      ) : null}
       {showAll && unlisted > 0 ? (
-        <p className="text-2xs text-muted-foreground">{unlisted} more on the pull request</p>
-      ) : null}
+        <AllChecks
+          threadRef={threadRef}
+          reference={{
+            projectId,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+          }}
+          stored={stored}
+          unlisted={unlisted}
+        />
+      ) : (
+        <>
+          {stored.length > 0 ? (
+            <PullRequestCheckList dense checks={stored} threadRef={threadRef} />
+          ) : null}
+          {unlisted > 0 ? <UnlistedChecks count={unlisted} /> : null}
+        </>
+      )}
     </section>
+  );
+}
+
+function UnlistedChecks({ count }: { count: number }) {
+  return <p className="text-2xs text-muted-foreground">{count} more on the pull request</p>;
+}
+
+function AllChecks({
+  threadRef,
+  reference,
+  stored,
+  unlisted,
+}: {
+  threadRef: ScopedThreadRef;
+  reference: PullRequestRef;
+  stored: ReadonlyArray<ThreadPullRequestWatchCheck>;
+  unlisted: number;
+}) {
+  const detailQuery = useEnvironmentQuery(
+    pullRequestEnvironment.detail({ environmentId: threadRef.environmentId, input: reference }),
+  );
+  if (detailQuery.data === null) {
+    return (
+      <>
+        <PullRequestCheckList dense checks={stored} threadRef={threadRef} />
+        {detailQuery.isPending ? (
+          <p className="text-2xs text-muted-foreground">Loading checks…</p>
+        ) : (
+          <UnlistedChecks count={unlisted} />
+        )}
+      </>
+    );
+  }
+  const { attention, running, completed } = groupPullRequestChecks(detailQuery.data.checks);
+  return (
+    <PullRequestCheckList
+      dense
+      checks={[...attention, ...running, ...completed]}
+      threadRef={threadRef}
+    />
   );
 }

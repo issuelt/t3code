@@ -2,9 +2,11 @@ import {
   THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT,
   type OrchestrationV2Notification,
   type PullRequestCheck,
+  type PullRequestCheckStatus,
   type PullRequestComment,
   type PullRequestDetail,
   type ThreadPullRequestWatch,
+  type ThreadPullRequestWatchCheckCounts,
   type ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -41,9 +43,23 @@ const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? che
 const needsAttention = (check: PullRequestCheck) =>
   isFailedCheck(check) || check.status === "action-required";
 
+const COUNTED_AS = {
+  failure: "failed",
+  cancelled: "failed",
+  "action-required": "awaiting",
+  pending: "running",
+  success: "passed",
+  skipped: "skipped",
+  neutral: "skipped",
+} as const satisfies Record<PullRequestCheckStatus, keyof ThreadPullRequestWatchCheckCounts>;
+
 function watchChecksOf(checks: ReadonlyArray<PullRequestCheck>): ThreadPullRequestWatchChecks {
+  const counts = { failed: 0, awaiting: 0, running: 0, queued: 0, passed: 0, skipped: 0 };
+  for (const check of checks) {
+    counts[check.phase === "queued" ? "queued" : COUNTED_AS[check.status]] += 1;
+  }
   return {
-    total: checks.length,
+    counts,
     runs: [
       ...checks.filter(needsAttention),
       ...checks.filter((check) => check.status === "pending"),

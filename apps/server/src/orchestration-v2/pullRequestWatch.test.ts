@@ -121,7 +121,13 @@ describe("evaluatePullRequestWatch", () => {
       detail({
         checks: [
           ...many,
+          check("docs", "skipped"),
+          check("size", "neutral"),
           { ...check("unit", "pending"), phase: "queued" },
+          { ...check("e2e", "pending"), phase: "running" },
+          check("deploy", "pending"),
+          check("review", "action-required"),
+          check("lint", "cancelled"),
           check("build", "failure"),
           { ...check("approval", "action-required"), placeholder: true },
         ],
@@ -129,16 +135,23 @@ describe("evaluatePullRequestWatch", () => {
       noRemarks,
     );
     const checks = read.next.checks!;
-    assert.equal(checks.total, many.length + 2);
+    assert.deepEqual(checks.counts, {
+      failed: 2,
+      awaiting: 1,
+      running: 2,
+      queued: 1,
+      passed: many.length,
+      skipped: 2,
+    });
     assert.equal(checks.runs.length, THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT);
     assert.deepEqual(checks.runs[0], {
-      name: "build",
-      status: "failure",
-      url: "https://ci.example/build",
+      name: "review",
+      status: "action-required",
+      url: "https://ci.example/review",
     });
     assert.deepEqual(
-      checks.runs.slice(0, 2).map((run) => run.name),
-      ["build", "unit"],
+      checks.runs.slice(0, 6).map((run) => run.name),
+      ["review", "lint", "build", "unit", "e2e", "deploy"],
     );
     assert.isFalse(checks.runs.some((run) => run.name === "approval"));
 
