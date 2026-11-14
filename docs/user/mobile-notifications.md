@@ -8,7 +8,7 @@ For activity without ordinary alerts on Android 8 or newer, leave **Ongoing agen
 
 On iOS you can also add the **Agent Activity** widget to your Home Screen or Lock Screen. It shows the same agents as the Live Activity, using your T3 Connect sign-in. The widget refreshes when you open T3 and shows unfinished work as out of date after 10 minutes.
 
-Approval alerts have **Allow once** and **Decline** buttons on iOS and on Android 12 and newer, so you can answer without opening the app. Both buttons ask you to unlock the device first. If your environment can't be reached, the alert says so and keeps its buttons for another try. An approval answered elsewhere clears from your phone. Approvals with their own choices, or that need more context, open the thread instead.
+On Android 12 and newer, approval alerts have **Allow once** and **Decline** buttons, so you can answer without opening the app. Both buttons ask you to unlock the device first. If your environment can't be reached, the alert says so and keeps its buttons for another try. If the connection on your phone isn't allowed to answer approvals, the alert says so and drops its buttons. An approval answered elsewhere clears from your phone. Approvals with their own choices open the thread instead.
 
 Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing activity continues to update. Viewing a thread on another device does not silence your phone's alerts.
 
