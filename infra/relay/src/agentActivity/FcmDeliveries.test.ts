@@ -457,7 +457,7 @@ describe("Android delivery routing", () => {
         new TextEncoder().encode(requestId),
       );
       expect(h.sent[0]?.data.activity_pending_requests).toBe(Hex.encode(digest).slice(0, 16));
-    }).pipe(Effect.provide(h.layer), Effect.provide(NodeCryptoLayer.layer));
+    }).pipe(Effect.provide(Layer.merge(h.layer, NodeCryptoLayer.layer)));
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {
