@@ -14,7 +14,6 @@ import type {
   ProjectId,
   ProviderInstanceId,
   RunId,
-  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -168,7 +167,6 @@ export interface EnvironmentThreadShell {
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
   readonly pendingApprovalAt?: string | null;
-  readonly pendingApprovalRequestId?: RuntimeRequestId | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
@@ -288,11 +286,6 @@ export function presentThreadShell(
           assistantMessageId: null,
         } satisfies ThreadRunSummary);
   const runtime = shellRuntime(thread);
-  const request = thread.pendingRuntimeRequest;
-  const approval =
-    request !== null && request.kind !== "user_input" && request.kind !== "auth_refresh"
-      ? request
-      : null;
   return {
     environmentId,
     id: thread.id,
@@ -323,15 +316,22 @@ export function presentThreadShell(
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}
       : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
-    hasPendingApprovals: approval !== null,
+    hasPendingApprovals:
+      thread.pendingRuntimeRequest !== null &&
+      thread.pendingRuntimeRequest.kind !== "user_input" &&
+      thread.pendingRuntimeRequest.kind !== "auth_refresh",
     // Async questions count too, so a thread with any open question leaves Working.
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     pendingUserInputAt:
       thread.pendingRuntimeRequest?.kind === "user_input"
         ? iso(thread.pendingRuntimeRequest.createdAt)
         : null,
-    pendingApprovalRequestId: approval?.id ?? null,
-    pendingApprovalAt: approval === null ? null : iso(approval.createdAt),
+    pendingApprovalAt:
+      thread.pendingRuntimeRequest !== null &&
+      thread.pendingRuntimeRequest.kind !== "user_input" &&
+      thread.pendingRuntimeRequest.kind !== "auth_refresh"
+        ? iso(thread.pendingRuntimeRequest.createdAt)
+        : null,
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,

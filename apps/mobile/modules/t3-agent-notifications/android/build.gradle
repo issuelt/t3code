@@ -19,7 +19,6 @@ android {
 
 dependencies {
   implementation project(':expo-notifications')
-  implementation 'com.facebook.react:react-android'
   implementation 'com.google.firebase:firebase-messaging:25.0.1'
   implementation 'androidx.core:core:1.17.0'
   implementation 'androidx.lifecycle:lifecycle-process:2.9.3'

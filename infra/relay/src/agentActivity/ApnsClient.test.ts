@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 
-import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -169,40 +169,6 @@ describe("ApnsClient", () => {
           deepLink: notification.deepLink,
         },
       });
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("puts actionable approvals in the approval category with their IDs", () =>
-    Effect.gen(function* () {
-      const apns = yield* ApnsClient.ApnsClient;
-      const notification = {
-        title: "Thread",
-        body: "Approval: Project",
-        environmentId: "env",
-        threadId: "thread",
-        deepLink: "/threads/env/thread",
-      };
-      const pendingApproval = {
-        requestThreadId: ThreadId.make("child"),
-        requestId: RuntimeRequestId.make("request"),
-        actionable: true,
-      };
-      const actionable = apns.makePushNotificationRequest({
-        token: "push-token",
-        notification: { ...notification, pendingApproval },
-      });
-      expect(actionable.payload).toMatchObject({
-        aps: { category: "t3.approval" },
-        body: { pendingApproval },
-      });
-      const passive = apns.makePushNotificationRequest({
-        token: "push-token",
-        notification: {
-          ...notification,
-          pendingApproval: { ...pendingApproval, actionable: false },
-        },
-      });
-      expect(JSON.stringify(passive.payload)).not.toContain("category");
     }).pipe(Effect.provide(layerTest)),
   );
 

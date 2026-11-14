@@ -43,15 +43,11 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
 import {
-  CommandId,
   DpopFailureReason,
   AuthSessionId,
-  NonNegativeInt,
-  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ProviderApprovalDecision } from "./providerPolicy.ts";
 import {
   CloudSpeechApiKey,
   CloudSpeechError,
@@ -76,7 +72,6 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
-  OrchestrationV2RuntimeRequestSettledStatus,
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
@@ -720,25 +715,6 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentInternalError,
 ] as const;
 
-const EnvironmentRuntimeRequestRespondParams = Schema.Struct({
-  threadId: ThreadId,
-  requestId: RuntimeRequestId,
-});
-
-export const EnvironmentRuntimeRequestRespondPayload = Schema.Struct({
-  commandId: CommandId,
-  decision: ProviderApprovalDecision,
-});
-export type EnvironmentRuntimeRequestRespondPayload =
-  typeof EnvironmentRuntimeRequestRespondPayload.Type;
-
-export const EnvironmentRuntimeRequestRespondResult = Schema.Union([
-  Schema.TaggedStruct("Responded", { sequence: NonNegativeInt }),
-  Schema.TaggedStruct("AlreadyResolved", { status: OrchestrationV2RuntimeRequestSettledStatus }),
-]);
-export type EnvironmentRuntimeRequestRespondResult =
-  typeof EnvironmentRuntimeRequestRespondResult.Type;
-
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -781,24 +757,6 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       success: OrchestrationV2ThreadHistoryPage,
       error: EnvironmentOrchestrationThreadHistoryErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post(
-      "respondToRuntimeRequest",
-      "/api/orchestration/threads/:threadId/runtime-requests/:requestId/respond",
-      {
-        headers: OrchestrationProtocolHeaders,
-        params: EnvironmentRuntimeRequestRespondParams,
-        payload: EnvironmentRuntimeRequestRespondPayload,
-        success: EnvironmentRuntimeRequestRespondResult,
-        error: [
-          EnvironmentRequestInvalidError,
-          EnvironmentScopeRequiredError,
-          EnvironmentResourceNotFoundError,
-          EnvironmentInternalError,
-        ],
-      },
-    ).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
 class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")

@@ -11,7 +11,6 @@ import * as OpenApi from "effect/http-api/OpenApi";
 import {
   DpopFailureReason,
   EnvironmentId,
-  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -117,22 +116,6 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
-export const RelayPendingApproval = Schema.Struct({
-  requestThreadId: ThreadId,
-  requestId: RuntimeRequestId,
-  /** Whether a notification may answer it with allow once or decline. */
-  actionable: Schema.Boolean,
-});
-export type RelayPendingApproval = typeof RelayPendingApproval.Type;
-
-export const RELAY_APPROVAL_NOTIFICATION_CATEGORY = "t3.approval";
-
-export const RelayApprovalNotificationAction = Schema.Literals([
-  "t3.approval.accept",
-  "t3.approval.decline",
-]);
-export type RelayApprovalNotificationAction = typeof RelayApprovalNotificationAction.Type;
-
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -144,7 +127,6 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
-  pendingApproval: Schema.optional(RelayPendingApproval),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 

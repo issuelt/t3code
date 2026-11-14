@@ -1243,14 +1243,6 @@ export function latestProviderTurnForAttempt<
   return latest;
 }
 
-export const OrchestrationV2RuntimeRequestSettledStatus = Schema.Literals([
-  "resolved",
-  "expired",
-  "cancelled",
-]);
-export type OrchestrationV2RuntimeRequestSettledStatus =
-  typeof OrchestrationV2RuntimeRequestSettledStatus.Type;
-
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,
@@ -1260,7 +1252,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
     ProviderRequestKind,
     Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
   ]),
-  status: Schema.Union([Schema.Literal("pending"), OrchestrationV2RuntimeRequestSettledStatus]),
+  status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
     Schema.Struct({
       type: Schema.Literal("live"),

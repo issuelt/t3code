@@ -3,7 +3,6 @@ import {
   isListedThreadLineage,
   type EnvironmentId,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
   type Project,
   type RuntimeRequestId,
@@ -13,7 +12,6 @@ import {
   RelayApi,
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
-  type RelayPendingApproval,
 } from "@t3tools/contracts/relay";
 import {
   type SubagentRequestAwareness,
@@ -319,35 +317,6 @@ const waitingApprovalId = (thread: AgentAwarenessThread | null) =>
     ? thread.pendingRuntimeRequest?.id
     : undefined;
 
-function notificationMayAnswer(
-  request: OrchestrationV2RuntimeRequest,
-  item: Extract<OrchestrationV2TurnItem, { type: "approval_request" }>,
-): boolean {
-  // Provider options carry their own labels, which only the in-app card shows.
-  return (
-    request.status === "pending" &&
-    request.responseCapability.type === "live" &&
-    item.fullAccessOverride === undefined &&
-    item.options === undefined
-  );
-}
-
-export function pendingApprovalFor(input: {
-  readonly threadId: ThreadId;
-  readonly requestId: RuntimeRequestId;
-  readonly runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>;
-  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
-}): RelayPendingApproval {
-  const request = input.runtimeRequests.find((candidate) => candidate.id === input.requestId);
-  const item = input.turnItems.find(
-    (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "approval_request" }> =>
-      candidate.type === "approval_request" && candidate.requestId === input.requestId,
-  );
-  const actionable =
-    request !== undefined && item !== undefined && notificationMayAnswer(request, item);
-  return { requestThreadId: input.threadId, requestId: input.requestId, actionable };
-}
-
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<AgentAwarenessThread>;
@@ -607,17 +576,12 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const projected = resolveAgentAwarenessRelayPublishSnapshot({
+    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const pendingApproval = yield* readPendingApproval(thread, projected);
-    const snapshot =
-      projected.state !== null && pendingApproval !== null
-        ? { ...projected, state: { ...projected.state, pendingApproval } }
-        : projected;
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -742,32 +706,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Untraced: it runs inside publishThreadUnsafe's span, only for a thread awaiting approval.
-  const readPendingApproval = Effect.fnUntraced(function* (
-    thread: Option.Option<AgentAwarenessThread>,
-    snapshot: ReturnType<typeof resolveAgentAwarenessRelayPublishSnapshot>,
-  ) {
-    if (snapshot.state?.phase !== "waiting_for_approval" || Option.isNone(thread)) return null;
-    const ownRequest = thread.value.pendingRuntimeRequest;
-    const owner =
-      snapshot.subagentWait !== null
-        ? { threadId: snapshot.subagentWait.threadId, requestId: snapshot.subagentWait.requestId }
-        : ownRequest !== null
-          ? { threadId: thread.value.id, requestId: ownRequest.id }
-          : null;
-    if (owner === null) return null;
-    const records = yield* threads.getThreadRecords(
-      owner.threadId,
-      ["runtimeRequests", "turnItems"],
-      {
-        runtimeRequestStatuses: ["pending"],
-        turnItemRequestIds: [owner.requestId],
-        turnItemTypes: ["approval_request"],
-      },
-    );
-    return pendingApprovalFor({ ...owner, ...records });
-  });
-
   const readAwarenessThread = (threadId: ThreadId) =>
     threads
       .getAgentAwarenessSnapshot(threadId)
@@ -826,7 +764,6 @@ export const make = Effect.gen(function* () {
       // The newest wait is the one to announce.
       if (pending === null || DateTime.isGreaterThan(child.updatedAt, pending.updatedAt)) {
         pending = {
-          threadId: childId,
           requestId,
           updatedAt: child.updatedAt,
           waitsForInput: child.pendingRuntimeRequest?.kind === "user_input",
