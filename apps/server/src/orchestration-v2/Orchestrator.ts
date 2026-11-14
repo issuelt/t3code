@@ -789,7 +789,7 @@ function withPullRequestWatch(
 ): ThreadPullRequestLink {
   const { watch: previous, endedWatch, ...rest } = link;
   if (watch !== undefined) return { ...rest, watch };
-  const ended = previous ?? endedWatch;
+  const ended = previous === undefined ? endedWatch : withoutChecks(previous);
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
@@ -805,13 +805,18 @@ function syncedPullRequestWatch(
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
     return command.watch;
   }
-  return withoutChecksAnswer(command.watch);
+  return withoutHeadChecks(command.watch);
 }
 
-const withoutChecksAnswer = ({
-  checksPending: _answer,
+const withoutChecks = ({
+  checks: _checks,
   ...watch
 }: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
+
+const withoutHeadChecks = ({
+  checksPending: _answer,
+  ...watch
+}: ThreadPullRequestWatch): ThreadPullRequestWatch => withoutChecks(watch);
 
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
@@ -4796,7 +4801,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             pullRequests: linked.map((link) =>
               link.watch?.checksPending === undefined
                 ? link
-                : { ...link, watch: withoutChecksAnswer(link.watch) },
+                : { ...link, watch: withoutHeadChecks(link.watch) },
             ),
           };
         }

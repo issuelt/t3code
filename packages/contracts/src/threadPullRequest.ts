@@ -10,6 +10,7 @@ import {
 } from "./baseSchemas.ts";
 import {
   PullRequestActor,
+  PullRequestCheck,
   PullRequestChecksState,
   PullRequestMergeability,
   PullRequestReviewDecision,
@@ -79,6 +80,36 @@ export const ThreadPullRequestKey = Schema.Struct({
 });
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
+export const THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT = 30;
+
+export const ThreadPullRequestWatchCheck = Schema.Struct({
+  name: PullRequestCheck.fields.name,
+  status: PullRequestCheck.fields.status,
+  phase: PullRequestCheck.fields.phase,
+  url: PullRequestCheck.fields.url,
+});
+export type ThreadPullRequestWatchCheck = typeof ThreadPullRequestWatchCheck.Type;
+
+/** Every check on the head, including ones past the run limit. Neutral checks count as skipped. */
+export const ThreadPullRequestWatchCheckCounts = Schema.Struct({
+  failed: NonNegativeInt,
+  awaiting: NonNegativeInt,
+  running: NonNegativeInt,
+  queued: NonNegativeInt,
+  passed: NonNegativeInt,
+  skipped: NonNegativeInt,
+});
+export type ThreadPullRequestWatchCheckCounts = typeof ThreadPullRequestWatchCheckCounts.Type;
+
+/** The head's checks at the last read: counts of all of them, and the first runs in display order. */
+export const ThreadPullRequestWatchChecks = Schema.Struct({
+  counts: ThreadPullRequestWatchCheckCounts,
+  runs: Schema.Array(ThreadPullRequestWatchCheck).check(
+    Schema.isMaxLength(THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT),
+  ),
+});
+export type ThreadPullRequestWatchChecks = typeof ThreadPullRequestWatchChecks.Type;
+
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
@@ -116,6 +147,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * watch keep its thread waiting; absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
+  /** Absent until the head's checks are read, and again after a push. */
+  checks: Schema.optional(ThreadPullRequestWatchChecks),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

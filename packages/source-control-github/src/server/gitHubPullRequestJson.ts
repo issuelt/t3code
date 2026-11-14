@@ -10,6 +10,7 @@ import type {
   PullRequestReferenceCandidate,
   PullRequestPreview,
   PullRequestCheck,
+  PullRequestCheckPhase,
   PullRequestCheckStatus,
   PullRequestChecksState,
   PullRequestComment,
@@ -599,6 +600,21 @@ function toCheckStatus(raw: CheckFields): PullRequestCheckStatus {
   }
 }
 
+// Check runs report a status; commit statuses report only a state, which cannot tell them apart.
+function toCheckPhase(raw: CheckFields): PullRequestCheckPhase | undefined {
+  switch (raw.status?.trim().toUpperCase()) {
+    case "IN_PROGRESS":
+      return "running";
+    case "QUEUED":
+    case "REQUESTED":
+    case "WAITING":
+    case "PENDING":
+      return "queued";
+    default:
+      return undefined;
+  }
+}
+
 /** GitHub's sentinel for timestamps not reached yet. */
 const UNSET_TIMESTAMP = "0001-01-01T00:00:00Z";
 
@@ -623,11 +639,13 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
+    const phase = status === "pending" ? toCheckPhase(check) : undefined;
     return [
       {
         check: {
           name,
           status,
+          ...(phase !== undefined && { phase }),
           description: trimmed(check.description),
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
           ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),

@@ -110,9 +110,14 @@ export const PullRequestCheckStatus = Schema.Literals([
 ]);
 export type PullRequestCheckStatus = typeof PullRequestCheckStatus.Type;
 
+/** Whether a pending check has started; absent when the host does not say. */
+export const PullRequestCheckPhase = Schema.Literals(["queued", "running"]);
+export type PullRequestCheckPhase = typeof PullRequestCheckPhase.Type;
+
 export const PullRequestCheck = Schema.Struct({
   name: TrimmedNonEmptyString,
   status: PullRequestCheckStatus,
+  phase: Schema.optional(PullRequestCheckPhase),
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
@@ -121,7 +126,7 @@ export const PullRequestCheck = Schema.Struct({
    * approval when that read fails, so nothing waits on it or counts it as passing.
    */
   placeholder: Schema.optional(Schema.Boolean),
-});
+}).check(Schema.makeFilter((check) => check.phase === undefined || check.status === "pending"));
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
 export const PullRequestReactionContent = Schema.Literals([

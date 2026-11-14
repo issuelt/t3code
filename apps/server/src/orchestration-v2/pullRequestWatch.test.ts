@@ -1,6 +1,7 @@
 import {
   type PullRequestCheck,
   PullRequestComment,
+  THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -109,6 +110,68 @@ describe("evaluatePullRequestWatch", () => {
       evaluatePullRequestWatch(passed.next, { ...green, headSha: "bbbbbbbbbb" }, noRemarks).changes,
       [{ kind: "checks-passed", count: 1, required }],
     );
+  });
+
+  it("keeps the head's checks for display, failures first and capped, until a push", () => {
+    const many = Array.from({ length: THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT + 4 }, (_, index) =>
+      check(`job-${index}`, "success"),
+    );
+    const read = evaluatePullRequestWatch(
+      watch(),
+      detail({
+        checks: [
+          ...many,
+          check("docs", "skipped"),
+          check("size", "neutral"),
+          { ...check("unit", "pending"), phase: "queued" },
+          { ...check("e2e", "pending"), phase: "running" },
+          check("deploy", "pending"),
+          check("review", "action-required"),
+          check("lint", "cancelled"),
+          check("build", "failure"),
+          { ...check("approval", "action-required"), placeholder: true },
+        ],
+      }),
+      noRemarks,
+    );
+    const checks = read.next.checks!;
+    assert.deepEqual(checks.counts, {
+      failed: 2,
+      awaiting: 1,
+      running: 2,
+      queued: 1,
+      passed: many.length,
+      skipped: 2,
+    });
+    assert.equal(checks.runs.length, THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT);
+    assert.deepEqual(checks.runs[0], {
+      name: "review",
+      status: "action-required",
+      url: "https://ci.example/review",
+    });
+    assert.deepEqual(
+      checks.runs.slice(0, 6).map((run) => run.name),
+      ["review", "lint", "build", "unit", "e2e", "deploy"],
+    );
+    assert.isFalse(checks.runs.some((run) => run.name === "approval"));
+
+    const queued = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [{ ...check("unit", "pending"), phase: "queued" }] }),
+      noRemarks,
+    );
+    assert.deepEqual(queued.next.checks?.runs, [
+      { name: "unit", status: "pending", phase: "queued", url: "https://ci.example/unit" },
+    ]);
+
+    const empty = evaluatePullRequestWatch(read.next, detail({ checks: [] }), noRemarks);
+    assert.deepEqual(empty.next.checks, checks);
+    const pushed = evaluatePullRequestWatch(
+      read.next,
+      detail({ headSha: "bbbbbbbbbb", checks: [] }),
+      noRemarks,
+    );
+    assert.isUndefined(pushed.next.checks);
   });
 
   it("baselines existing failures and conflicts, then reports new ones", () => {

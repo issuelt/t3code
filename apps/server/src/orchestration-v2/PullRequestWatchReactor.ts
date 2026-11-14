@@ -7,7 +7,7 @@ import {
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
-  type ThreadPullRequestWatch,
+  ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import {
   normalizeThreadPullRequestKey,
@@ -195,26 +195,7 @@ function planRead(
 const checksPendingBeforeOf = ({ watch }: WatchTarget) =>
   watch.checksPending === undefined ? {} : { checksPendingBefore: watch.checksPending };
 
-function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
-  return (
-    left.startedAt === right.startedAt &&
-    left.headSha === right.headSha &&
-    left.failedChecks.join("\n") === right.failedChecks.join("\n") &&
-    left.passed === right.passed &&
-    left.passedChecks.join("\n") === right.passedChecks.join("\n") &&
-    (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
-    (left.awaitingApproval ?? []).join("\n") === (right.awaitingApproval ?? []).join("\n") &&
-    (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
-    left.remarksThrough === right.remarksThrough &&
-    left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
-    left.conflicting === right.conflicting &&
-    left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
-    left.wakes === right.wakes &&
-    left.awaitingBaseline === right.awaitingBaseline &&
-    left.checksAwaitedSince === right.checksAwaitedSince &&
-    left.checksPending === right.checksPending
-  );
-}
+const watchesEqual = Schema.toEquivalence(ThreadPullRequestWatch);
 
 export class PullRequestWatchReactor extends Context.Service<
   PullRequestWatchReactor,

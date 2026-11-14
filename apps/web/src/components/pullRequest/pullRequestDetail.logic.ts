@@ -350,7 +350,9 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   return parts.join(" · ");
 }
 
-export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) {
+export function groupPullRequestChecks<Check extends Pick<PullRequestCheck, "status">>(
+  checks: ReadonlyArray<Check>,
+) {
   return {
     attention: checks.filter((check) =>
       ["failure", "cancelled", "action-required"].includes(check.status),

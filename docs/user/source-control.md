@@ -339,6 +339,7 @@ watch. Watching a pull request again does not repeat check or conflict news its 
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
+In the sidebar, a thread with a watched open pull request shows a card under its row that lists the failed, running, and queued checks, each linked to its job.
 
 A watched thread counts as working while the pull request still has checks running, so it stays in
 the **Working** section, including after the agent pushes a fix. Once every check has finished,

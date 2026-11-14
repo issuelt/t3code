@@ -620,17 +620,36 @@ describe("pull request detail decoding", () => {
     const queued = { ...running, status: "QUEUED", startedAt: "0001-01-01T00:00:00Z" };
     const checksOf = (rollup: ReadonlyArray<Record<string, unknown>>) => {
       const detail = detailOf(rollup.map(inWorkflow));
-      return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
+      return [
+        detail.checks.map((check) => [check.name, check.status, check.phase]),
+        detail.checksState,
+      ];
     };
 
-    for (const rollup of [
-      [finished, running],
-      [running, finished],
-      [finished, queued],
-      [queued, finished],
-    ]) {
-      expect(checksOf(rollup)).toEqual([[["check", "pending"]], "pending"]);
+    for (const [rollup, phase] of [
+      [[finished, running], "running"],
+      [[running, finished], "running"],
+      [[finished, queued], "queued"],
+      [[queued, finished], "queued"],
+    ] as const) {
+      expect(checksOf(rollup)).toEqual([[["check", "pending", phase]], "pending"]);
     }
+  });
+
+  it("tells queued check runs from running ones, and leaves commit statuses without a phase", () => {
+    const detail = detailOf([
+      check({ name: "unit", status: "IN_PROGRESS" }),
+      check({ name: "e2e", status: "WAITING" }),
+      check({ name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }),
+      check({ __typename: "StatusContext", context: "deploy", state: "PENDING" }),
+    ]);
+
+    expect(detail.checks.map((entry) => [entry.name, entry.status, entry.phase ?? null])).toEqual([
+      ["unit", "pending", "running"],
+      ["e2e", "pending", "queued"],
+      ["lint", "success", null],
+      ["deploy", "pending", null],
+    ]);
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {

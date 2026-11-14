@@ -120,6 +120,8 @@ import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { SidebarThreadCards, threadCardsHeight } from "./SidebarThreadCards";
+import { resolveThreadCards } from "@t3tools/client-runtime/thread-cards";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -1008,7 +1010,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         },
         ...sortable.listeners,
       }
-    : {};
+    : { style: undefined };
   const destinationVerb = sortable?.isDragging
     ? props.dropVerb
     : props.sweepAction === "unsnooze"
@@ -1216,6 +1218,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </span>
   ) : null;
 
+  const cards = resolveThreadCards(thread.pullRequests);
+  const cardsHeight = threadCardsHeight(cards);
+  // Inline so it overrides the row-only size classes below.
+  const intrinsicSize = (rowPx: number) =>
+    cardsHeight === 0 ? undefined : `auto ${rowPx + cardsHeight}px`;
+  const threadCards = (
+    <SidebarThreadCards threadRef={threadRef} projectId={thread.projectId} cards={cards} />
+  );
+
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
     const inFolder = variant === "folder" || multiline;
@@ -1229,6 +1240,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
         )}
+        style={{
+          ...sortableRootProps.style,
+          containIntrinsicSize: intrinsicSize(metaLine !== null && multiline ? 54 : 36),
+        }}
       >
         <Tooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
@@ -1411,6 +1426,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {threadCards}
       </li>
     );
   }
@@ -1425,6 +1441,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         metaLineEmpty && "[contain-intrinsic-size:auto_58px]",
         sortable?.isDragging && "relative z-20",
       )}
+      style={{
+        ...sortableRootProps.style,
+        containIntrinsicSize: intrinsicSize(metaLineEmpty ? 58 : 78),
+      }}
     >
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
@@ -1613,6 +1633,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      {threadCards}
     </li>
   );
 });

@@ -1,4 +1,31 @@
-import type { ThreadLinkedPullRequest, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  PullRequestCheck,
+  PullRequestCheckStatus,
+  ThreadLinkedPullRequest,
+  ThreadPullRequestLink,
+  ThreadPullRequestWatchCheckCounts,
+} from "@t3tools/contracts";
+
+const COUNTED_AS = {
+  failure: "failed",
+  cancelled: "failed",
+  "action-required": "awaiting",
+  pending: "running",
+  success: "passed",
+  skipped: "skipped",
+  neutral: "skipped",
+} as const satisfies Record<PullRequestCheckStatus, keyof ThreadPullRequestWatchCheckCounts>;
+
+export function countPullRequestChecks(
+  checks: ReadonlyArray<Pick<PullRequestCheck, "status" | "phase" | "placeholder">>,
+): ThreadPullRequestWatchCheckCounts {
+  const counts = { failed: 0, awaiting: 0, running: 0, queued: 0, passed: 0, skipped: 0 };
+  for (const check of checks) {
+    if (check.placeholder === true) continue;
+    counts[check.phase === "queued" ? "queued" : COUNTED_AS[check.status]] += 1;
+  }
+  return counts;
+}
 
 /** Tombstones prevent sync from re-adding hidden members. */
 export function visibleThreadPullRequests(
