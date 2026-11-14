@@ -8,6 +8,9 @@ interface AndroidAgentNotifications {
   setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
+  finishApprovalAction?(notificationId: number): void;
+  failApprovalAction?(notificationId: number, message: string): void;
+  cancelResolvedApprovals?(environmentId: string, pendingRequestIds: ReadonlyArray<string>): void;
 }
 
 const native =
@@ -54,4 +57,20 @@ export async function openAndroidLiveUpdateSettings(): Promise<void> {
   if (!native?.openLiveUpdateSettings?.()) {
     await Linking.openSettings();
   }
+}
+
+/** Cancels this environment's approval alerts whose requests are no longer pending. */
+export function cancelResolvedAndroidApprovals(
+  environmentId: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): void {
+  native?.cancelResolvedApprovals?.(environmentId, pendingRequestIds);
+}
+
+export function finishAndroidApprovalAction(notificationId: number): void {
+  native?.finishApprovalAction?.(notificationId);
+}
+
+export function failAndroidApprovalAction(notificationId: number, message: string): void {
+  native?.failApprovalAction?.(notificationId, message);
 }

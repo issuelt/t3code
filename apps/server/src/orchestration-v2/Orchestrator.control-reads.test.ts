@@ -386,6 +386,17 @@ it.effect(
           },
         ],
       );
+      const late = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("respond-again"),
+          threadId,
+          requestId: RuntimeRequestId.make("child"),
+          decision: "accept",
+        })
+        .pipe(Effect.flip);
+      assert.equal(late._tag, "RuntimeRequestNotPendingError");
+      assert.equal(late._tag === "RuntimeRequestNotPendingError" ? late.status : null, "resolved");
     }).pipe(Effect.provide(layerTest)),
 );
 

@@ -11,6 +11,7 @@ import * as OpenApi from "effect/http-api/OpenApi";
 import {
   DpopFailureReason,
   EnvironmentId,
+  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -116,6 +117,25 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
+/** The approval a waiting thread shows; IDs only, so a push never carries request details. */
+export const RelayPendingApproval = Schema.Struct({
+  /** The thread that owns the request: the activity's own thread or one of its subagents. */
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  /** Whether a notification may answer it with allow once or decline. */
+  actionable: Schema.Boolean,
+});
+export type RelayPendingApproval = typeof RelayPendingApproval.Type;
+
+/** The iOS category and Android extras that put allow once and decline on an approval alert. */
+export const RELAY_APPROVAL_NOTIFICATION_CATEGORY = "t3.approval";
+
+export const RelayApprovalNotificationAction = Schema.Literals([
+  "t3.approval.accept",
+  "t3.approval.decline",
+]);
+export type RelayApprovalNotificationAction = typeof RelayApprovalNotificationAction.Type;
+
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -127,6 +147,7 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  pendingApproval: Schema.optional(RelayPendingApproval),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -140,6 +161,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  pendingApproval: Schema.optional(RelayPendingApproval),
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 

@@ -824,4 +824,73 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("revoked-permission", true))
     assertEquals(5, manager.activeNotifications.size)
   }
+
+  private fun approval(alertId: String, requestId: String, actionable: Boolean = true) =
+    update(alertId, true) + mapOf(
+      "alert_request_id" to requestId,
+      "alert_request_thread_id" to "thread",
+      "alert_environment_id" to "environment",
+      "alert_request_actionable" to actionable.toString(),
+    )
+
+  private fun alert(id: String) = manager.activeNotifications.single {
+    it.tag == "t3-agent-alert" && it.id == id.hashCode()
+  }.notification
+
+  @Test
+  fun approvalAlertsOfferAllowOnceAndDeclineOnlyWhenActionable() {
+    AgentNotifications.receive(context, approval("actionable", "request-a"))
+    AgentNotifications.receive(context, approval("passive", "request-b", actionable = false))
+    assertEquals(
+      listOf("Allow once", "Decline"),
+      alert("actionable").actions.map { it.title.toString() }
+    )
+    assertEquals(null, alert("passive").actions)
+  }
+
+  @Test
+  fun approvalActionShowsProgressThenFailureWithItsActionsKept() {
+    AgentNotifications.receive(context, approval("approval", "request-a"))
+    val request = AgentNotifications.beginApprovalAction(
+      context,
+      "approval".hashCode(),
+      ApprovalAction.Decline
+    )
+    assertEquals(ApprovalRequest("environment", "thread", "request-a", true), request)
+    assertEquals(
+      "Declining…",
+      alert("approval").extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    )
+    assertEquals(null, alert("approval").actions)
+    AgentNotifications.showApprovalFailure(context, "approval".hashCode(), "Couldn't reach Studio")
+    assertEquals(
+      "Couldn't reach Studio",
+      alert("approval").extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    )
+    assertEquals(2, alert("approval").actions.size)
+    AgentNotifications.cancelAlert(context, "approval".hashCode())
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-alert" })
+    assertEquals(
+      null,
+      AgentNotifications.beginApprovalAction(context, "approval".hashCode(), ApprovalAction.Accept)
+    )
+  }
+
+  @Test
+  fun aggregatePushesCancelAlertsForRequestsNoLongerPending() {
+    AgentNotifications.receive(context, approval("answered", "request-a"))
+    AgentNotifications.receive(context, approval("waiting", "request-b"))
+    // Without the list, the relay did not read every row, so nothing is known to be answered.
+    AgentNotifications.receive(context, update("unrelated", true))
+    assertEquals(3, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    AgentNotifications.receive(
+      context,
+      update("next", true) + ("activity_pending_requests" to "request-b")
+    )
+    assertTrue(manager.activeNotifications.none { it.id == "answered".hashCode() })
+    assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })
+    assertTrue(manager.activeNotifications.any { it.id == "unrelated".hashCode() })
+    AgentNotifications.cancelResolvedApprovals(context, "other-environment", emptySet())
+    assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })
+  }
 }

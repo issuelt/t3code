@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   type OrchestrationProjectShell,
@@ -30,6 +31,7 @@ import {
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
   loadShellUnlessResumable,
@@ -63,6 +65,7 @@ export const layer = HttpApiBuilder.group(
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const userCommands = yield* ThreadMessageIntake.UserCommandDispatch;
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
       (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -298,6 +301,42 @@ export const layer = HttpApiBuilder.group(
                     "orchestration_thread_history_failed",
                     cause,
                   );
+                }),
+              ),
+            );
+        }),
+      )
+      .handle(
+        "respondToRuntimeRequest",
+        Effect.fn("environment.orchestration.respondToRuntimeRequest")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* userCommands
+            .dispatch({
+              type: "runtime-request.respond",
+              commandId: args.payload.commandId,
+              threadId: args.params.threadId,
+              requestId: args.params.requestId,
+              decision: args.payload.decision,
+            })
+            .pipe(
+              Effect.map((result) => ({ _tag: "Responded" as const, sequence: result.sequence })),
+              Effect.catchTags({
+                RuntimeRequestNotPendingError: (error) =>
+                  Effect.succeed({ _tag: "AlreadyResolved" as const, status: error.status }),
+              }),
+              traceLocalHandlerWork,
+              Effect.catch(
+                Effect.fnUntraced(function* (cause) {
+                  if (isThreadNotFound(cause))
+                    return yield* failEnvironmentNotFound("thread_not_found");
+                  if (
+                    cause._tag === "OrchestratorDispatchError" ||
+                    cause._tag === "OrchestratorCommandRejectedError" ||
+                    cause._tag === "OrchestratorCommandPreviouslyRejectedError"
+                  )
+                    return yield* failEnvironmentInvalidRequest("invalid_command");
+                  return yield* failEnvironmentInternal("internal_error", cause);
                 }),
               ),
             );

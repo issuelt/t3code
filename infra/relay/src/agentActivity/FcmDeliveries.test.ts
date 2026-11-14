@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
@@ -19,7 +19,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, androidPendingRequestsData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
@@ -408,6 +408,35 @@ describe("Android delivery routing", () => {
         nowMs: 0,
       }),
     ).toMatchObject({ alert_title: "Second thread", alert_body: "Input: Project" });
+  });
+
+  it("carries the pending approval's IDs so the alert can answer and later clear it", () => {
+    const pendingApproval = {
+      threadId: ThreadId.make("child"),
+      requestId: RuntimeRequestId.make("request"),
+      actionable: true,
+    };
+    const alert = FcmDeliveries.androidAlertForState(
+      { ...state, phase: "waiting_for_approval", pendingApproval },
+      preferences,
+      0,
+    );
+    expect(alert).toMatchObject({
+      alert_request_id: "request",
+      alert_request_thread_id: "child",
+      alert_environment_id: state.environmentId,
+      alert_request_actionable: "true",
+    });
+    expect(JSON.parse(alert?.alert_id ?? "[]")).toContain("request");
+    expect(
+      FcmDeliveries.androidAlertForState({ ...state, phase: "waiting_for_input" }, preferences, 0),
+    ).not.toHaveProperty("alert_request_id");
+    expect(
+      androidPendingRequestsData([
+        { ...state, phase: "waiting_for_approval", pendingApproval },
+        { ...state, threadId: ThreadId.make("other") },
+      ]),
+    ).toEqual({ activity_pending_requests: "request" });
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {

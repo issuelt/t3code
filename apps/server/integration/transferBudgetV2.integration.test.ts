@@ -58,6 +58,7 @@ import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
+import * as ThreadMessageIntake from "../src/orchestration-v2/ThreadMessageIntake.ts";
 import * as ServerHttp from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
 import {
@@ -243,6 +244,7 @@ const layerHandlers = group.toLayer({
 const layerRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(TransferApi).pipe(
     Layer.provide(OrchestrationHttp.layer),
+    Layer.provide(Layer.mock(ThreadMessageIntake.UserCommandDispatch)({})),
     Layer.provide(layerAuth),
   ),
   RpcServer.layerHttp({ group, path: "/ws", protocol: "websocket" }).pipe(

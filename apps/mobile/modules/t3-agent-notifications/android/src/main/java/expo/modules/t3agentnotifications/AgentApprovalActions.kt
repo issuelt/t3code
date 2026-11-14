@@ -21,7 +21,7 @@ enum class ApprovalAction(val id: String, val label: String, val progress: Strin
 sealed interface ApprovalAlertState {
   data object Ready : ApprovalAlertState
   data class Sending(val action: ApprovalAction) : ApprovalAlertState
-  data class Failed(val environmentLabel: String) : ApprovalAlertState
+  data class Failed(val message: String) : ApprovalAlertState
 }
 
 data class ApprovalRequest(

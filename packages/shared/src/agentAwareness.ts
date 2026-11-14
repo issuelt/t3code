@@ -24,6 +24,8 @@ export type AgentAwarenessPhase =
   | "stale";
 
 export interface SubagentRequestAwareness {
+  /** The subagent thread that owns the request. */
+  readonly threadId: ThreadId;
   readonly requestId: RuntimeRequestId;
   /** The child's own update time, which moves whenever its request changes. */
   readonly updatedAt: DateTime.Utc;

@@ -1,4 +1,8 @@
-import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import type {
+  RelayAgentActivityAggregateRow,
+  RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
+} from "@t3tools/contracts/relay";
 import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -44,6 +48,33 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     ...Object.fromEntries(lines.map((line, index) => [`activity_line_${index}`, line])),
     activity_path: rows[0]?.deepLink ?? "/",
     activity_expires_at: String(expiresAt),
+  };
+}
+
+/** IDs the native alert keeps so its actions can answer the request and later clear it. */
+export function androidApprovalData(
+  row: Pick<RelayAgentActivityAggregateRow, "environmentId" | "pendingApproval">,
+) {
+  const pending = row.pendingApproval;
+  return pending === undefined
+    ? {}
+    : {
+        alert_request_id: pending.requestId,
+        alert_request_thread_id: pending.threadId,
+        alert_environment_id: row.environmentId,
+        alert_request_actionable: String(pending.actionable),
+      };
+}
+
+/**
+ * Every request the user's threads still wait on, so the device cancels alerts for the rest.
+ * Sent only when the relay read all of the user's rows.
+ */
+export function androidPendingRequestsData(states: ReadonlyArray<RelayAgentActivityState>) {
+  return {
+    activity_pending_requests: states
+      .flatMap((state) => (state.pendingApproval ? [state.pendingApproval.requestId] : []))
+      .join(","),
   };
 }
 

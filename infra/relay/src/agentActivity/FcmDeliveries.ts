@@ -22,7 +22,12 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidApprovalData,
+  androidPendingRequestsData,
+  fitFcmData,
+} from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -66,12 +71,26 @@ export function androidAlertForState(
   if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
   const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
   return {
-    alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
+    alert_id: JSON.stringify(alertIdentity(state)),
     alert_group: JSON.stringify([state.environmentId, state.threadId]),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
+    ...androidApprovalData(state),
   };
+}
+
+/** A second approval on a thread that is still waiting is a new alert. */
+function alertIdentity(
+  row: Pick<
+    RelayAgentActivityState,
+    "environmentId" | "threadId" | "phase" | "updatedAt" | "pendingApproval"
+  >,
+) {
+  const identity = [row.environmentId, row.threadId, row.phase, row.updatedAt];
+  return row.pendingApproval === undefined
+    ? identity
+    : [...identity, row.pendingApproval.requestId];
 }
 
 export function androidAlertForAggregate(input: {
@@ -92,11 +111,12 @@ export function androidAlertForAggregate(input: {
   if (activities.length === 1) {
     const notification = notificationForActivity(first);
     return {
-      alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
+      alert_id: JSON.stringify(alertIdentity(first)),
       alert_group: JSON.stringify([first.environmentId, first.threadId]),
       alert_title: notification.title,
       alert_body: notification.body,
       alert_path: notification.deepLink,
+      ...androidApprovalData(first),
     };
   }
   return {
@@ -290,6 +310,7 @@ const make = Effect.gen(function* () {
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
+        ...(preferences.value.liveActivitiesEnabled ? androidPendingRequestsData(states) : {}),
         ...alert,
       };
       if (alert) {

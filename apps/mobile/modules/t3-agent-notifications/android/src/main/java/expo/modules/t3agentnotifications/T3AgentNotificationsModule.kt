@@ -34,9 +34,9 @@ class T3AgentNotificationsModule : Module() {
       appContext.reactContext?.let { AgentNotifications.cancelAlert(it, notificationId) }
     }
 
-    Function("failApprovalAction") { notificationId: Int, environmentLabel: String ->
+    Function("failApprovalAction") { notificationId: Int, message: String ->
       appContext.reactContext?.let {
-        AgentNotifications.showApprovalFailure(it, notificationId, environmentLabel)
+        AgentNotifications.showApprovalFailure(it, notificationId, message)
       }
     }
 

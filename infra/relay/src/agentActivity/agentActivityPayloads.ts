@@ -112,5 +112,8 @@ export function notificationForActivity(
     deepLink: activity.deepLink,
     phase: activity.phase,
     updatedAt: activity.updatedAt,
+    ...(activity.pendingApproval === undefined
+      ? {}
+      : { pendingApproval: activity.pendingApproval }),
   });
 }

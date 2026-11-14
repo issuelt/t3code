@@ -387,6 +387,10 @@
       "types": "./src/state/pendingUserInput.ts",
       "default": "./src/state/pendingUserInput.ts"
     },
+    "./state/runtime-request-http": {
+      "types": "./src/state/runtimeRequestHttp.ts",
+      "default": "./src/state/runtimeRequestHttp.ts"
+    },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
       "default": "./src/state/threadRequests.ts"

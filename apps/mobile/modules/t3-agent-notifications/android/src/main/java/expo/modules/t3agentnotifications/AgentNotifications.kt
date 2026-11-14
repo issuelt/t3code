@@ -229,7 +229,7 @@ object AgentNotifications {
     val body = when (state) {
       ApprovalAlertState.Ready -> data["alert_body"].orEmpty().take(608)
       is ApprovalAlertState.Sending -> state.action.progress
-      is ApprovalAlertState.Failed -> "Couldn't reach ${state.environmentLabel}"
+      is ApprovalAlertState.Failed -> state.message
     }
     val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
     val builder = base(context, ALERT_CHANNEL)
@@ -303,10 +303,10 @@ object AgentNotifications {
   }
 
   @Synchronized
-  fun showApprovalFailure(context: Context, notificationId: Int, environmentLabel: String) {
+  fun showApprovalFailure(context: Context, notificationId: Int, message: String) {
     val active = activeAlert(context, notificationId) ?: return
     val (scheme, data) = storedAlert(active.notification.extras)
-    val failed = ApprovalAlertState.Failed(environmentLabel)
+    val failed = ApprovalAlertState.Failed(message)
     manager(context).notify(
       ALERT_TAG,
       notificationId,

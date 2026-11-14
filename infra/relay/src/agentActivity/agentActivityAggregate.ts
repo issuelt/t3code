@@ -42,6 +42,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    ...(state.pendingApproval === undefined ? {} : { pendingApproval: state.pendingApproval }),
   };
 }
 

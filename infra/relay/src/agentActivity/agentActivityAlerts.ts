@@ -64,16 +64,23 @@ function alertAllowedForPhase(
   }
 }
 
+/** A thread's wait: a second approval on a thread that is still waiting is a new one. */
+function attentionKey(row: RelayAgentActivityAggregateRow): string {
+  return JSON.stringify([row.environmentId, row.threadId, row.pendingApproval?.requestId ?? null]);
+}
+
 // A missing baseline is a replay, not a transition that should buzz the phone.
 export function attentionTransitionRows(input: TransitionInput) {
   if (input.previousAggregate === null) return [];
   const previouslyAttention = new Set(
-    input.previousAggregate.activities.filter((row) => isAttentionPhase(row.phase)).map(rowKey),
+    input.previousAggregate.activities
+      .filter((row) => isAttentionPhase(row.phase))
+      .map(attentionKey),
   );
   return input.nextAggregate.activities.filter(
     (row) =>
       isAttentionPhase(row.phase) &&
-      !previouslyAttention.has(rowKey(row)) &&
+      !previouslyAttention.has(attentionKey(row)) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }

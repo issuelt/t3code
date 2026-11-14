@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
@@ -83,6 +83,28 @@ describe("shared agent activity policy", () => {
         preferences,
       }),
     ).toMatchObject([{ environmentId: other.environmentId }]);
+  });
+
+  it("alerts a second approval on a thread that is still waiting", () => {
+    const waiting = (requestId: string) => ({
+      ...state,
+      phase: "waiting_for_approval" as const,
+      pendingApproval: {
+        threadId: state.threadId,
+        requestId: RuntimeRequestId.make(requestId),
+        actionable: true,
+      },
+    });
+    const transition = (previous: string, next: string) =>
+      attentionTransitionRows({
+        previousAggregate: aggregate([waiting(previous)]),
+        nextAggregate: aggregate([waiting(next)]),
+        preferences,
+      });
+    expect(transition("first", "second")).toMatchObject([
+      { pendingApproval: { requestId: "second" } },
+    ]);
+    expect(transition("first", "first")).toEqual([]);
   });
 
   it("checks current permission, event preferences, and freshness together", () => {

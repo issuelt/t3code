@@ -1,10 +1,16 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
+import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -269,3 +275,48 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
       }),
     );
 });
+
+/** Runs a command a user's client sent, over the socket or HTTP, once the server has started. */
+export class UserCommandDispatch extends Context.Service<
+  UserCommandDispatch,
+  {
+    readonly dispatch: (
+      command: OrchestrationV2Command,
+    ) => Effect.Effect<
+      Orchestrator.OrchestratorV2DispatchResult,
+      | Effect.Error<ReturnType<typeof dispatchCommand>>
+      | ServerRuntimeStartup.ServerRuntimeStartupError
+    >;
+  }
+>()("t3/orchestration-v2/ThreadMessageIntake/UserCommandDispatch") {}
+
+export const layerUserCommandDispatch = Layer.effect(
+  UserCommandDispatch,
+  Effect.gen(function* () {
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const threadLaunch = yield* ThreadLaunch.ThreadLaunchService;
+    const context = yield* Effect.context<
+      | ThreadManagement.ThreadManagementService
+      | ThreadLaunch.ThreadLaunchService
+      | FileSystem.FileSystem
+      | ServerConfig.ServerConfig
+      | ServerSettings.ServerSettingsService
+      | DocumentText.DocumentText
+    >();
+    return UserCommandDispatch.of({
+      dispatch: Effect.fn("UserCommandDispatch.dispatch")((command) =>
+        startup.enqueueCommand(
+          (command.type === "prepared-run.retry"
+            ? threadLaunch.retryPreparation(command)
+            : dispatchCommand(
+                ThreadManagement.withCreationProvenance(command, {
+                  createdBy: "user",
+                  creationSource: "creationSource" in command ? command.creationSource : "web",
+                }),
+              )
+          ).pipe(Effect.provide(context)),
+        ),
+      ),
+    });
+  }),
+);

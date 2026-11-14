@@ -1,6 +1,7 @@
 import {
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPhase,
+  RelayPendingApproval,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Mac from "effect/crypto/Mac";
@@ -37,6 +38,7 @@ export const ApnsNotificationPayload = Schema.Struct({
   deepLink: Schema.String,
   phase: Schema.optional(RelayAgentAwarenessPhase),
   updatedAt: Schema.optional(Schema.String),
+  pendingApproval: Schema.optional(RelayPendingApproval),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 

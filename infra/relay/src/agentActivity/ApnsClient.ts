@@ -1,4 +1,7 @@
-import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import {
+  RELAY_APPROVAL_NOTIFICATION_CATEGORY,
+  type RelayAgentActivityAggregateState,
+} from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -79,9 +82,11 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   ),
 );
 function contentState(state: RelayAgentActivityAggregateState) {
+  // Request IDs drive alerts only; the Live Activity widget never reads them.
+  const activities = state.activities.map(({ pendingApproval: _pendingApproval, ...row }) => row);
   return {
     name: LIVE_ACTIVITY_NAME,
-    props: JSON.stringify(state),
+    props: JSON.stringify({ ...state, activities }),
   };
 }
 
@@ -225,12 +230,18 @@ function makePushNotificationRequest(input: {
         },
         sound: "default",
         "thread-id": notificationThreadId(input.notification),
+        ...(input.notification.pendingApproval?.actionable
+          ? { category: RELAY_APPROVAL_NOTIFICATION_CATEGORY }
+          : {}),
       },
       // Expo iOS exposes userInfo.body as notification.content.data for remote pushes.
       body: {
         environmentId: input.notification.environmentId,
         threadId: input.notification.threadId,
         deepLink: input.notification.deepLink,
+        ...(input.notification.pendingApproval === undefined
+          ? {}
+          : { pendingApproval: input.notification.pendingApproval }),
       },
     },
   };
