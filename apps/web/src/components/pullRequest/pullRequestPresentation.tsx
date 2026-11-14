@@ -49,7 +49,7 @@ export function PullRequestLabelChip({
 }: {
   label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
-  className?: string | undefined;
+  className?: string;
   focusable?: boolean;
   children?: ReactNode;
 }) {
@@ -153,7 +153,7 @@ export function PullRequestStateGlyph({
 }: {
   state: PullRequestState;
   isDraft: boolean;
-  className?: string | undefined;
+  className?: string;
 }) {
   const presentation = resolvePullRequestState({ state, isDraft });
   return (
@@ -181,7 +181,7 @@ export function PullRequestConflictGlyph({
   isDraft: boolean;
   mergeability?: PullRequestMergeability;
   baseBranch?: string;
-  className?: string | undefined;
+  className?: string;
 }) {
   const presentation = resolvePullRequestConflict({
     state,
@@ -274,7 +274,7 @@ export function PullRequestCheckStatusIcon({
   status: PullRequestCheckStatus;
   phase?: PullRequestCheckPhase | undefined;
   still?: boolean;
-  className?: string | undefined;
+  className?: string;
 }) {
   const presentation = checkStatusPresentation({ status, phase });
   const Icon = (still ? presentation.StillIcon : undefined) ?? presentation.Icon;
@@ -383,7 +383,7 @@ export function PullRequestReviewOutcomeIcon({
   className,
 }: {
   outcome: PullRequestReviewOutcome;
-  className?: string | undefined;
+  className?: string;
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
@@ -425,7 +425,7 @@ export function PullRequestReviewOutcomeBadge({
   className,
 }: {
   outcome: PullRequestReviewOutcome;
-  className?: string | undefined;
+  className?: string;
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
@@ -443,7 +443,7 @@ export function PullRequestActorAvatar({
   className,
 }: {
   actor: PullRequestActor | null;
-  className?: string | undefined;
+  className?: string;
 }) {
   const login = actor?.login ?? "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
@@ -478,7 +478,7 @@ export function PullRequestActorLabel({
   profileUrl,
 }: {
   actor: PullRequestActor | null;
-  className?: string | undefined;
+  className?: string;
   variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
@@ -532,7 +532,7 @@ export function PullRequestDiffStat({
 }: {
   additions: number;
   deletions: number;
-  className?: string | undefined;
+  className?: string;
 }) {
   if (additions === 0 && deletions === 0) {
     return null;
@@ -554,7 +554,7 @@ export function PullRequestMetaLine({
   className,
 }: {
   children: ReactNode;
-  className?: string | undefined;
+  className?: string;
 }) {
   const segments = Children.toArray(children);
   return (

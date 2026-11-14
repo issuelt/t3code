@@ -136,6 +136,10 @@ describe("evaluatePullRequestWatch", () => {
       status: "failure",
       url: "https://ci.example/build",
     });
+    assert.deepEqual(
+      checks.runs.slice(0, 2).map((run) => run.name),
+      ["build", "unit"],
+    );
     assert.isFalse(checks.runs.some((run) => run.name === "approval"));
 
     const queued = evaluatePullRequestWatch(

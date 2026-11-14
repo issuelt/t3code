@@ -21,7 +21,8 @@ export function PullRequestCheckList({
   dense?: boolean;
 }) {
   const openLink = useOpenLink(threadRef);
-  const open = (url: string) => {
+  const open = (url: string | null) => {
+    if (url === null) return;
     void openLink(url).catch((error: unknown) => {
       console.error(error);
       toastManager.add({ type: "error", title: "Unable to open check details" });
@@ -48,13 +49,13 @@ export function PullRequestCheckList({
               status={check.status}
               phase={check.phase}
               still={dense}
-              className={dense ? "size-3" : undefined}
+              {...(dense && { className: "size-3" })}
             />
             {dense && check.url !== null ? (
               <button
                 type="button"
                 className="min-w-0 truncate text-left hover:underline"
-                onClick={() => check.url && open(check.url)}
+                onClick={() => open(check.url)}
               >
                 {check.name}
               </button>
@@ -71,7 +72,7 @@ export function PullRequestCheckList({
               <button
                 type="button"
                 className="text-primary hover:underline"
-                onClick={() => check.url && open(check.url)}
+                onClick={() => open(check.url)}
               >
                 Details
               </button>

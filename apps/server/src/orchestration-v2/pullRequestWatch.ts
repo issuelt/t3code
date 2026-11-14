@@ -7,7 +7,6 @@ import {
   type ThreadPullRequestWatch,
   type ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
-import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
 
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
@@ -39,10 +38,19 @@ const isFailedCheck = (check: PullRequestCheck) =>
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
 
+// The limit keeps what needs attention: problems, then unfinished checks, then the rest.
+const displayRank = (check: PullRequestCheck) =>
+  check.status === "pending"
+    ? 1
+    : isFailedCheck(check) || check.status === "action-required"
+      ? 0
+      : 2;
+
 function watchChecksOf(checks: ReadonlyArray<PullRequestCheck>): ThreadPullRequestWatchChecks {
   return {
     total: checks.length,
-    runs: sortChecks(checks)
+    runs: checks
+      .toSorted((left, right) => displayRank(left) - displayRank(right))
       .slice(0, THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT)
       .map(({ name, status, phase, url }) => ({ name, status, ...(phase && { phase }), url })),
   };

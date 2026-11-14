@@ -805,7 +805,7 @@ function syncedPullRequestWatch(
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
     return command.watch;
   }
-  return withoutChecksAnswer(command.watch);
+  return withoutHeadChecks(command.watch);
 }
 
 const withoutChecks = ({
@@ -813,7 +813,7 @@ const withoutChecks = ({
   ...watch
 }: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
 
-const withoutChecksAnswer = ({
+const withoutHeadChecks = ({
   checksPending: _answer,
   ...watch
 }: ThreadPullRequestWatch): ThreadPullRequestWatch => withoutChecks(watch);
@@ -4801,7 +4801,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             pullRequests: linked.map((link) =>
               link.watch?.checksPending === undefined
                 ? link
-                : { ...link, watch: withoutChecksAnswer(link.watch) },
+                : { ...link, watch: withoutHeadChecks(link.watch) },
             ),
           };
         }

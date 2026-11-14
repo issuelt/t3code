@@ -4,6 +4,7 @@ import type {
   ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
 import { resolveThreadCards } from "@t3tools/client-runtime/thread-cards";
+import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -35,7 +36,7 @@ export function SidebarThreadCards({
           case "pull-request-checks":
             return (
               <PullRequestChecksCard
-                key={`checks:${card.link.host}:${card.link.repository}#${card.link.number}`}
+                key={threadPullRequestKeyOf(card.link)}
                 threadRef={threadRef}
                 link={card.link}
                 checks={card.checks}
