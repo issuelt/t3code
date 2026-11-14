@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import { loadPersistedCatalog } from "../connection/registry.ts";
-import type { ConnectionRoute } from "../connection/catalog.ts";
+import type { ConnectionCatalogEntry, ConnectionRoute } from "../connection/catalog.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
 import { routeEntry, usableRoutes } from "../connection/routes.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -26,19 +26,26 @@ const ANSWER_BUDGET_MS = 20_000;
 
 export const respondToRuntimeRequestOverHttp = Effect.fn(
   "clientRuntime.state.respondToRuntimeRequestOverHttp",
-)(function* (input: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly requestId: RuntimeRequestId;
-  readonly decision: ProviderApprovalDecision;
-}) {
-  // One id for every route: a route that answered before failing replays its receipt.
-  const commandIdForThisTap = CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
+)(function* (input: RuntimeRequestAnswer & { readonly environmentId: EnvironmentId }) {
   const { entries } = yield* loadPersistedCatalog();
   const entry = entries.get(input.environmentId);
   if (entry === undefined || !entry.enabled) {
     return { _tag: "Unreachable", environmentLabel: null } as const;
   }
+  return yield* answerRuntimeRequestOverRoutes(entry, input);
+});
+
+interface RuntimeRequestAnswer {
+  readonly threadId: ThreadId;
+  readonly requestId: RuntimeRequestId;
+  readonly decision: ProviderApprovalDecision;
+}
+
+export const answerRuntimeRequestOverRoutes = Effect.fn(
+  "clientRuntime.state.answerRuntimeRequestOverRoutes",
+)(function* (entry: ConnectionCatalogEntry, input: RuntimeRequestAnswer) {
+  // One id for every route: a route that answered before failing replays its receipt.
+  const commandIdForThisTap = CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
   const resolver = yield* ConnectionResolver.ConnectionResolver;
   const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(

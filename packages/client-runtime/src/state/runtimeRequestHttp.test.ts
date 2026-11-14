@@ -1,0 +1,125 @@
+import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
+
+import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
+import {
+  BearerConnectionTarget,
+  ConnectionTransientError,
+  type ConnectionTarget,
+  RelayConnectionTarget,
+} from "../connection/model.ts";
+import * as ConnectionResolver from "../connection/resolver.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import { answerRuntimeRequestOverRoutes } from "./runtimeRequestHttp.ts";
+
+const ENVIRONMENT_ID = EnvironmentId.make("environment-answer");
+const LAN = new BearerConnectionTarget({
+  environmentId: ENVIRONMENT_ID,
+  label: "Workstation",
+  connectionId: "lan",
+});
+const RELAY = new RelayConnectionTarget({ environmentId: ENVIRONMENT_ID, label: "Workstation" });
+const ANSWER = {
+  threadId: ThreadId.make("thread-answer"),
+  requestId: RuntimeRequestId.make("request-answer"),
+  decision: "accept",
+} as const;
+
+const httpBaseUrl = (target: ConnectionTarget) =>
+  target._tag === "RelayConnectionTarget"
+    ? "https://relay.example.test"
+    : "https://lan.example.test";
+
+const routes = (alternate: boolean): ConnectionCatalogEntry => ({
+  target: LAN,
+  profile: Option.none(),
+  enabled: true,
+  ...(alternate ? { alternateRoutes: [{ target: RELAY, profile: Option.none() }] } : {}),
+});
+
+const layer = (input: {
+  readonly prepareDelay?: Duration.Input;
+  readonly fetch: (url: string, body: string) => Promise<Response>;
+}) =>
+  Layer.mergeAll(
+    Layer.succeed(
+      ConnectionResolver.ConnectionResolver,
+      ConnectionResolver.ConnectionResolver.of({
+        prepare: (entry) =>
+          Effect.sleep(input.prepareDelay ?? "0 millis").pipe(
+            Effect.as({
+              environmentId: ENVIRONMENT_ID,
+              label: entry.target.label,
+              httpBaseUrl: httpBaseUrl(entry.target),
+              socketUrl: httpBaseUrl(entry.target).replace("https:", "wss:"),
+              httpAuthorization: null,
+              target: entry.target,
+            }),
+          ),
+        prepareForUpdate: () =>
+          Effect.fail(new ConnectionTransientError({ reason: "network", detail: "unused" })),
+      }),
+    ),
+    Layer.succeed(
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(7)),
+    ),
+    RpcHttp.layerRemoteHttpClient(async (url, init) =>
+      input.fetch(String(url), await new Request(url, init).text()),
+    ),
+  );
+
+describe("answerRuntimeRequestOverRoutes", () => {
+  it.effect("falls through to the next route with the same command id", () => {
+    const sent: Array<{ readonly url: string; readonly commandId: unknown }> = [];
+    return Effect.gen(function* () {
+      const outcome = yield* answerRuntimeRequestOverRoutes(routes(true), ANSWER);
+      assert.deepStrictEqual(outcome, {
+        _tag: "Answered",
+        result: { _tag: "Responded", sequence: 3 },
+      });
+      assert.deepStrictEqual(
+        sent.map(({ url }) => new URL(url).host),
+        ["lan.example.test", "relay.example.test"],
+      );
+      assert.strictEqual(sent[0]?.commandId, sent[1]?.commandId);
+    }).pipe(
+      Effect.provide(
+        layer({
+          fetch: (url, body) => {
+            sent.push({ url, commandId: JSON.parse(body).commandId });
+            return Promise.resolve(
+              url.startsWith("https://lan.")
+                ? new Response("unavailable", { status: 502 })
+                : Response.json({ _tag: "Responded", sequence: 3 }),
+            );
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("spends one 20 s budget on preparing and answering", () =>
+    Effect.gen(function* () {
+      const answer = yield* Effect.forkChild(answerRuntimeRequestOverRoutes(routes(false), ANSWER));
+      yield* TestClock.adjust("20 seconds");
+      // Done at 20 s even though preparing took 15 s and the request never answered.
+      assert.isDefined(answer.pollUnsafe());
+      assert.deepStrictEqual(yield* Fiber.join(answer), {
+        _tag: "Unreachable",
+        environmentLabel: "Workstation",
+      });
+    }).pipe(
+      Effect.provide(
+        layer({ prepareDelay: "15 seconds", fetch: () => new Promise<Response>(() => {}) }),
+      ),
+    ),
+  );
+});

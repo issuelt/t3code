@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
 import {
+  answerApprovalResponseOnce,
   extractAgentNotificationDeepLink,
   routeAgentNotificationResponseOnce,
 } from "./notificationPayload";
@@ -175,5 +176,24 @@ describe("routeAgentNotificationResponseOnce", () => {
     });
 
     expect(navigations).toEqual(["/threads/env/thread"]);
+  });
+});
+
+describe("answerApprovalResponseOnce", () => {
+  it("drops a duplicate delivery while answering, then answers the next tap", async () => {
+    const handledResponseIds = new Set<string>();
+    const settled = Promise.withResolvers<void>();
+    const answer = vi.fn(() => settled.promise);
+    const tap = () => answerApprovalResponseOnce({ handledResponseIds, key: "approval", answer });
+
+    tap();
+    tap();
+    expect(answer).toHaveBeenCalledTimes(1);
+
+    settled.resolve();
+    await settled.promise;
+    await Promise.resolve();
+    tap();
+    expect(answer).toHaveBeenCalledTimes(2);
   });
 });

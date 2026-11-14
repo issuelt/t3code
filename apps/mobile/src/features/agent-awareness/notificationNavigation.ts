@@ -4,7 +4,11 @@ import { Platform } from "react-native";
 import { setAndroidThreadOnScreen } from "./androidNotifications";
 import { iosApprovalResponse } from "./approvalActions";
 import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior";
-import { routeAgentNotificationResponseOnce, threadDeepLinkOnScreen } from "./notificationPayload";
+import {
+  answerApprovalResponseOnce,
+  routeAgentNotificationResponseOnce,
+  threadDeepLinkOnScreen,
+} from "./notificationPayload";
 import { handleIosApprovalResponse, registerIosApprovalCategory } from "./iosApprovalActions";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
@@ -36,13 +40,11 @@ export function installAgentNotificationNavigation(navigate: (href: string) => v
   const handleResponse = (response: Notifications.NotificationResponse): void => {
     const approval = Platform.OS === "ios" ? iosApprovalResponse(response) : null;
     if (approval !== null) {
-      // The cold-start read and the listener can both deliver the same action.
-      const key = `${approval.notificationIdentifier}\n${approval.actionIdentifier}`;
-      if (!handledResponseIds.has(key)) {
-        handledResponseIds.add(key);
-        // A failed answer reposts the same notification; its next tap must answer again.
-        void handleIosApprovalResponse(approval).finally(() => handledResponseIds.delete(key));
-      }
+      answerApprovalResponseOnce({
+        handledResponseIds,
+        key: `${approval.notificationIdentifier}\n${approval.actionIdentifier}`,
+        answer: () => handleIosApprovalResponse(approval),
+      });
       return;
     }
     routeAgentNotificationResponseOnce({ handledResponseIds, response, navigate });
