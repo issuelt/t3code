@@ -1,6 +1,5 @@
 import type {
   RelayAgentActivityAggregateState,
-  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -491,7 +490,6 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
-      readonly pendingApproval: RelayAgentActivityState["pendingApproval"];
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
@@ -1019,15 +1017,11 @@ const make = Effect.gen(function* () {
     sendPushNotificationForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
       const now = yield* DateTime.now;
-      const alert = notificationForAggregate({
+      const notification = notificationForAggregate({
         target: input.target,
         aggregate: input.aggregate,
         nowMs: now.epochMilliseconds,
       });
-      const notification =
-        alert && input.pendingApproval
-          ? { ...alert, pendingApproval: input.pendingApproval }
-          : alert;
       const token = input.target.push_token;
       return yield* notification && token
         ? deliveryQueue.enqueuePushNotification({

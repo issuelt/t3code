@@ -33,14 +33,7 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-import * as ThreadLaunchService from "./ThreadLaunchService.ts";
-import {
-  dispatchCommand,
-  layerUserCommandDispatch,
-  UserCommandDispatch,
-} from "./ThreadMessageIntake.ts";
+import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -433,48 +426,3 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     expect(command.attachments).toEqual([guestFile]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
-
-it.effect("records a client command's analytics with the origin that sent it", () => {
-  const dispatched: OrchestrationV2ServerCommand[] = [];
-  const recorded: Array<{ readonly event: string; readonly properties: unknown }> = [];
-  return Effect.gen(function* () {
-    const userCommands = yield* UserCommandDispatch;
-    yield* userCommands.dispatch(
-      {
-        type: "thread.archive",
-        commandId: CommandId.make("archive-mobile"),
-        threadId: ThreadId.make("t"),
-      },
-      { creationSource: "mobile", analytics: { surface: "mobile" } },
-    );
-    expect(dispatched.map((command) => command.type)).toEqual(["thread.archive"]);
-    expect(recorded).toEqual([
-      { event: "feature.used", properties: { feature: "thread.archive", surface: "mobile" } },
-    ]);
-  }).pipe(
-    Effect.provide(
-      layerUserCommandDispatch.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
-              enqueueCommand: (effect) => effect,
-            }),
-            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-            Layer.mock(ThreadManagementService.ThreadManagementService)({
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  dispatched.push(command);
-                  return { sequence: 1, storedEvents: [] };
-                }),
-            }),
-            Layer.mock(AnalyticsService.AnalyticsService)({
-              record: (event, properties) =>
-                Effect.sync(() => void recorded.push({ event, properties })),
-            }),
-            layerIntakeTest,
-          ),
-        ),
-      ),
-    ),
-  );
-});

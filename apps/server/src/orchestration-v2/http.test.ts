@@ -1,7 +1,6 @@
 import {
   AuthSessionId,
   type AuthEnvironmentScope,
-  CommandId,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
@@ -14,7 +13,6 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -39,8 +37,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "./http.ts";
-import * as Orchestrator from "./Orchestrator.ts";
-import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -122,13 +118,7 @@ const rolledBackRun = Schema.decodeSync(OrchestrationV2Run)({
 });
 
 // Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
-const serveOrchestrationHttp = (
-  allowed: () => boolean,
-  options: {
-    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-    readonly dispatch?: ThreadMessageIntake.UserCommandDispatch["Service"]["dispatch"];
-  } = {},
-) =>
+const serveOrchestrationHttp = (allowed: () => boolean) =>
   Effect.gen(function* () {
     const runtime = ProviderReplayHarness.layerWithRegistry(
       { name: "thread-transcript" },
@@ -174,9 +164,7 @@ const serveOrchestrationHttp = (
                 sessionId: AuthSessionId.make("test-session"),
                 subject: "test",
                 method: "bearer-access-token",
-                scopes: new Set<AuthEnvironmentScope>(
-                  options.scopes ?? (allowed() ? ["orchestration:read"] : []),
-                ),
+                scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
               }),
             ),
           ),
@@ -184,11 +172,6 @@ const serveOrchestrationHttp = (
       ),
       Layer.provide(Layer.succeedContext(services)),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
-      Layer.provide(
-        Layer.mock(ThreadMessageIntake.UserCommandDispatch)(
-          options.dispatch === undefined ? {} : { dispatch: options.dispatch },
-        ),
-      ),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),
@@ -409,85 +392,5 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
     for (const cursor of [full.snapshotSequence + 1, "x"]) {
       expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
     }
-  }),
-);
-
-it.effect("answers a runtime request over HTTP, including one already answered", () =>
-  Effect.gen(function* () {
-    const requestId = RuntimeRequestId.make("approval-http");
-    const commands: Array<string> = [];
-    const origins: Array<ThreadMessageIntake.UserCommandOrigin> = [];
-    const { handler } = yield* serveOrchestrationHttp(() => true, {
-      scopes: ["orchestration:read", "orchestration:operate"],
-      dispatch: (command, origin) =>
-        Effect.suspend(() => {
-          commands.push(`${command.type}:${command.commandId}`);
-          origins.push(origin);
-          return command.commandId === CommandId.make("late")
-            ? Effect.fail(
-                new Orchestrator.RuntimeRequestNotPendingError({
-                  commandId: command.commandId,
-                  threadId: thread.id,
-                  requestId,
-                  status: "resolved",
-                }),
-              )
-            : Effect.succeed({ sequence: 7, storedEvents: [] });
-        }),
-    });
-    const respond = (commandId: string) =>
-      Effect.promise(async () => {
-        const response = await handler(
-          new Request(
-            `http://localhost/api/orchestration/threads/${thread.id}/runtime-requests/${requestId}/respond`,
-            {
-              method: "POST",
-              headers: {
-                [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                "content-type": "application/json",
-              },
-              body: JSON.stringify({ commandId, decision: "accept" }),
-            },
-          ),
-        );
-        return { status: response.status, body: await response.json() };
-      });
-
-    expect(yield* respond("first")).toEqual({
-      status: 200,
-      body: { _tag: "Responded", sequence: 7 },
-    });
-    expect(yield* respond("late")).toEqual({
-      status: 200,
-      body: { _tag: "AlreadyResolved", status: "resolved" },
-    });
-    expect(commands).toEqual(["runtime-request.respond:first", "runtime-request.respond:late"]);
-    expect(origins[0]).toEqual({ creationSource: "mobile", analytics: { surface: "mobile" } });
-  }),
-);
-
-it.effect("refuses a runtime request answer without the operate scope", () =>
-  Effect.gen(function* () {
-    const { handler } = yield* serveOrchestrationHttp(() => true);
-    const response = yield* Effect.promise(() =>
-      handler(
-        new Request(
-          `http://localhost/api/orchestration/threads/${thread.id}/runtime-requests/approval/respond`,
-          {
-            method: "POST",
-            headers: {
-              [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({ commandId: "denied", decision: "decline" }),
-          },
-        ),
-      ),
-    );
-    expect(response.status).toBe(403);
-    expect(yield* Effect.promise(() => response.json())).toMatchObject({
-      code: "insufficient_scope",
-      requiredScope: "orchestration:operate",
-    });
   }),
 );

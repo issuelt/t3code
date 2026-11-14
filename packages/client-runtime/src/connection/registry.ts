@@ -206,63 +206,10 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
-export const loadPersistedCatalog = Effect.fn("EnvironmentRegistry.loadPersistedCatalog")(
-  function* () {
-    const storage = yield* Persistence.ConnectionTargetStore;
-    const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
-    const persistedTargets = yield* storage.list;
-    const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
-    const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
-      target: ConnectionTarget,
-    ) {
-      const profile: Option.Option<ConnectionProfile> =
-        target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-          ? yield* profiles.get(target.connectionId)
-          : Option.none();
-      return { target, profile } satisfies ConnectionRoute;
-    });
-    const persistedRoutesByEnvironment = new Map<EnvironmentId, Array<ConnectionTarget>>();
-    for (const target of persistedTargets) {
-      const routes = persistedRoutesByEnvironment.get(target.environmentId) ?? [];
-      routes.push(target);
-      persistedRoutesByEnvironment.set(target.environmentId, routes);
-    }
-    const entries = new Map(
-      yield* Effect.forEach(
-        persistedRoutesByEnvironment,
-        Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* ([environmentId, targets]) {
-          const loaded = yield* Effect.forEach(targets, loadRoute, { concurrency: "unbounded" });
-          const seen = new Set<string>();
-          const usable = loaded.filter((route) => {
-            const id = connectionRouteId(route.target);
-            if (seen.has(id)) return false;
-            seen.add(id);
-            return !(id.startsWith("learned:") && Option.isNone(route.profile));
-          });
-          const routes = usable.length > 0 ? usable : loaded.slice(0, 1);
-          const first = routes[0]!;
-          return [
-            environmentId,
-            entryWithRoutes(
-              {
-                target: first.target,
-                profile: first.profile,
-                enabled: !disabledEnvironmentIds.has(environmentId),
-              },
-              routes,
-            ),
-          ] as const;
-        }),
-        { concurrency: "unbounded" },
-      ),
-    );
-    return { entries, routesByEnvironment: persistedRoutesByEnvironment };
-  },
-);
-
 /** @public */
 export const make = Effect.gen(function* () {
   const registryScope = yield* Scope.Scope;
+  const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;
   const cache = yield* Persistence.EnvironmentCacheStore;
   const ownedDataCleanup = yield* Persistence.EnvironmentOwnedDataCleanup;
@@ -273,8 +220,52 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
-  const { entries: initialEntries, routesByEnvironment: persistedRoutesByEnvironment } =
-    yield* loadPersistedCatalog();
+  const persistedTargets = yield* storage.list;
+  const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
+  const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
+    target: ConnectionTarget,
+  ) {
+    const profile: Option.Option<ConnectionProfile> =
+      target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+        ? yield* profiles.get(target.connectionId)
+        : Option.none();
+    return { target, profile } satisfies ConnectionRoute;
+  });
+  const persistedRoutesByEnvironment = new Map<EnvironmentId, Array<ConnectionTarget>>();
+  for (const target of persistedTargets) {
+    const routes = persistedRoutesByEnvironment.get(target.environmentId) ?? [];
+    routes.push(target);
+    persistedRoutesByEnvironment.set(target.environmentId, routes);
+  }
+  const initialEntries = new Map(
+    yield* Effect.forEach(
+      persistedRoutesByEnvironment,
+      Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* ([environmentId, targets]) {
+        const loaded = yield* Effect.forEach(targets, loadRoute, { concurrency: "unbounded" });
+        const seen = new Set<string>();
+        const usable = loaded.filter((route) => {
+          const id = connectionRouteId(route.target);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return !(id.startsWith("learned:") && Option.isNone(route.profile));
+        });
+        const routes = usable.length > 0 ? usable : loaded.slice(0, 1);
+        const first = routes[0]!;
+        return [
+          environmentId,
+          entryWithRoutes(
+            {
+              target: first.target,
+              profile: first.profile,
+              enabled: !disabledEnvironmentIds.has(environmentId),
+            },
+            routes,
+          ),
+        ] as const;
+      }),
+      { concurrency: "unbounded" },
+    ),
+  );
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);

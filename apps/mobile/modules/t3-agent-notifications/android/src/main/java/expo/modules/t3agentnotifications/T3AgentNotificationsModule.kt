@@ -15,26 +15,10 @@ class T3AgentNotificationsModule : Module() {
         deviceId: String,
         userId: String,
         scheme: String,
-        ongoingEnabled: Boolean,
-        approvalActions: List<Map<String, String>>,
-        approvalInterruptedText: String
+        ongoingEnabled: Boolean
       ->
-      val actions = approvalActions.mapNotNull { action ->
-        val id = action["id"] ?: return@mapNotNull null
-        val label = action["label"] ?: return@mapNotNull null
-        val progress = action["progress"] ?: return@mapNotNull null
-        ApprovalAction(id, label, progress)
-      }
       appContext.reactContext?.let {
-        AgentNotifications.configure(
-          it,
-          deviceId,
-          userId,
-          scheme,
-          ongoingEnabled,
-          actions,
-          approvalInterruptedText
-        )
+        AgentNotifications.configure(it, deviceId, userId, scheme, ongoingEnabled)
       }
     }
 
@@ -44,32 +28,6 @@ class T3AgentNotificationsModule : Module() {
 
     Function("showShowcaseActivity") { scheme: String, data: Map<String, String> ->
       appContext.reactContext?.let { AgentNotifications.showcase(it, scheme, data) }
-    }
-
-    Function("finishApprovalAction") { notificationId: Int ->
-      appContext.reactContext?.let { AgentNotifications.cancelAlert(it, notificationId) }
-    }
-
-    Function("failApprovalAction") { notificationId: Int, message: String ->
-      appContext.reactContext?.let {
-        AgentNotifications.showApprovalFailure(it, notificationId, message)
-      }
-    }
-
-    Function("rejectApprovalAction") { notificationId: Int, message: String ->
-      appContext.reactContext?.let {
-        AgentNotifications.showApprovalRejected(it, notificationId, message)
-      }
-    }
-
-    Function("cancelResolvedApprovals") { environmentId: String, pendingRequestIds: List<String> ->
-      appContext.reactContext?.let {
-        val pending = pendingRequestIds.toSet()
-        AgentNotifications.cancelApprovals(it) { extras ->
-          extras.getString(AgentNotifications.ENVIRONMENT_ID) == environmentId &&
-            extras.getString(AgentNotifications.REQUEST_ID) !in pending
-        }
-      }
     }
 
     Function("setThreadOnScreen") { path: String? ->

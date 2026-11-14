@@ -12,7 +12,6 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { APPROVAL_ACTIONS } from "../agent-awareness/approvalActions";
 import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
@@ -26,9 +25,9 @@ export interface PendingApprovalCardProps {
 }
 
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "accept", label: APPROVAL_ACTIONS["t3.approval.accept"].label },
+  { decision: "accept", label: "Allow once" },
   { decision: "acceptForSession", label: "Allow session" },
-  { decision: "decline", label: APPROVAL_ACTIONS["t3.approval.decline"].label },
+  { decision: "decline", label: "Decline" },
 ];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {

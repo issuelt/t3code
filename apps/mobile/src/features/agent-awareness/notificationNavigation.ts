@@ -1,15 +1,8 @@
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
 
 import { setAndroidThreadOnScreen } from "./androidNotifications";
-import { iosApprovalResponse } from "./approvalActions";
 import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior";
-import {
-  answerApprovalResponseOnce,
-  routeAgentNotificationResponseOnce,
-  threadDeepLinkOnScreen,
-} from "./notificationPayload";
-import { handleIosApprovalResponse, registerIosApprovalCategory } from "./iosApprovalActions";
+import { routeAgentNotificationResponseOnce, threadDeepLinkOnScreen } from "./notificationPayload";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
 let deepLinkOnScreen: string | null = null;
@@ -32,21 +25,7 @@ export function installAgentNotificationNavigation(navigate: (href: string) => v
       Promise.resolve(foregroundNotificationBehavior(notification, deepLinkOnScreen)),
   });
 
-  if (Platform.OS === "ios") {
-    void registerIosApprovalCategory().catch((cause: unknown) =>
-      console.error("[approval-actions] could not register the approval actions", cause),
-    );
-  }
   const handleResponse = (response: Notifications.NotificationResponse): void => {
-    const approval = Platform.OS === "ios" ? iosApprovalResponse(response) : null;
-    if (approval !== null) {
-      answerApprovalResponseOnce({
-        handledResponseIds,
-        key: `${approval.notificationIdentifier}\n${approval.actionIdentifier}`,
-        answer: () => handleIosApprovalResponse(approval),
-      });
-      return;
-    }
     routeAgentNotificationResponseOnce({ handledResponseIds, response, navigate });
   };
   const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);

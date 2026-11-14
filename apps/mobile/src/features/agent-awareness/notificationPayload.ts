@@ -116,17 +116,3 @@ export function routeAgentNotificationResponseOnce(input: {
     input.handledResponseIds.add(responseId);
   }
 }
-
-/**
- * Answers an approval action once while its answer is in flight: a cold start can deliver the same
- * response twice. A failed answer reposts the alert, and its next tap must answer again.
- */
-export function answerApprovalResponseOnce(input: {
-  readonly handledResponseIds: Set<string>;
-  readonly key: string;
-  readonly answer: () => Promise<void>;
-}): void {
-  if (input.handledResponseIds.has(input.key)) return;
-  input.handledResponseIds.add(input.key);
-  void input.answer().finally(() => input.handledResponseIds.delete(input.key));
-}
