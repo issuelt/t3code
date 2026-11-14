@@ -13,6 +13,7 @@ import {
   type SidebarV2TopStatusKind,
 } from "../Sidebar.logic";
 import { SIDEBAR_TOP_STATUS } from "./sidebarTopStatus";
+import { SidebarTopRow } from "./SidebarTopRow";
 
 function homeTopStatus(
   status: SidebarThreadStatus,
@@ -50,31 +51,16 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
           }),
         );
   const topStatus = topStatusKind === null ? null : SIDEBAR_TOP_STATUS[topStatusKind];
-  const activate = () => onActivate(threadRef);
   return (
-    <li className="list-none">
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={topStatus ? `${label}, ${topStatus.label}` : label}
-        aria-current={isActive ? "page" : undefined}
-        data-testid="sidebar-home-row"
-        className={cn(
-          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          isActive
-            ? "bg-sidebar-row-active text-sidebar-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-row-hover",
-        )}
-        onClick={activate}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          activate();
-        }}
-      >
-        <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {topStatus ? (
+    <SidebarTopRow
+      label={topStatus ? `${label}, ${topStatus.label}` : label}
+      isActive={isActive}
+      testId="sidebar-home-row"
+      icon={<HouseIcon aria-hidden className="size-4 shrink-0" />}
+      title={label}
+      onActivate={() => onActivate(threadRef)}
+      trailing={
+        topStatus ? (
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
@@ -84,8 +70,8 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
             {topStatus.Icon ? <topStatus.Icon aria-hidden className="size-4 shrink-0" /> : null}
             <span role="status">{topStatus.label}</span>
           </span>
-        ) : null}
-      </div>
-    </li>
+        ) : null
+      }
+    />
   );
 });

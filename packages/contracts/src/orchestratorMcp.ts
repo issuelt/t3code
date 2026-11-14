@@ -885,8 +885,12 @@ export const OrchestratorMcpUserDecisionInput = Schema.Struct({
   header: Schema.optional(userDecisionQuestion.header).annotate({
     description: "ask: a short label, such as 'Deploy'.",
   }),
-  options: Schema.optional(userDecisionQuestion.options),
-  multiSelect: userDecisionQuestion.multiSelect,
+  options: Schema.optional(userDecisionQuestion.options).annotate({
+    description: "ask: choices to offer, each a `label` and a `description`.",
+  }),
+  multiSelect: Schema.optional(Schema.Boolean).annotate({
+    description: "ask: let the user pick several `options`.",
+  }),
   allowCustomAnswer: Schema.optional(Schema.Boolean).annotate({
     description: "Default true. False limits the answer to `options`.",
   }),

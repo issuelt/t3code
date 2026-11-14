@@ -1,5 +1,5 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { linkCardStillAsks, pendingGuestMessageCount, userOnlyCardWaits } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1625,27 +1625,6 @@ function secretRequestAsPendingInput(
   };
 }
 
-/**
- * A secret card is answered while its agent waits in the run. A link card's
- * agent asked without waiting, so the card waits on the user after its run,
- * until anyone writes in the thread again and so has moved past it. Agent-driven
- * threads may never get a message from the user.
- */
-const waitsOnUser = (
-  item: OrchestrationV2TurnItem,
-  liveRunIds: ReadonlySet<RunId>,
-  latestUserMessageAt: DateTime.Utc | null,
-) =>
-  (item.type === "link_request" && linkCardStillAsks(item, latestUserMessageAt)) ||
-  (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
-
-const linkCardStillAsks = (
-  item: OrchestrationV2TurnItem,
-  latestUserMessageAt: DateTime.Utc | null,
-) =>
-  latestUserMessageAt === null ||
-  !DateTime.isGreaterThan(latestUserMessageAt, item.startedAt ?? item.updatedAt);
-
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
@@ -1694,11 +1673,7 @@ export function threadShellFromProjection(
   if (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") {
     const waitingCard = secretRequestAsPendingInput(
       projection.turnItems
-        .filter(
-          (item) =>
-            item.status === "waiting" &&
-            waitsOnUser(item, liveRunIds, userMessages[0]?.updatedAt ?? null),
-        )
+        .filter((item) => userOnlyCardWaits(item, liveRunIds, userMessages[0]?.updatedAt ?? null))
         .toSorted(
           (left, right) =>
             DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),

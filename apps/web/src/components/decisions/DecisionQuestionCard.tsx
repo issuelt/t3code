@@ -15,8 +15,9 @@ import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand, useCommandStatus } from "../../state/use-atom-command";
 import ChatMarkdown from "../ChatMarkdown";
-import { UserInputOptionBody } from "../chat/ComposerPendingUserInputPanel";
-import { InlineButton } from "../ui/button";
+import { RequestCard } from "../chat/RequestCard";
+import { UserInputOptionRow } from "../chat/UserInputOptionRow";
+import { Button, InlineButton } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 
 export function DecisionQuestionCard({
@@ -49,12 +50,50 @@ export function DecisionQuestionCard({
     }));
   const disabled = !canRespond || responding || userInput.responseCapability === "not_resumable";
   const target = { environmentId: thread.environmentId };
+  const submit = () => {
+    if (answers === null) return;
+    void run(
+      () =>
+        respond({
+          ...target,
+          input: { threadId: thread.threadId, requestId: userInput.requestId, answers },
+        }),
+      "Failed to send the answer.",
+    );
+  };
+  const dismissQuestion = () =>
+    void run(
+      () =>
+        dismiss({
+          ...target,
+          input: { threadId: thread.threadId, requestId: userInput.requestId },
+        }),
+      "Failed to dismiss the question.",
+    );
   return (
-    <section
-      aria-label={label}
-      className="rounded-lg border border-border bg-background p-3 text-xs"
+    <RequestCard
+      label={label}
+      heading={heading}
+      error={error}
+      actions={
+        <>
+          <Button size="sm" disabled={disabled || answers === null} onClick={submit}>
+            Submit answer
+          </Button>
+          {userInput.dismissible ? (
+            <InlineButton
+              tone="muted"
+              disabled={disabled}
+              title="Dismiss question without answering"
+              onClick={dismissQuestion}
+            >
+              Dismiss
+            </InlineButton>
+          ) : null}
+          {actions}
+        </>
+      }
     >
-      <p className="mb-2 font-medium">{heading}</p>
       {userInput.questions.map((question) => {
         const draft = drafts[question.id];
         return (
@@ -68,38 +107,24 @@ export function DecisionQuestionCard({
               className="pt-0.5 text-foreground/85"
             />
             {question.options.length > 0 ? (
-              <div className="mt-1.5 flex flex-col">
+              <div className="-ms-2 mt-1.5 sm:-ms-1.5">
                 {question.options.map((option) => {
                   const value = option.value ?? option.label;
-                  const selected = isPendingUserInputOptionSelected(question, draft, value);
                   return (
-                    <div key={value}>
-                      <button
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() =>
-                          editDraft(question.id, (current) =>
-                            togglePendingUserInputOptionSelection(question, current, value),
-                          )
-                        }
-                        className="flex w-full items-start gap-2.5 rounded-md py-1.5 ps-1.5 text-left outline-none hover:bg-muted/30 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <UserInputOptionBody
-                          option={option}
-                          multiSelect={question.multiSelect}
-                          selected={selected}
-                        />
-                      </button>
-                      {option.preview ? (
-                        <ChatMarkdown
-                          text={option.preview}
-                          cwd={undefined}
-                          threadRef={thread}
-                          lineBreaks
-                          className="ps-8 pb-1.5 text-xs text-foreground/70"
-                        />
-                      ) : null}
-                    </div>
+                    <UserInputOptionRow
+                      key={value}
+                      option={option}
+                      multiSelect={question.multiSelect}
+                      selected={isPendingUserInputOptionSelected(question, draft, value)}
+                      disabled={disabled}
+                      onSelect={() =>
+                        editDraft(question.id, (current) =>
+                          togglePendingUserInputOptionSelection(question, current, value),
+                        )
+                      }
+                      cwd={undefined}
+                      threadRef={thread}
+                    />
                   );
                 })}
               </div>
@@ -123,48 +148,6 @@ export function DecisionQuestionCard({
           </fieldset>
         );
       })}
-      <div className="flex flex-wrap gap-2">
-        <InlineButton
-          disabled={disabled || answers === null}
-          onClick={() => {
-            if (answers === null) return;
-            void run(
-              () =>
-                respond({
-                  ...target,
-                  input: { threadId: thread.threadId, requestId: userInput.requestId, answers },
-                }),
-              "Failed to send the answer.",
-            );
-          }}
-        >
-          Send answer
-        </InlineButton>
-        {userInput.dismissible ? (
-          <InlineButton
-            tone="muted"
-            disabled={disabled}
-            onClick={() =>
-              void run(
-                () =>
-                  dismiss({
-                    ...target,
-                    input: { threadId: thread.threadId, requestId: userInput.requestId },
-                  }),
-                "Failed to dismiss the question.",
-              )
-            }
-          >
-            Dismiss
-          </InlineButton>
-        ) : null}
-        {actions}
-      </div>
-      {error !== null ? (
-        <p role="alert" className="mt-2 text-destructive">
-          {error}
-        </p>
-      ) : null}
-    </section>
+    </RequestCard>
   );
 }

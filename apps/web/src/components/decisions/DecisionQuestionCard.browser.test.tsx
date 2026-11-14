@@ -60,7 +60,7 @@ it("sends every option chosen in quick succession", async () => {
       screen.getByRole("button", { name: new RegExp(name) }).element(),
     ),
   );
-  await screen.getByRole("button", { name: "Send answer" }).click();
+  await screen.getByRole("button", { name: "Submit answer" }).click();
   await vi.waitFor(() =>
     expect(state.respond).toHaveBeenCalledWith({
       environmentId: thread.environmentId,

@@ -89,6 +89,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -2649,7 +2650,7 @@ const make = Effect.gen(function* () {
           return yield* failure("invalid_request", "withdraw needs the decision's `requestId`.");
         const current = yield* readStatus(input.requestId);
         if (current.status !== "pending") return current;
-        yield* threadManagement
+        const dismissed = yield* threadManagement
           .dispatch({
             type: "thread.user-input.dismiss",
             commandId: stableCommandId({
@@ -2660,8 +2661,12 @@ const make = Effect.gen(function* () {
             threadId,
             requestId: input.requestId,
           })
-          .pipe(Effect.mapError(threadManagementFailure));
-        return yield* readStatus(input.requestId);
+          .pipe(Effect.result);
+        const after = yield* readStatus(input.requestId);
+        // The user can answer between the read and the dismiss; the answer stands.
+        if (Result.isFailure(dismissed) && after.status === "pending")
+          return yield* threadManagementFailure(dismissed.failure);
+        return after;
       }
       if (input.question === undefined)
         return yield* failure("invalid_request", "ask needs the `question`.");

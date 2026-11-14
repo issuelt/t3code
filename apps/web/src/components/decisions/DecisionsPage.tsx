@@ -9,6 +9,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { useEnvironmentLookups } from "../CommandPaletteLookups";
 import { PendingApprovalCard } from "../chat/PendingApprovalCard";
+import { RequestCard } from "../chat/RequestCard";
 import { RelativeTime } from "../RelativeTime";
 import { SIDEBAR_TOP_STATUS } from "../sidebar/sidebarTopStatus";
 import { InlineButton } from "../ui/button";
@@ -83,16 +84,15 @@ function Decision({
       />
     );
   return (
-    <section
-      aria-label={`Request from ${decision.title}`}
-      className="rounded-lg border border-border bg-background p-3 text-xs"
+    <RequestCard
+      label={`Request from ${decision.title}`}
+      heading={heading}
+      error={null}
+      actions={openThread}
     >
-      <p className="mb-2 font-medium">{heading}</p>
-      <p className="mb-2 text-muted-foreground">
-        Only you can answer this. Open the thread to respond.
-      </p>
-      {openThread}
-    </section>
+      {decision.request.label === null ? null : <p>{decision.request.label}</p>}
+      <p className="text-muted-foreground">Only you can answer this. Open the thread to respond.</p>
+    </RequestCard>
   );
 }
 

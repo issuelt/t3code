@@ -229,7 +229,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const UserDecisionTool = Tool.make("t3_user_decision", {
   description:
-    "Leave the user a decision, or an action only they can take, without stopping. Use instead of writing it in your reply. Your turn continues; their answer arrives later as a new message. One decision per call. withdraw: by `requestId` when it no longer applies. To ask and wait now, use your own question tool.",
+    "Leave the user a decision, or an action only they can take, without stopping. Call it as soon as you know, instead of writing it in your reply. Your turn continues; their answer arrives later as a new message, and a dismissal sends none. One decision per call. withdraw: by `requestId` when it no longer applies. To ask and wait now, use your own question tool.",
   parameters: OrchestratorMcpUserDecisionInput,
   success: OrchestratorMcpUserDecisionResult,
   failure: OrchestratorMcpFailure,
@@ -237,7 +237,9 @@ const UserDecisionTool = Tool.make("t3_user_decision", {
   dependencies,
 })
   .annotate(Tool.Title, "Leave the user a decision")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  // Deferred, agents only ever see its name and write the decision into their reply instead.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:

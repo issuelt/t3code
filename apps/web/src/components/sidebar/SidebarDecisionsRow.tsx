@@ -5,39 +5,31 @@ import { memo } from "react";
 
 import { cn } from "../../lib/utils";
 import { openDecisions } from "../../state/threads";
-import { Badge } from "../ui/badge";
 import { SIDEBAR_TOP_STATUS } from "./sidebarTopStatus";
+import { SidebarTopRow } from "./SidebarTopRow";
 
 export const SidebarDecisionsRow = memo(function SidebarDecisionsRow() {
   const count = useAtomValue(openDecisions.askingThreadCountAtom);
   const isActive = useLocation({ select: (location) => location.pathname === "/decisions" });
   const navigate = useNavigate();
   if (count === 0) return null;
-  const label = `Decisions, ${count} ${count === 1 ? "thread waits" : "threads wait"} on you`;
+  const waiting = `${count} ${count === 1 ? "thread" : "threads"}`;
   return (
-    <li className="list-none">
-      <button
-        type="button"
-        aria-label={label}
-        aria-current={isActive ? "page" : undefined}
-        data-testid="sidebar-decisions-row"
-        className={cn(
-          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          isActive
-            ? "bg-sidebar-row-active text-sidebar-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-row-hover",
-        )}
-        onClick={() => void navigate({ to: "/decisions" })}
-      >
+    <SidebarTopRow
+      label={`Decisions, ${waiting} waiting on you`}
+      isActive={isActive}
+      testId="sidebar-decisions-row"
+      icon={
         <MessageCircleQuestionIcon
           aria-hidden
           className={cn("size-4 shrink-0", SIDEBAR_TOP_STATUS.input.className)}
         />
-        <span className="min-w-0 flex-1 truncate">Decisions</span>
-        <Badge size="sm" variant="secondary">
-          {count}
-        </Badge>
-      </button>
-    </li>
+      }
+      title="Decisions"
+      onActivate={() => void navigate({ to: "/decisions" })}
+      trailing={
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">{waiting}</span>
+      }
+    />
   );
 });

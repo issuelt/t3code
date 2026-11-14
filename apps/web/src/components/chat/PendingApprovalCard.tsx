@@ -6,6 +6,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand, useCommandStatus } from "../../state/use-atom-command";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { RequestCard } from "./RequestCard";
 
 export function PendingApprovalCard({
   thread,
@@ -24,11 +25,35 @@ export function PendingApprovalCard({
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const { pending: responding, error, run } = useCommandStatus();
   return (
-    <section
-      aria-label={label}
-      className="rounded-lg border border-border bg-background p-3 text-xs"
+    <RequestCard
+      label={label}
+      heading={heading}
+      error={error}
+      actions={
+        <>
+          <ComposerPendingApprovalActions
+            presentation="inline"
+            requestId={approval.requestId}
+            isResponding={responding}
+            canRespond={approval.responseCapability === "live"}
+            disabled={!canRespond}
+            options={approval.options}
+            onRespondToApproval={async (requestId, decision) => {
+              if (!canRespond || responding) return;
+              return run(
+                () =>
+                  respond({
+                    environmentId: thread.environmentId,
+                    input: { threadId: thread.threadId, requestId, decision },
+                  }),
+                "Failed to submit approval decision.",
+              );
+            }}
+          />
+          {actions}
+        </>
+      }
     >
-      <p className="mb-2 font-medium">{heading}</p>
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
         {approval.detail || approval.requestKind}
       </pre>
@@ -44,33 +69,6 @@ export function PendingApprovalCard({
           {fullAccessOverrideExplanation(approval.fullAccessOverride)}
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <ComposerPendingApprovalActions
-          presentation="inline"
-          requestId={approval.requestId}
-          isResponding={responding}
-          canRespond={approval.responseCapability === "live"}
-          disabled={!canRespond}
-          options={approval.options}
-          onRespondToApproval={async (requestId, decision) => {
-            if (!canRespond || responding) return;
-            return run(
-              () =>
-                respond({
-                  environmentId: thread.environmentId,
-                  input: { threadId: thread.threadId, requestId, decision },
-                }),
-              "Failed to submit approval decision.",
-            );
-          }}
-        />
-        {actions}
-      </div>
-      {error !== null ? (
-        <p role="alert" className="mt-2 text-destructive">
-          {error}
-        </p>
-      ) : null}
-    </section>
+    </RequestCard>
   );
 }

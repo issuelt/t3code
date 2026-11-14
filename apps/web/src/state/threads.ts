@@ -53,6 +53,7 @@ export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
 export const openDecisions = createOpenDecisionsAtoms({
   threadShellsAtom: environmentThreadShells.threadShellsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
+  pendingUserOnlyRequestsAtom: environmentThreadDetails.pendingUserOnlyRequestsAtom,
 });
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(

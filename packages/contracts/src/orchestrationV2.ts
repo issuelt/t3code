@@ -2272,6 +2272,33 @@ export function isLiveSubagentShell(
   );
 }
 
+/** A link card stops asking once anyone writes in the thread after it. */
+export function linkCardStillAsks(
+  item: Pick<OrchestrationV2TurnItem, "startedAt" | "updatedAt">,
+  latestUserMessageAt: DateTime.Utc | null,
+): boolean {
+  return (
+    latestUserMessageAt === null ||
+    !DateTime.isGreaterThan(latestUserMessageAt, item.startedAt ?? item.updatedAt)
+  );
+}
+
+/**
+ * Secret and link cards only the user can answer. A secret card waits while its agent waits in
+ * the run. A link card's agent asked without waiting, so it waits past its run until someone
+ * writes in the thread again; agent-driven threads may never get a message from the user.
+ */
+export function userOnlyCardWaits<
+  Item extends Pick<
+    OrchestrationV2TurnItem,
+    "type" | "status" | "runId" | "startedAt" | "updatedAt"
+  >,
+>(item: Item, liveRunIds: ReadonlySet<RunId>, latestUserMessageAt: DateTime.Utc | null): boolean {
+  if (item.status !== "waiting") return false;
+  if (item.type === "link_request") return linkCardStillAsks(item, latestUserMessageAt);
+  return item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId);
+}
+
 /**
  * A settled top-level thread settled before `beforeMs`. Shells that omit older settled threads
  * count every such thread, so the server and clients share this one rule.

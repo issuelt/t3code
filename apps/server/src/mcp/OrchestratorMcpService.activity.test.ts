@@ -1131,24 +1131,32 @@ it("userDecision leaves one decision per retry key and withdraws it once", async
           getThreadRecords: () => Effect.sync(projection),
           getThreadShell: () =>
             Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              dispatched.push(command);
-              if (
-                command.type === "user_decision.record" &&
-                !requests.some((r) => r.id === command.requestId)
-              )
-                requests.push({ id: command.requestId, kind: "user_input", status: "pending" });
-              if (command.type === "thread.user-input.dismiss")
-                Object.assign(
-                  requests.find((r) => r.id === command.requestId)!,
-                  {
-                    status: "resolved",
-                    decision: "cancel",
-                  },
-                );
-              return { sequence: dispatched.length, storedEvents: [] };
-            }),
+          dispatch: (command) => {
+            dispatched.push(command);
+            if (
+              command.type === "user_decision.record" &&
+              !requests.some((r) => r.id === command.requestId)
+            )
+              requests.push({ id: command.requestId, kind: "user_input", status: "pending" });
+            const request =
+              command.type === "thread.user-input.dismiss"
+                ? requests.find((r) => r.id === command.requestId)
+                : undefined;
+            if (request !== undefined && request.id.endsWith(":answered-first")) {
+              // The user's answer commits first, so the dismiss finds nothing pending.
+              request.status = "resolved";
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "This question has already been answered.",
+                }),
+              );
+            }
+            if (request !== undefined)
+              Object.assign(request, { status: "resolved", decision: "cancel" });
+            return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });
+          },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -1203,6 +1211,15 @@ it("userDecision leaves one decision per retry key and withdraws it once", async
       "user_decision.record",
       "thread.user-input.dismiss",
     ]);
+
+    const raced = yield* service.userDecision(makeScope(), {
+      action: "ask",
+      question: "Rotate the staging key?",
+      clientRequestId: "answered-first",
+    });
+    expect(
+      yield* service.userDecision(makeScope(), { action: "withdraw", requestId: raced.requestId }),
+    ).toEqual({ requestId: raced.requestId, status: "answered" });
 
     const noQuestion = yield* service
       .userDecision(makeScope(), { action: "ask" })
