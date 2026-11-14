@@ -32,7 +32,7 @@ export function PullRequestCheckList({
     <ul
       className={cn(
         "grid gap-x-2",
-        dense ? "gap-y-0.5 text-2xs" : "gap-y-1 text-xs",
+        dense ? "gap-y-0.5 text-xs" : "gap-y-1 text-xs",
         hasDetails
           ? "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
           : "grid-cols-[auto_minmax(0,1fr)_auto]",
@@ -56,7 +56,7 @@ export function PullRequestCheckList({
                   dense && check.url !== null ? (
                     <button
                       type="button"
-                      className="min-w-0 truncate text-left hover:underline"
+                      className="min-w-0 truncate rounded-sm text-left hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                       onClick={() => open(check.url)}
                     />
                   ) : (
