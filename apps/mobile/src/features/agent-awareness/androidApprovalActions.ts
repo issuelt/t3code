@@ -1,5 +1,9 @@
-import { failAndroidApprovalAction, finishAndroidApprovalAction } from "./androidNotifications";
-import { androidApprovalTask, unreachableText } from "./approvalActions";
+import {
+  failAndroidApprovalAction,
+  finishAndroidApprovalAction,
+  rejectAndroidApprovalAction,
+} from "./androidNotifications";
+import { androidApprovalTask, approvalOutcomeText } from "./approvalActions";
 import { answerApproval } from "./approvalAnswers";
 
 export async function runAndroidApprovalAction(data: unknown): Promise<void> {
@@ -9,9 +13,8 @@ export async function runAndroidApprovalAction(data: unknown): Promise<void> {
     return;
   }
   const outcome = await answerApproval(task.answer);
-  if (outcome._tag === "Answered") {
-    finishAndroidApprovalAction(task.notificationId);
-  } else {
-    failAndroidApprovalAction(task.notificationId, unreachableText(outcome.environmentLabel));
-  }
+  const text = approvalOutcomeText(outcome);
+  if (text === null) finishAndroidApprovalAction(task.notificationId);
+  else if (outcome._tag === "Rejected") rejectAndroidApprovalAction(task.notificationId, text);
+  else failAndroidApprovalAction(task.notificationId, text);
 }

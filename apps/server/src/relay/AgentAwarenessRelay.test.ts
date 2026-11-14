@@ -1273,16 +1273,16 @@ describe("pendingApprovalFor", () => {
   it.each([
     ["default options", approvalRecords(requestId), true],
     [
-      "explicit allow once and decline",
+      "the provider's own options",
       approvalRecords(requestId, {
         item: {
           options: [
-            { decision: "accept", label: "Allow once" },
-            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Yes, run it" },
+            { decision: "decline", label: "No" },
           ],
         },
       }),
-      true,
+      false,
     ],
     [
       "an option with a warning",

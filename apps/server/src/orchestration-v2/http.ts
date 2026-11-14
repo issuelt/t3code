@@ -312,13 +312,17 @@ export const layer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           return yield* userCommands
-            .dispatch({
-              type: "runtime-request.respond",
-              commandId: args.payload.commandId,
-              threadId: args.params.threadId,
-              requestId: args.params.requestId,
-              decision: args.payload.decision,
-            })
+            .dispatch(
+              {
+                type: "runtime-request.respond",
+                commandId: args.payload.commandId,
+                threadId: args.params.threadId,
+                requestId: args.params.requestId,
+                decision: args.payload.decision,
+              },
+              // Only the mobile app answers from a notification.
+              { creationSource: "mobile", analytics: { surface: "mobile" } },
+            )
             .pipe(
               Effect.map((result) => ({ _tag: "Responded" as const, sequence: result.sequence })),
               Effect.catchTags({

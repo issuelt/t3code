@@ -386,6 +386,20 @@ it.effect(
           },
         ],
       );
+      // A notification answer races its routes with one command id; a second arrival replays.
+      const repeat = yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId: RuntimeRequestId.make("child"),
+        decision: "decline",
+        feedback,
+      });
+      assert.isTrue(repeat.replayed);
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
+        ["runtime-request.respond"],
+      );
       const late = yield* orchestrator
         .dispatch({
           type: "runtime-request.respond",

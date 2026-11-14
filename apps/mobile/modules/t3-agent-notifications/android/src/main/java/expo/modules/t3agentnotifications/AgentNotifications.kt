@@ -63,6 +63,9 @@ object AgentNotifications {
   private const val CANCEL_GROUP = "alert_cancel_group"
   private const val KEEP_REQUEST_ID = "alert_keep_request_id"
   private const val APPROVAL_ACTIONS = "approvalActions"
+  private const val APPROVAL_INTERRUPTED_TEXT = "approvalInterruptedText"
+  private const val SENDING_SINCE_EXTRA = "t3_sending_since"
+  private const val STALE_SENDING_MS = 60_000L
 
   @Synchronized
   fun configure(
@@ -71,7 +74,8 @@ object AgentNotifications {
     userId: String,
     scheme: String,
     ongoingEnabled: Boolean,
-    approvalActions: List<ApprovalAction>
+    approvalActions: List<ApprovalAction>,
+    approvalInterruptedText: String
   ) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     // JS identity is empty on a cold start. Compare the durable identity here
@@ -94,7 +98,7 @@ object AgentNotifications {
             JSONObject().put("id", it.id).put("label", it.label).put("progress", it.progress)
           }
         ).toString()
-      ).apply()
+      ).putString(APPROVAL_INTERRUPTED_TEXT, approvalInterruptedText).apply()
     if (ongoingEnabled && !wasEnabled) prefs.edit().putBoolean("dismissed", false).apply()
     if (!ongoingEnabled) cancelActivity(context)
     channels(context)
@@ -138,15 +142,16 @@ object AgentNotifications {
   }
 
   @Synchronized
-  fun receive(context: Context, data: Map<String, String>) {
+  fun receive(context: Context, data: Map<String, String>, now: Long = System.currentTimeMillis()) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     val updatedAt = data["updated_at"]?.toLongOrNull() ?: return
     val registered = prefs.getBoolean("enabled", false) &&
       data["device_id"] == prefs.getString("deviceId", null) &&
       data["user_id"] == prefs.getString("userId", null)
-    val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
+    val fresh = now - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
+      failStaleApprovals(context, now)
       data[CANCEL_GROUP]?.let { group ->
         cancelApprovals(context) {
           it.getString("alert_group") == group && it.getString(REQUEST_ID) != data[KEEP_REQUEST_ID]
@@ -239,6 +244,7 @@ object AgentNotifications {
       ApprovalAlertState.Ready -> alertBody(data)
       is ApprovalAlertState.Sending -> state.action.progress
       is ApprovalAlertState.Failed -> state.message
+      is ApprovalAlertState.Rejected -> state.message
     }
     val builder = base(context, ALERT_CHANNEL)
       .setContentTitle(alertTitle(data)).setContentText(body)
@@ -246,11 +252,13 @@ object AgentNotifications {
       .setAutoCancel(true)
       .setGroup(alertGroup(data))
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
-      .addExtras(alertExtras(scheme, data))
+      .addExtras(alertExtras(scheme, data, state))
     if (state != ApprovalAlertState.Ready) builder.setSilent(true).setOnlyAlertOnce(true)
     if (state is ApprovalAlertState.Sending) builder.setProgress(0, 0, true)
     val request = ApprovalRequest.from(data)
-    if (request != null && request.actionable && state !is ApprovalAlertState.Sending) {
+    val offersActions = state == ApprovalAlertState.Ready || state is ApprovalAlertState.Failed
+    // Older Android runs a notification action from the lock screen without unlocking.
+    if (Build.VERSION.SDK_INT >= 31 && request != null && request.actionable && offersActions) {
       approvalActions(context).forEachIndexed { index, action ->
         builder.addAction(approvalAction(context, action, index, id))
       }
@@ -266,8 +274,15 @@ object AgentNotifications {
   private fun alertGroup(data: Map<String, String>) =
     data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
 
-  private fun alertExtras(scheme: String, data: Map<String, String>) = Bundle().apply {
+  private fun alertExtras(
+    scheme: String,
+    data: Map<String, String>,
+    state: ApprovalAlertState
+  ) = Bundle().apply {
     putString(SCHEME_EXTRA, scheme)
+    if (state is ApprovalAlertState.Sending) {
+      putLong(SENDING_SINCE_EXTRA, System.currentTimeMillis())
+    }
     data.filterKeys { it.startsWith("alert_") }.forEach { (key, value) -> putString(key, value) }
   }
 
@@ -277,8 +292,10 @@ object AgentNotifications {
     index: Int,
     notificationId: Int
   ): NotificationCompat.Action {
+    // The data URI keeps each alert's intents apart even when request codes collide.
     val intent = Intent(context, AgentApprovalActionReceiver::class.java)
       .setAction(action.id)
+      .setData(Uri.parse("t3-approval://notification/$notificationId"))
       .putExtra(NOTIFICATION_ID_EXTRA, notificationId)
     val pending = PendingIntent.getBroadcast(
       context,
@@ -328,6 +345,32 @@ object AgentNotifications {
   }
 
   @Synchronized
+  fun showApprovalRejected(context: Context, notificationId: Int, message: String) {
+    repostAlert(context, notificationId, ApprovalAlertState.Rejected(message))
+  }
+
+  /** Restores the actions of an alert still sending after its answer stopped without a report. */
+  @Synchronized
+  fun failUnreportedApproval(context: Context, notificationId: Int) {
+    val sending = manager(context).activeNotifications.any {
+      it.tag == ALERT_TAG && it.id == notificationId &&
+        it.notification.extras.getLong(SENDING_SINCE_EXTRA) > 0
+    }
+    if (!sending) return
+    val message = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString(APPROVAL_INTERRUPTED_TEXT, null) ?: return
+    repostAlert(context, notificationId, ApprovalAlertState.Failed(message))
+  }
+
+  /** An answer whose process died before reporting leaves its alert sending until the next push. */
+  private fun failStaleApprovals(context: Context, now: Long) {
+    manager(context).activeNotifications.filter {
+      val since = it.notification.extras.getLong(SENDING_SINCE_EXTRA)
+      it.tag == ALERT_TAG && since > 0 && now - since > STALE_SENDING_MS
+    }.forEach { failUnreportedApproval(context, it.id) }
+  }
+
+  @Synchronized
   fun cancelAlert(context: Context, notificationId: Int) {
     manager(context).cancel(ALERT_TAG, notificationId)
   }
@@ -347,7 +390,11 @@ object AgentNotifications {
     val actions = JSONArray(stored)
     return (0 until actions.length()).map {
       val action = actions.getJSONObject(it)
-      ApprovalAction(action.getString("id"), action.getString("label"), action.getString("progress"))
+      ApprovalAction(
+        action.getString("id"),
+        action.getString("label"),
+        action.getString("progress")
+      )
     }
   }
 

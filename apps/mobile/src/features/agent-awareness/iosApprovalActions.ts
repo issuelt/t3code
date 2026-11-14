@@ -2,7 +2,7 @@ import { RELAY_APPROVAL_NOTIFICATION_CATEGORY } from "@t3tools/contracts/relay";
 import { requireOptionalNativeModule } from "expo";
 import * as Notifications from "expo-notifications";
 
-import { APPROVAL_ACTIONS, type iosApprovalResponse, unreachableText } from "./approvalActions";
+import { APPROVAL_ACTIONS, type iosApprovalResponse, iosApprovalRepost } from "./approvalActions";
 import { answerApproval } from "./approvalAnswers";
 
 /** Added to expo-notifications by the fork's patch: ends the background time iOS gave the action. */
@@ -29,17 +29,13 @@ export async function handleIosApprovalResponse(
 ): Promise<void> {
   try {
     const outcome = await answerApproval(approval.answer);
-    if (outcome._tag === "Answered") {
+    const repost = iosApprovalRepost(approval, outcome);
+    if (repost === null) {
       await Notifications.dismissNotificationAsync(approval.notificationIdentifier);
     } else {
       await Notifications.scheduleNotificationAsync({
         identifier: approval.notificationIdentifier,
-        content: {
-          ...(approval.title === null ? {} : { title: approval.title }),
-          body: unreachableText(outcome.environmentLabel),
-          data: approval.data,
-          categoryIdentifier: RELAY_APPROVAL_NOTIFICATION_CATEGORY,
-        },
+        content: repost,
         trigger: null,
       });
     }

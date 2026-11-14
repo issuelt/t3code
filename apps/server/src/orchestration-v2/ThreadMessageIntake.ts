@@ -1,6 +1,10 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  OrchestrationV2Command,
+  OrchestrationV2CreationSource,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +15,8 @@ import * as ServerConfig from "../config.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { commandFeatureUsage } from "../telemetry/FeatureUsage.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
@@ -276,11 +282,18 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     );
 });
 
+/** Who sent a command: the creation source it stamps and the client's analytics properties. */
+export interface UserCommandOrigin {
+  readonly creationSource: OrchestrationV2CreationSource;
+  readonly analytics: Readonly<Record<string, unknown>>;
+}
+
 export class UserCommandDispatch extends Context.Service<
   UserCommandDispatch,
   {
     readonly dispatch: (
       command: OrchestrationV2Command,
+      origin: UserCommandOrigin,
     ) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
       | Effect.Error<ReturnType<typeof dispatchCommand>>
@@ -294,6 +307,7 @@ export const layerUserCommandDispatch = Layer.effect(
   Effect.gen(function* () {
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
     const threadLaunch = yield* ThreadLaunch.ThreadLaunchService;
+    const analytics = yield* AnalyticsService.AnalyticsService;
     const context = yield* Effect.context<
       | ThreadManagement.ThreadManagementService
       | ThreadLaunch.ThreadLaunchService
@@ -302,19 +316,45 @@ export const layerUserCommandDispatch = Layer.effect(
       | ServerSettings.ServerSettingsService
       | DocumentText.DocumentText
     >();
+    const recordAnalytics = (command: OrchestrationV2Command, origin: UserCommandOrigin) => {
+      const usage = commandFeatureUsage(command);
+      return Effect.all(
+        [
+          command.type === "message.dispatch"
+            ? analytics.record("client.turn.requested", origin.analytics)
+            : Effect.void,
+          usage === undefined
+            ? Effect.void
+            : analytics.record("feature.used", {
+                ...usage,
+                ...(origin.analytics.surface === undefined
+                  ? {}
+                  : { surface: origin.analytics.surface }),
+              }),
+        ],
+        { discard: true },
+      ).pipe(Effect.ignore);
+    };
     return UserCommandDispatch.of({
-      dispatch: Effect.fn("UserCommandDispatch.dispatch")((command) =>
-        startup.enqueueCommand(
-          (command.type === "prepared-run.retry"
-            ? threadLaunch.retryPreparation(command)
-            : dispatchCommand(
-                ThreadManagement.withCreationProvenance(command, {
-                  createdBy: "user",
-                  creationSource: "creationSource" in command ? command.creationSource : "web",
-                }),
-              )
-          ).pipe(Effect.provide(context)),
-        ),
+      dispatch: Effect.fn("UserCommandDispatch.dispatch")((command, origin) =>
+        startup
+          .enqueueCommand(
+            (command.type === "prepared-run.retry"
+              ? threadLaunch.retryPreparation(command)
+              : dispatchCommand(
+                  ThreadManagement.withCreationProvenance(command, {
+                    createdBy: "user",
+                    creationSource:
+                      "creationSource" in command ? command.creationSource : origin.creationSource,
+                  }),
+                )
+            ).pipe(Effect.provide(context)),
+          )
+          .pipe(
+            Effect.tap((result) =>
+              result.replayed ? Effect.void : recordAnalytics(command, origin),
+            ),
+          ),
       ),
     });
   }),

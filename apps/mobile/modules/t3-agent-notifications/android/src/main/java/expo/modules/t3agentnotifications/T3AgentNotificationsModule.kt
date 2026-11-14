@@ -16,7 +16,8 @@ class T3AgentNotificationsModule : Module() {
         userId: String,
         scheme: String,
         ongoingEnabled: Boolean,
-        approvalActions: List<Map<String, String>>
+        approvalActions: List<Map<String, String>>,
+        approvalInterruptedText: String
       ->
       val actions = approvalActions.mapNotNull { action ->
         val id = action["id"] ?: return@mapNotNull null
@@ -25,7 +26,15 @@ class T3AgentNotificationsModule : Module() {
         ApprovalAction(id, label, progress)
       }
       appContext.reactContext?.let {
-        AgentNotifications.configure(it, deviceId, userId, scheme, ongoingEnabled, actions)
+        AgentNotifications.configure(
+          it,
+          deviceId,
+          userId,
+          scheme,
+          ongoingEnabled,
+          actions,
+          approvalInterruptedText
+        )
       }
     }
 
@@ -44,6 +53,12 @@ class T3AgentNotificationsModule : Module() {
     Function("failApprovalAction") { notificationId: Int, message: String ->
       appContext.reactContext?.let {
         AgentNotifications.showApprovalFailure(it, notificationId, message)
+      }
+    }
+
+    Function("rejectApprovalAction") { notificationId: Int, message: String ->
+      appContext.reactContext?.let {
+        AgentNotifications.showApprovalRejected(it, notificationId, message)
       }
     }
 

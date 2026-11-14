@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { androidApprovalTask, iosApprovalResponse } from "./approvalActions";
+import {
+  androidApprovalTask,
+  approvalOutcomeText,
+  iosApprovalRepost,
+  iosApprovalResponse,
+} from "./approvalActions";
 
 const pendingApproval = { requestThreadId: "child", requestId: "request", actionable: true };
 
 function iosResponse(
   actionIdentifier: string,
-  data: unknown = { environmentId: "env", pendingApproval },
+  data: unknown = { environmentId: "env", pendingApproval, deepLink: "/threads/env/thread" },
 ) {
   return {
     actionIdentifier,
@@ -15,7 +20,12 @@ function iosResponse(
       request: {
         identifier: "notification-1",
         trigger: { type: "push" },
-        content: { title: "Refactor billing webhooks", body: "Approval: Acme API", data },
+        content: {
+          title: "Refactor billing webhooks",
+          body: "Approval: Acme API",
+          threadIdentifier: "env/thread",
+          data,
+        },
       },
     },
   };
@@ -58,11 +68,9 @@ describe("approval notification actions", () => {
   });
 
   it("answers the request the iOS notification names, on the thread that owns it", () => {
-    expect(iosApprovalResponse(iosResponse("t3.approval.decline"))).toEqual({
+    expect(iosApprovalResponse(iosResponse("t3.approval.decline"))).toMatchObject({
       notificationIdentifier: "notification-1",
       actionIdentifier: "t3.approval.decline",
-      title: "Refactor billing webhooks",
-      data: { environmentId: "env", pendingApproval },
       answer: {
         environmentId: "env",
         threadId: "child",
@@ -78,5 +86,41 @@ describe("approval notification actions", () => {
     ["a response that is not an object", "t3.approval.accept"],
   ])("leaves %s to navigation", (_name, response) => {
     expect(iosApprovalResponse(response)).toBeNull();
+  });
+
+  it("reposts an unanswered iOS alert with its original content", () => {
+    const approval = iosApprovalResponse(iosResponse("t3.approval.accept"));
+    expect(approval).not.toBeNull();
+    if (approval === null) return;
+    expect(
+      iosApprovalRepost(approval, { _tag: "Unreachable", environmentLabel: "Workstation" }),
+    ).toEqual({
+      title: "Refactor billing webhooks",
+      body: "Couldn't reach Workstation",
+      data: { environmentId: "env", pendingApproval, deepLink: "/threads/env/thread" },
+      threadIdentifier: "env/thread",
+      categoryIdentifier: "t3.approval",
+    });
+    expect(iosApprovalRepost(approval, { _tag: "Rejected", reason: "unanswerable" })).toEqual({
+      title: "Refactor billing webhooks",
+      body: "This approval can no longer be answered.",
+      data: { environmentId: "env", pendingApproval, deepLink: "/threads/env/thread" },
+      threadIdentifier: "env/thread",
+    });
+    expect(
+      iosApprovalRepost(approval, {
+        _tag: "Answered",
+        result: { _tag: "Responded", sequence: 1 },
+      }),
+    ).toBeNull();
+  });
+
+  it("tells a rejected answer apart from an unreachable one", () => {
+    expect(approvalOutcomeText({ _tag: "Rejected", reason: "not_permitted" })).toBe(
+      "This connection cannot respond to approvals.",
+    );
+    expect(approvalOutcomeText({ _tag: "Unreachable", environmentLabel: null })).toBe(
+      "Couldn't reach this environment",
+    );
   });
 });

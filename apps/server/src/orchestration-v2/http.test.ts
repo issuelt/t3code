@@ -416,11 +416,13 @@ it.effect("answers a runtime request over HTTP, including one already answered",
   Effect.gen(function* () {
     const requestId = RuntimeRequestId.make("approval-http");
     const commands: Array<string> = [];
+    const origins: Array<ThreadMessageIntake.UserCommandOrigin> = [];
     const { handler } = yield* serveOrchestrationHttp(() => true, {
       scopes: ["orchestration:read", "orchestration:operate"],
-      dispatch: (command) =>
+      dispatch: (command, origin) =>
         Effect.suspend(() => {
           commands.push(`${command.type}:${command.commandId}`);
+          origins.push(origin);
           return command.commandId === CommandId.make("late")
             ? Effect.fail(
                 new Orchestrator.RuntimeRequestNotPendingError({
@@ -460,6 +462,7 @@ it.effect("answers a runtime request over HTTP, including one already answered",
       body: { _tag: "AlreadyResolved", status: "resolved" },
     });
     expect(commands).toEqual(["runtime-request.respond:first", "runtime-request.respond:late"]);
+    expect(origins[0]).toEqual({ creationSource: "mobile", analytics: { surface: "mobile" } });
   }),
 );
 

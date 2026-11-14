@@ -1,6 +1,7 @@
 import {
   CommandId,
   type EnvironmentId,
+  type EnvironmentRuntimeRequestRespondResult,
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ThreadId,
@@ -30,10 +31,20 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
   const { entries } = yield* loadPersistedCatalog();
   const entry = entries.get(input.environmentId);
   if (entry === undefined || !entry.enabled) {
-    return { _tag: "Unreachable", environmentLabel: null } as const;
+    return { _tag: "Unreachable", environmentLabel: null } satisfies RuntimeRequestAnswerOutcome;
   }
   return yield* answerRuntimeRequestOverRoutes(entry, input);
 });
+
+/** What the server said; only `Unreachable` is worth trying again. */
+export type RuntimeRequestAnswerOutcome =
+  | { readonly _tag: "Answered"; readonly result: EnvironmentRuntimeRequestRespondResult }
+  | { readonly _tag: "Rejected"; readonly reason: "not_permitted" | "unanswerable" }
+  | { readonly _tag: "Unreachable"; readonly environmentLabel: string | null };
+
+const rejected = (
+  reason: Extract<RuntimeRequestAnswerOutcome, { _tag: "Rejected" }>["reason"],
+): RuntimeRequestAnswerOutcome => ({ _tag: "Rejected", reason });
 
 interface RuntimeRequestAnswer {
   readonly threadId: ThreadId;
@@ -71,13 +82,22 @@ export const answerRuntimeRequestOverRoutes = Effect.fn(
             }),
         }),
       ),
+      Effect.map((result): RuntimeRequestAnswerOutcome => ({ _tag: "Answered", result })),
+      Effect.catchTags({
+        EnvironmentScopeRequiredError: () => Effect.succeed(rejected("not_permitted")),
+        EnvironmentRequestInvalidError: () => Effect.succeed(rejected("unanswerable")),
+        EnvironmentResourceNotFoundError: () => Effect.succeed(rejected("unanswerable")),
+      }),
     );
-  return yield* Effect.firstSuccessOf(usableRoutes(entry).map(answerOver)).pipe(
+  // Routes race under one budget; the shared command id makes the server answer only once.
+  return yield* Effect.raceAll(usableRoutes(entry).map(answerOver)).pipe(
     Effect.timeout(ANSWER_BUDGET_MS),
-    Effect.map((result) => ({ _tag: "Answered", result }) as const),
     Effect.catch((cause) =>
       Effect.logWarning("Could not answer the runtime request.", { cause }).pipe(
-        Effect.as({ _tag: "Unreachable", environmentLabel: entry.target.label } as const),
+        Effect.as<RuntimeRequestAnswerOutcome>({
+          _tag: "Unreachable",
+          environmentLabel: entry.target.label,
+        }),
       ),
     ),
   );

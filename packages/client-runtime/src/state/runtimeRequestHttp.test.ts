@@ -77,7 +77,7 @@ const layer = (input: {
   );
 
 describe("answerRuntimeRequestOverRoutes", () => {
-  it.effect("falls through to the next route with the same command id", () => {
+  it.effect("answers through the next route with the same command id", () => {
     const sent: Array<{ readonly url: string; readonly commandId: unknown }> = [];
     return Effect.gen(function* () {
       const outcome = yield* answerRuntimeRequestOverRoutes(routes(true), ANSWER);
@@ -85,10 +85,10 @@ describe("answerRuntimeRequestOverRoutes", () => {
         _tag: "Answered",
         result: { _tag: "Responded", sequence: 3 },
       });
-      assert.deepStrictEqual(
-        sent.map(({ url }) => new URL(url).host),
-        ["lan.example.test", "relay.example.test"],
-      );
+      assert.deepStrictEqual(sent.map(({ url }) => new URL(url).host).sort(), [
+        "lan.example.test",
+        "relay.example.test",
+      ]);
       assert.strictEqual(sent[0]?.commandId, sent[1]?.commandId);
     }).pipe(
       Effect.provide(
@@ -120,6 +120,72 @@ describe("answerRuntimeRequestOverRoutes", () => {
       Effect.provide(
         layer({ prepareDelay: "15 seconds", fetch: () => new Promise<Response>(() => {}) }),
       ),
+    ),
+  );
+
+  it.effect("races the routes, so a hung route does not hold back a working one", () =>
+    Effect.gen(function* () {
+      const answer = yield* Effect.forkChild(answerRuntimeRequestOverRoutes(routes(true), ANSWER));
+      yield* TestClock.adjust("1 second");
+      assert.isDefined(answer.pollUnsafe());
+      assert.deepStrictEqual(yield* Fiber.join(answer), {
+        _tag: "Answered",
+        result: { _tag: "AlreadyResolved", status: "resolved" },
+      });
+    }).pipe(
+      Effect.provide(
+        layer({
+          fetch: (url) =>
+            url.startsWith("https://lan.")
+              ? new Promise<Response>(() => {})
+              : Promise.resolve(Response.json({ _tag: "AlreadyResolved", status: "resolved" })),
+        }),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    [
+      "a missing scope",
+      403,
+      {
+        _tag: "EnvironmentScopeRequiredError",
+        code: "insufficient_scope",
+        requiredScope: "orchestration:operate",
+        traceId: "trace",
+      },
+      "not_permitted",
+    ],
+    [
+      "a thread that is gone",
+      404,
+      {
+        _tag: "EnvironmentResourceNotFoundError",
+        code: "not_found",
+        reason: "thread_not_found",
+        traceId: "trace",
+      },
+      "unanswerable",
+    ],
+    [
+      "a request it cannot answer",
+      400,
+      {
+        _tag: "EnvironmentRequestInvalidError",
+        code: "invalid_request",
+        reason: "invalid_command",
+        traceId: "trace",
+      },
+      "unanswerable",
+    ],
+  ] as const)("reports %s as rejected, not unreachable", ([, status, body, reason]) =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* answerRuntimeRequestOverRoutes(routes(false), ANSWER), {
+        _tag: "Rejected",
+        reason,
+      });
+    }).pipe(
+      Effect.provide(layer({ fetch: () => Promise.resolve(Response.json(body, { status })) })),
     ),
   );
 });

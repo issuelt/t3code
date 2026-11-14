@@ -323,15 +323,12 @@ function notificationMayAnswer(
   request: OrchestrationV2RuntimeRequest,
   item: Extract<OrchestrationV2TurnItem, { type: "approval_request" }>,
 ): boolean {
-  const options = item.options;
+  // Provider options carry their own labels, which only the in-app card shows.
   return (
     request.status === "pending" &&
     request.responseCapability.type === "live" &&
     item.fullAccessOverride === undefined &&
-    (options === undefined ||
-      (options.every((option) => option.warning === undefined) &&
-        options.some((option) => option.decision === "accept") &&
-        options.some((option) => option.decision === "decline")))
+    item.options === undefined
   );
 }
 

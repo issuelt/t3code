@@ -181,6 +181,14 @@ describe("omitIdleSubagentShells", () => {
           createdAt: DateTime.makeUnsafe(0),
         },
       }),
+      // An approval alert on the phone is cleared from this shell, so a waiting child stays.
+      row("approving", "root", {
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-approval"),
+          kind: "command",
+          createdAt: DateTime.makeUnsafe(0),
+        },
+      }),
       row("background", "root", {
         pendingBackgroundTasks: [{ kind: "subagent" } as never],
       }),
@@ -193,6 +201,7 @@ describe("omitIdleSubagentShells", () => {
       "running",
       "queued",
       "asking",
+      "approving",
       "background",
       "middle",
     ]);
@@ -303,6 +312,13 @@ describe("omitOlderSettledShells", () => {
           blocking: false,
         },
       }),
+      row("approving", 30, {
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("settled-approval"),
+          kind: "command",
+          createdAt: DateTime.makeUnsafe(0),
+        },
+      }),
       row("parent", 30),
       shellFixture({
         id: ThreadId.make("child"),
@@ -330,12 +346,13 @@ describe("omitOlderSettledShells", () => {
       "snoozed",
       "running",
       "decision",
+      "approving",
       "parent",
       "child",
       "side-chat-parent",
       "side-chat",
     ]);
-    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 6 }]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 7 }]);
   });
 });
 

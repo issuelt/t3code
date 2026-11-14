@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
@@ -15,6 +17,7 @@ sealed interface ApprovalAlertState {
   data object Ready : ApprovalAlertState
   data class Sending(val action: ApprovalAction) : ApprovalAlertState
   data class Failed(val message: String) : ApprovalAlertState
+  data class Rejected(val message: String) : ApprovalAlertState
 }
 
 data class ApprovalRequest(
@@ -56,13 +59,37 @@ class AgentApprovalActionReceiver : BroadcastReceiver() {
 }
 
 class AgentApprovalTaskService : HeadlessJsTaskService() {
+  private val notificationIds = mutableSetOf<Int>()
+  private val handler = Handler(Looper.getMainLooper())
+
   override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
     val extras: Bundle = intent?.extras ?: return null
+    val notificationId = extras.getInt("notificationId")
+    notificationIds += notificationId
+    // A JS runtime that never boots never ends the task either.
+    handler.postDelayed({ settle(notificationId) }, TASK_TIMEOUT_MS + BOOT_GRACE_MS)
     return HeadlessJsTaskConfig(TASK_NAME, Arguments.fromBundle(extras), TASK_TIMEOUT_MS, true)
+  }
+
+  override fun onHeadlessJsTaskFinish(taskId: Int) {
+    notificationIds.toList().forEach(::settle)
+    super.onHeadlessJsTaskFinish(taskId)
+  }
+
+  override fun onDestroy() {
+    handler.removeCallbacksAndMessages(null)
+    notificationIds.toList().forEach(::settle)
+    super.onDestroy()
+  }
+
+  private fun settle(notificationId: Int) {
+    notificationIds -= notificationId
+    AgentNotifications.failUnreportedApproval(this, notificationId)
   }
 
   private companion object {
     const val TASK_NAME = "T3ApprovalAction"
     const val TASK_TIMEOUT_MS = 30_000L
+    const val BOOT_GRACE_MS = 5_000L
   }
 }
