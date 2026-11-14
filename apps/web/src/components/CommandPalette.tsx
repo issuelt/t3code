@@ -68,6 +68,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   HouseIcon,
+  MessageCircleQuestionIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -1718,6 +1719,18 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:decisions",
+    searchTerms: ["decisions", "approvals", "questions", "waiting", "inbox", "pending"],
+    title: "Open decisions",
+    icon: <MessageCircleQuestionIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "decisions.open",
+    run: async () => {
+      await navigate({ to: "/decisions" });
     },
   });
 

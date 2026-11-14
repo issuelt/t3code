@@ -644,6 +644,26 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("opens decisions with mod+shift+u without taking usage's mod+u", () => {
+    const options = { platform: "MacIntel", context: { terminalFocus: false } };
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "U", code: "KeyU", metaKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        options,
+      ),
+      "decisions.open",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "u", code: "KeyU", metaKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        options,
+      ),
+      "usage.open",
+    );
+  });
+
   it("navigates history with mod+[ and mod+] outside the terminal", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });

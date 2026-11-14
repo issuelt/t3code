@@ -15,6 +15,8 @@ import {
   OrchestratorMcpDeleteScheduledTaskResult,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
+  OrchestratorMcpUserDecisionInput,
+  OrchestratorMcpUserDecisionResult,
   OrchestratorMcpFailure,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpListScheduledTasksInput,
@@ -225,6 +227,18 @@ const RequestSecretTool = Tool.make("request_secret", {
   // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
   .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
+const UserDecisionTool = Tool.make("t3_user_decision", {
+  description:
+    "Leave the user a decision, or an action only they can take, without stopping. Use instead of writing it in your reply. Your turn continues; their answer arrives later as a new message. One decision per call. withdraw: by `requestId` when it no longer applies. To ask and wait now, use your own question tool.",
+  parameters: OrchestratorMcpUserDecisionInput,
+  success: OrchestratorMcpUserDecisionResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Leave the user a decision")
+  .annotate(Tool.Destructive, false);
+
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create new top-level threads in this checkout. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit.",
@@ -375,6 +389,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  UserDecisionTool,
   CreateThreadsTool,
   ThreadListTool,
   ThreadReadTool,

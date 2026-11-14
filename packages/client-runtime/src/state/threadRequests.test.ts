@@ -20,6 +20,7 @@ import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixture
 import {
   createQuestionHistoryProjector,
   createChildThreadApprovalsAtom,
+  createOpenDecisionsAtoms,
   type PendingThreadRequests,
   derivePendingThreadRequests,
   declinePendingApprovals,
@@ -639,6 +640,78 @@ it("loads only child approvals and retains their destination across environments
   );
   expect(registry.get(approvalsAtom(parent))).toEqual([]);
   expect(readDetails).not.toHaveBeenCalled();
+  unmount();
+  registry.dispose();
+});
+
+it("lists every environment's open decisions oldest first, reading details only for threads that ask", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+  const shell = (environmentId: EnvironmentId, id: string, flags: object) => ({
+    ...presentThreadShell(environmentId, v2ThreadShell),
+    id: ThreadId.make(id),
+    title: id,
+    ...flags,
+  });
+  const shells = Atom.make([
+    shell(local, "approval", { hasPendingApprovals: true }),
+    shell(remote, "question", { hasPendingUserInput: true }),
+    shell(local, "secret", {
+      hasPendingUserInput: true,
+      hasPendingUserOnlyInput: true,
+      pendingUserInputAt: "2026-10-19T00:00:02Z",
+    }),
+    shell(remote, "idle", {}),
+  ]);
+  const approval: ThreadPendingApproval = {
+    requestId: RuntimeRequestId.make("approval"),
+    requestKind: "command",
+    createdAt: "2026-10-19T00:00:03Z",
+    responseCapability: "live",
+  };
+  const userInput = {
+    requestId: RuntimeRequestId.make("question"),
+    createdAt: "2026-10-19T00:00:01Z",
+    questions: [],
+    responseCapability: "message" as const,
+    responseMode: "message" as const,
+    dismissible: true,
+  };
+  const details = Atom.family((key: string) =>
+    Atom.make<PendingThreadRequests | null>(
+      key === threadKey({ environmentId: local, threadId: ThreadId.make("approval") })
+        ? { approvals: [approval], userInputs: [] }
+        : key === threadKey({ environmentId: remote, threadId: ThreadId.make("question") })
+          ? { approvals: [], userInputs: [userInput] }
+          : { approvals: [], userInputs: [] },
+    ),
+  );
+  const readDetails = vi.fn((ref: ScopedThreadRef) => details(threadKey(ref)));
+  const { decisionsAtom, askingThreadCountAtom } = createOpenDecisionsAtoms({
+    threadShellsAtom: shells,
+    pendingRequestsAtom: readDetails,
+  });
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(decisionsAtom);
+  const decisions = registry.get(decisionsAtom);
+  expect(decisions.map((decision) => [decision.kind, decision.thread])).toEqual([
+    ["question", { environmentId: remote, threadId: "question" }],
+    ["userOnly", { environmentId: local, threadId: "secret" }],
+    ["approval", { environmentId: local, threadId: "approval" }],
+  ]);
+  expect(registry.get(askingThreadCountAtom)).toBe(3);
+  expect(readDetails.mock.calls.map(([ref]) => ref.threadId)).not.toContain("idle");
+
+  registry.set(shells, [...registry.get(shells)]);
+  expect(registry.get(decisionsAtom)).toBe(decisions);
+  registry.set(details(threadKey({ environmentId: remote, threadId: ThreadId.make("question") })), {
+    approvals: [],
+    userInputs: [],
+  });
+  expect(registry.get(decisionsAtom).map((decision) => decision.kind)).toEqual([
+    "userOnly",
+    "approval",
+  ]);
   unmount();
   registry.dispose();
 });

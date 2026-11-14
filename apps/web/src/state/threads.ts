@@ -1,4 +1,7 @@
-import { createChildThreadApprovalsAtom } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  createChildThreadApprovalsAtom,
+  createOpenDecisionsAtoms,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
@@ -44,6 +47,11 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 });
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
+  pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
+});
+
+export const openDecisions = createOpenDecisionsAtoms({
+  threadShellsAtom: environmentThreadShells.threadShellsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
 });
 

@@ -281,29 +281,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   (disabled || isResponding) && "opacity-50 cursor-not-allowed",
                   !disabled && !isResponding && "cursor-pointer",
                 );
-                // The h-5 slots match the label's line box, so the indicator and shortcut stay on its first line.
                 const content = (
                   <>
-                    <span className="pointer-events-none flex h-5 shrink-0 items-center">
-                      {activeQuestion.multiSelect ? (
-                        <CheckboxMark checked={isSelected} variant="contrast" />
-                      ) : (
-                        <OptionRadio checked={isSelected} />
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
-                        {option.label}
-                      </span>
-                      {option.description && option.description !== option.label ? (
-                        <span
-                          className="text-secondary-label text-2xs"
-                          dir={textDirection(option.description)}
-                        >
-                          {option.description}
-                        </span>
-                      ) : null}
-                    </div>
+                    <UserInputOptionBody
+                      option={option}
+                      multiSelect={activeQuestion.multiSelect}
+                      selected={isSelected}
+                    />
                     {index < 9 ? (
                       <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
                         <Kbd>{index + 1}</Kbd>
@@ -347,6 +331,39 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
 // Drawn with ui/radio-group's look instead of using its Radio: Radio only checks inside a
 // RadioGroup, whose arrow keys select options and would trip the single-select auto-advance.
+export function UserInputOptionBody({
+  option,
+  multiSelect,
+  selected,
+}: {
+  option: { readonly label: string; readonly description?: string | undefined };
+  multiSelect: boolean;
+  selected: boolean;
+}) {
+  // The h-5 slot matches the label's line box, so the indicator stays on its first line.
+  return (
+    <>
+      <span className="pointer-events-none flex h-5 shrink-0 items-center">
+        {multiSelect ? (
+          <CheckboxMark checked={selected} variant="contrast" />
+        ) : (
+          <OptionRadio checked={selected} />
+        )}
+      </span>
+      <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+        <span className="text-sm font-medium" dir={textDirection(option.label)}>
+          {option.label}
+        </span>
+        {option.description && option.description !== option.label ? (
+          <span className="text-secondary-label text-2xs" dir={textDirection(option.description)}>
+            {option.description}
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 function OptionRadio({ checked }: { checked: boolean }) {
   return (
     <span

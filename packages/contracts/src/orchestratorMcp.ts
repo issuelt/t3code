@@ -42,6 +42,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -874,6 +875,35 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
   }),
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
+
+const userDecisionQuestion = OrchestrationV2UserInputQuestion.fields;
+export const OrchestratorMcpUserDecisionInput = Schema.Struct({
+  action: Schema.Literals(["ask", "withdraw"]),
+  question: Schema.optional(userDecisionQuestion.question).annotate({
+    description: "ask: the decision or action, in full. Markdown.",
+  }),
+  header: Schema.optional(userDecisionQuestion.header).annotate({
+    description: "ask: a short label, such as 'Deploy'.",
+  }),
+  options: Schema.optional(userDecisionQuestion.options),
+  multiSelect: userDecisionQuestion.multiSelect,
+  allowCustomAnswer: Schema.optional(Schema.Boolean).annotate({
+    description: "Default true. False limits the answer to `options`.",
+  }),
+  requestId: Schema.optional(RuntimeRequestId).annotate({
+    description: "withdraw: the decision to take back.",
+  }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description: "Retry key.",
+  }),
+});
+export type OrchestratorMcpUserDecisionInput = typeof OrchestratorMcpUserDecisionInput.Type;
+
+export const OrchestratorMcpUserDecisionResult = Schema.Struct({
+  requestId: RuntimeRequestId,
+  status: Schema.Literals(["pending", "answered", "cancelled"]),
+});
+export type OrchestratorMcpUserDecisionResult = typeof OrchestratorMcpUserDecisionResult.Type;
 
 export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId).annotate({

@@ -403,3 +403,104 @@ export function createChildThreadApprovalsAtom(input: {
   const empty = Atom.make<ReadonlyArray<ChildThreadApproval>>([]);
   return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
 }
+
+interface OpenDecisionBase {
+  readonly thread: ScopedThreadRef;
+  readonly title: string;
+  readonly createdAt: string;
+}
+
+export type OpenDecision =
+  | (OpenDecisionBase & { readonly kind: "approval"; readonly approval: ThreadPendingApproval })
+  | (OpenDecisionBase & { readonly kind: "question"; readonly userInput: ThreadPendingUserInput })
+  | (OpenDecisionBase & { readonly kind: "userOnly" });
+
+const decisionRequest = (decision: OpenDecision) =>
+  decision.kind === "approval"
+    ? decision.approval
+    : decision.kind === "question"
+      ? decision.userInput
+      : null;
+
+export function openDecisionKey(decision: OpenDecision): string {
+  return JSON.stringify([
+    threadKey(decision.thread),
+    decision.kind,
+    decisionRequest(decision)?.requestId ?? null,
+  ]);
+}
+
+type AskingThread = Pick<
+  EnvironmentThreadShell,
+  "environmentId" | "id" | "title" | "createdAt" | "hasPendingUserOnlyInput" | "pendingUserInputAt"
+>;
+
+const sameAskingThread = (left: AskingThread, right: AskingThread) =>
+  left.environmentId === right.environmentId &&
+  left.id === right.id &&
+  left.title === right.title &&
+  left.hasPendingUserOnlyInput === right.hasPendingUserOnlyInput &&
+  left.pendingUserInputAt === right.pendingUserInputAt;
+
+export function createOpenDecisionsAtoms(input: {
+  readonly threadShellsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
+}) {
+  let previousAsking: ReadonlyArray<AskingThread> = [];
+  const askingThreadsAtom = Atom.make((get) => {
+    const next = get(input.threadShellsAtom).filter(
+      (shell) => shell.hasPendingApprovals || shell.hasPendingUserInput,
+    );
+    if (
+      next.length === previousAsking.length &&
+      next.every((shell, index) => sameAskingThread(shell, previousAsking[index]!))
+    )
+      return previousAsking;
+    previousAsking = next;
+    return previousAsking;
+  }).pipe(Atom.withLabel("open-decision-threads"));
+
+  let previous: ReadonlyArray<OpenDecision> = [];
+  const decisionsAtom = Atom.make((get) => {
+    const next: OpenDecision[] = [];
+    for (const shell of get(askingThreadsAtom)) {
+      const base = {
+        thread: { environmentId: shell.environmentId, threadId: shell.id },
+        title: shell.title,
+      };
+      if (shell.hasPendingUserOnlyInput)
+        next.push({
+          ...base,
+          kind: "userOnly",
+          createdAt: shell.pendingUserInputAt ?? shell.createdAt,
+        });
+      const requests = get(input.pendingRequestsAtom(base.thread));
+      for (const approval of requests?.approvals ?? [])
+        next.push({ ...base, kind: "approval", createdAt: approval.createdAt, approval });
+      for (const userInput of requests?.userInputs ?? [])
+        next.push({ ...base, kind: "question", createdAt: userInput.createdAt, userInput });
+    }
+    next.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    if (
+      next.length === previous.length &&
+      next.every((entry, index) => {
+        const old = previous[index]!;
+        return (
+          old.kind === entry.kind &&
+          old.title === entry.title &&
+          old.createdAt === entry.createdAt &&
+          threadKey(old.thread) === threadKey(entry.thread) &&
+          decisionRequest(old) === decisionRequest(entry)
+        );
+      })
+    )
+      return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel("open-decisions"));
+
+  const askingThreadCountAtom = Atom.make((get) => get(askingThreadsAtom).length).pipe(
+    Atom.withLabel("open-decision-thread-count"),
+  );
+  return { decisionsAtom, askingThreadCountAtom };
+}

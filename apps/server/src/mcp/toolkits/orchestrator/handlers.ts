@@ -154,6 +154,13 @@ const handlers = {
       return yield* service.requestSecret(scope, input);
     }),
   ),
+  t3_user_decision: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.userDecision(scope, input);
+    }),
+  ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       // These threads share the caller's folder, and Home's folder makes them act as Home.

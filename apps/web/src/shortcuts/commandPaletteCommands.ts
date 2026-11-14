@@ -96,6 +96,11 @@ export function installCommandPaletteCommands(
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
       },
+      "decisions.open": (event) => {
+        consume(event);
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        void router.navigate({ to: "/decisions" });
+      },
       "home.open": (event) => {
         const environmentId = readPrimaryEnvironmentId();
         const homeThreadId = appAtomRegistry.get(primaryServerSettingsAtom).home.threadId;

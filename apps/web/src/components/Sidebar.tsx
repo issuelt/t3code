@@ -1,6 +1,7 @@
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { SidebarDecisionsRow } from "./sidebar/SidebarDecisionsRow";
 import { SidebarHomeRow } from "./sidebar/SidebarHomeRow";
 import { isHomeProject } from "@t3tools/client-runtime/state/projects";
 import {
@@ -3532,6 +3533,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
+                        <SidebarDecisionsRow key="decisions" />,
                         ...homeThreadRefs.map((homeRef) => (
                           <SidebarHomeRow
                             key={`home:${scopedThreadKey(homeRef)}`}
