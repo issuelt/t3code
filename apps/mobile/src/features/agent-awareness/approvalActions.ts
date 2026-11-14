@@ -9,11 +9,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const APPROVAL_ACTIONS = {
-  "t3.approval.accept": { decision: "accept", label: "Allow once" },
-  "t3.approval.decline": { decision: "decline", label: "Decline" },
+  "t3.approval.accept": { decision: "accept", label: "Allow once", progress: "Allowing…" },
+  "t3.approval.decline": { decision: "decline", label: "Decline", progress: "Declining…" },
 } as const satisfies Record<
   RelayApprovalNotificationAction,
-  { readonly decision: ProviderApprovalDecision; readonly label: string }
+  {
+    readonly decision: ProviderApprovalDecision;
+    readonly label: string;
+    readonly progress: string;
+  }
 >;
 
 export interface ApprovalAnswer {

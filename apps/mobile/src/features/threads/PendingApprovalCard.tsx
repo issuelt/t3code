@@ -26,9 +26,9 @@ export interface PendingApprovalCardProps {
 }
 
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  APPROVAL_ACTIONS["t3.approval.accept"],
+  { decision: "accept", label: APPROVAL_ACTIONS["t3.approval.accept"].label },
   { decision: "acceptForSession", label: "Allow session" },
-  APPROVAL_ACTIONS["t3.approval.decline"],
+  { decision: "decline", label: APPROVAL_ACTIONS["t3.approval.decline"].label },
 ];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {

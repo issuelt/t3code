@@ -25,6 +25,11 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
+val APPROVAL_ACTIONS = listOf(
+  ApprovalAction("t3.approval.accept", "Allow once", "Allowing…"),
+  ApprovalAction("t3.approval.decline", "Decline", "Declining…"),
+)
+
 abstract class AgentNotificationsFixture {
   protected lateinit var context: Application
   protected lateinit var manager: NotificationManager
@@ -47,7 +52,7 @@ abstract class AgentNotificationsFixture {
       }
     )
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.setThreadOnScreen("/threads/environment/thread")
   }
 
@@ -206,10 +211,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   fun reopeningSameAccountPreservesCardsDeduplicationAndDismissal() {
     val message = update("attention", true)
     AgentNotifications.receive(context, message)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     assertEquals(2, manager.activeNotifications.size)
     AgentNotifications.dismiss(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(context, message)
     assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
   }
@@ -217,10 +222,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   @Test
   fun changingAccountOrDeviceClearsOldCardsAndRejectsOldPushes() {
     AgentNotifications.receive(context, update("attention", true))
-    AgentNotifications.configure(context, "device", "different-user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "different-user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
-    AgentNotifications.configure(context, "different-device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "different-device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.clear(context)
@@ -298,7 +303,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("new-work", true))
     assertEquals("t3-agent-activity", manager.activeNotifications.single().tag)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", false, APPROVAL_ACTIONS)
     assertTrue(manager.activeNotifications.isEmpty())
   }
 
@@ -536,13 +541,13 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.dismiss(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", false, APPROVAL_ACTIONS)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(context, update("work", true))
     assertEquals(1, alarms.scheduledAlarms.size)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", false, APPROVAL_ACTIONS)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.clear(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
@@ -680,7 +685,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     val request = AgentNotifications.beginApprovalAction(
       context,
       "approval".hashCode(),
-      ApprovalAction.Decline
+      APPROVAL_ACTIONS[1]
     )
     assertEquals(ApprovalRequest("environment", "thread", "request-a", true), request)
     assertEquals(
@@ -698,26 +703,30 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-alert" })
     assertEquals(
       null,
-      AgentNotifications.beginApprovalAction(context, "approval".hashCode(), ApprovalAction.Accept)
+      AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
     )
   }
 
   @Test
-  fun aggregatePushesCancelAlertsForRequestsNoLongerPending() {
+  fun threadUpdatesCancelAlertsForRequestsTheThreadNoLongerWaitsOn() {
     AgentNotifications.receive(context, approval("answered", "request-a"))
-    AgentNotifications.receive(context, approval("waiting", "request-b"))
-    AgentNotifications.receive(context, update("unrelated", true))
-    assertEquals(3, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    AgentNotifications.receive(context, approval("other-thread", "request-c") + ("alert_group" to "elsewhere"))
     AgentNotifications.receive(
       context,
-      update("next", true) + ("activity_pending_requests" to AgentNotifications.requestDigest("request-b"))
+      approval("waiting", "request-b") +
+        ("alert_cancel_group" to "environment/thread") + ("alert_keep_request_id" to "request-b")
     )
     assertTrue(manager.activeNotifications.none { it.id == "answered".hashCode() })
     assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })
-    assertTrue(manager.activeNotifications.any { it.id == "unrelated".hashCode() })
-    AgentNotifications.cancelResolvedApprovals(context, "other-environment") { false }
-    assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })
+    assertTrue(manager.activeNotifications.any { it.id == "other-thread".hashCode() })
+    AgentNotifications.receive(
+      context,
+      update("settled", false) +
+        ("alert_cancel_group" to "environment/thread") + ("alert_keep_request_id" to "")
+    )
+    assertTrue(manager.activeNotifications.none { it.id == "waiting".hashCode() })
   }
+
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -729,7 +738,7 @@ class AgentNotificationChannelsTest {
     val manager = context.getSystemService(NotificationManager::class.java)
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     val running = mapOf(
       "device_id" to "device",
       "user_id" to "user",
@@ -744,7 +753,7 @@ class AgentNotificationChannelsTest {
     val initialCard = manager.activeNotifications.single()
     assertEquals("t3-agent-activity", initialCard.tag)
 
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true, APPROVAL_ACTIONS)
     AgentNotifications.receive(
       context,
       running + mapOf(

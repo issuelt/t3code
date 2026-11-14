@@ -82,10 +82,9 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   ),
 );
 function contentState(state: RelayAgentActivityAggregateState) {
-  const activities = state.activities.map(({ pendingApproval: _pendingApproval, ...row }) => row);
   return {
     name: LIVE_ACTIVITY_NAME,
-    props: JSON.stringify({ ...state, activities }),
+    props: JSON.stringify(state),
   };
 }
 

@@ -1,5 +1,4 @@
 import type {
-  RelayAgentActivityAggregateRow,
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
@@ -52,26 +51,33 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
 }
 
 export function androidApprovalData(
-  row: Pick<RelayAgentActivityAggregateRow, "environmentId" | "pendingApproval">,
+  state: Pick<RelayAgentActivityState, "environmentId" | "pendingApproval">,
 ) {
-  const pending = row.pendingApproval;
+  const pending = state.pendingApproval;
   return pending === undefined
     ? {}
     : {
         alert_request_id: pending.requestId,
         alert_request_thread_id: pending.requestThreadId,
-        alert_environment_id: row.environmentId,
+        alert_environment_id: state.environmentId,
         alert_request_actionable: String(pending.actionable),
       };
 }
 
-/** Hex digits of a request ID's SHA-256 the device compares; IDs alone can outgrow FCM's budget. */
-export const PENDING_REQUEST_DIGEST_LENGTH = 16;
+/** The thread's approval alerts for any other request are answered: the device cancels them. */
+export function androidCancelData(
+  state: Pick<RelayAgentActivityState, "environmentId" | "threadId" | "pendingApproval">,
+) {
+  return {
+    alert_cancel_group: androidAlertGroup(state),
+    alert_keep_request_id: state.pendingApproval?.requestId ?? "",
+  };
+}
 
-export function pendingRequestIds(states: ReadonlyArray<RelayAgentActivityState>) {
-  return states.flatMap((state) =>
-    state.pendingApproval ? [state.pendingApproval.requestId] : [],
-  );
+export function androidAlertGroup(
+  thread: Pick<RelayAgentActivityState, "environmentId" | "threadId">,
+) {
+  return JSON.stringify([thread.environmentId, thread.threadId]);
 }
 
 /** Keep Unicode, escaping and grouped alerts within FCM's 4 KB data budget. */

@@ -2,8 +2,16 @@ import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo";
 import { Linking, Platform } from "react-native";
 
+import { APPROVAL_ACTIONS } from "./approvalActions";
+
 interface AndroidAgentNotifications {
-  configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
+  configure(
+    deviceId: string,
+    userId: string,
+    scheme: string,
+    ongoingEnabled: boolean,
+    approvalActions: ReadonlyArray<{ id: string; label: string; progress: string }>,
+  ): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
@@ -32,7 +40,13 @@ export function configureAndroidAgentNotifications(
   userId: string,
   ongoingEnabled: boolean,
 ): void {
-  native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
+  native?.configure?.(
+    deviceId,
+    userId,
+    appScheme(),
+    ongoingEnabled,
+    Object.entries(APPROVAL_ACTIONS).map(([id, { label, progress }]) => ({ id, label, progress })),
+  );
 }
 
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {

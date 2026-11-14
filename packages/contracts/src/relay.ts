@@ -158,7 +158,6 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
-  pendingApproval: Schema.optional(RelayPendingApproval),
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 

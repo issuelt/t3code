@@ -15,10 +15,17 @@ class T3AgentNotificationsModule : Module() {
         deviceId: String,
         userId: String,
         scheme: String,
-        ongoingEnabled: Boolean
+        ongoingEnabled: Boolean,
+        approvalActions: List<Map<String, String>>
       ->
+      val actions = approvalActions.mapNotNull { action ->
+        val id = action["id"] ?: return@mapNotNull null
+        val label = action["label"] ?: return@mapNotNull null
+        val progress = action["progress"] ?: return@mapNotNull null
+        ApprovalAction(id, label, progress)
+      }
       appContext.reactContext?.let {
-        AgentNotifications.configure(it, deviceId, userId, scheme, ongoingEnabled)
+        AgentNotifications.configure(it, deviceId, userId, scheme, ongoingEnabled, actions)
       }
     }
 
@@ -43,7 +50,10 @@ class T3AgentNotificationsModule : Module() {
     Function("cancelResolvedApprovals") { environmentId: String, pendingRequestIds: List<String> ->
       appContext.reactContext?.let {
         val pending = pendingRequestIds.toSet()
-        AgentNotifications.cancelResolvedApprovals(it, environmentId) { id -> id in pending }
+        AgentNotifications.cancelApprovals(it) { extras ->
+          extras.getString(AgentNotifications.ENVIRONMENT_ID) == environmentId &&
+            extras.getString(AgentNotifications.REQUEST_ID) !in pending
+        }
       }
     }
 

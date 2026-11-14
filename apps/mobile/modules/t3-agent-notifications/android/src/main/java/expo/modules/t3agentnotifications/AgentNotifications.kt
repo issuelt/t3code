@@ -12,7 +12,8 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import java.security.MessageDigest
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -59,7 +60,9 @@ object AgentNotifications {
   const val REQUEST_THREAD_ID = "alert_request_thread_id"
   const val ENVIRONMENT_ID = "alert_environment_id"
   const val REQUEST_ACTIONABLE = "alert_request_actionable"
-  private const val PENDING_REQUESTS = "activity_pending_requests"
+  private const val CANCEL_GROUP = "alert_cancel_group"
+  private const val KEEP_REQUEST_ID = "alert_keep_request_id"
+  private const val APPROVAL_ACTIONS = "approvalActions"
 
   @Synchronized
   fun configure(
@@ -67,7 +70,8 @@ object AgentNotifications {
     deviceId: String,
     userId: String,
     scheme: String,
-    ongoingEnabled: Boolean
+    ongoingEnabled: Boolean,
+    approvalActions: List<ApprovalAction>
   ) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     // JS identity is empty on a cold start. Compare the durable identity here
@@ -82,7 +86,15 @@ object AgentNotifications {
       "deviceId",
       deviceId
     ).putString("userId", userId).putString("scheme", scheme)
-      .putBoolean("enabled", true).putBoolean("ongoing", ongoingEnabled).apply()
+      .putBoolean("enabled", true).putBoolean("ongoing", ongoingEnabled)
+      .putString(
+        APPROVAL_ACTIONS,
+        JSONArray(
+          approvalActions.map {
+            JSONObject().put("id", it.id).put("label", it.label).put("progress", it.progress)
+          }
+        ).toString()
+      ).apply()
     if (ongoingEnabled && !wasEnabled) prefs.edit().putBoolean("dismissed", false).apply()
     if (!ongoingEnabled) cancelActivity(context)
     channels(context)
@@ -135,9 +147,10 @@ object AgentNotifications {
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
-      data[PENDING_REQUESTS]?.let { pending ->
-        val digests = pending.split(',').filter { it.isNotEmpty() }.toSet()
-        cancelResolvedApprovals(context, null) { requestDigest(it) in digests }
+      data[CANCEL_GROUP]?.let { group ->
+        cancelApprovals(context) {
+          it.getString("alert_group") == group && it.getString(REQUEST_ID) != data[KEEP_REQUEST_ID]
+        }
       }
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       val alerted = showAlert(context, prefs, scheme, data)
@@ -238,7 +251,9 @@ object AgentNotifications {
     if (state is ApprovalAlertState.Sending) builder.setProgress(0, 0, true)
     val request = ApprovalRequest.from(data)
     if (request != null && request.actionable && state !is ApprovalAlertState.Sending) {
-      ApprovalAction.entries.forEach { builder.addAction(approvalAction(context, it, id)) }
+      approvalActions(context).forEachIndexed { index, action ->
+        builder.addAction(approvalAction(context, action, index, id))
+      }
     }
     return builder
   }
@@ -259,6 +274,7 @@ object AgentNotifications {
   private fun approvalAction(
     context: Context,
     action: ApprovalAction,
+    index: Int,
     notificationId: Int
   ): NotificationCompat.Action {
     val intent = Intent(context, AgentApprovalActionReceiver::class.java)
@@ -266,7 +282,7 @@ object AgentNotifications {
       .putExtra(NOTIFICATION_ID_EXTRA, notificationId)
     val pending = PendingIntent.getBroadcast(
       context,
-      notificationId * 31 + action.ordinal,
+      notificationId * 31 + index,
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
@@ -316,25 +332,24 @@ object AgentNotifications {
     manager(context).cancel(ALERT_TAG, notificationId)
   }
 
+  /** Cancels the approval alerts whose stored extras [shouldCancel] matches. */
   @Synchronized
-  fun cancelResolvedApprovals(
-    context: Context,
-    environmentId: String?,
-    isPending: (requestId: String) -> Boolean
-  ) {
+  fun cancelApprovals(context: Context, shouldCancel: (Bundle) -> Boolean) {
     manager(context).activeNotifications.filter {
-      val requestId = it.notification.extras.getString(REQUEST_ID)
-      it.tag == ALERT_TAG && requestId != null && !isPending(requestId) &&
-        (environmentId == null || it.notification.extras.getString(ENVIRONMENT_ID) == environmentId)
+      it.tag == ALERT_TAG && it.notification.extras.getString(REQUEST_ID) != null &&
+        shouldCancel(it.notification.extras)
     }.forEach { manager(context).cancel(it.tag, it.id) }
   }
 
-  /** The relay's `PENDING_REQUEST_DIGEST_LENGTH`. */
-  private const val PENDING_REQUEST_DIGEST_LENGTH = 16
-
-  fun requestDigest(requestId: String): String =
-    MessageDigest.getInstance("SHA-256").digest(requestId.toByteArray())
-      .joinToString("") { "%02x".format(it) }.take(PENDING_REQUEST_DIGEST_LENGTH)
+  fun approvalActions(context: Context): List<ApprovalAction> {
+    val stored = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString(APPROVAL_ACTIONS, null) ?: return emptyList()
+    val actions = JSONArray(stored)
+    return (0 until actions.length()).map {
+      val action = actions.getJSONObject(it)
+      ApprovalAction(action.getString("id"), action.getString("label"), action.getString("progress"))
+    }
+  }
 
   /**
    * Renders a relay-shaped payload without the registration, freshness and

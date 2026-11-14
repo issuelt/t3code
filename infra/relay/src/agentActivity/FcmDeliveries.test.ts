@@ -2,9 +2,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
-import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -21,7 +19,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-import { androidActivityData, fitFcmData, pendingRequestIds } from "./fcmPayloads.ts";
+import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
@@ -367,6 +365,7 @@ describe("Android delivery routing", () => {
         { ...state, phase: "completed" },
         { ...other, phase: "failed" },
       ]),
+      states: [],
       preferences,
       nowMs: 0,
     };
@@ -406,6 +405,7 @@ describe("Android delivery routing", () => {
       FcmDeliveries.androidAlertForAggregate({
         previousAggregate: aggregateFor([alreadyWaiting, other]),
         nextAggregate: aggregateFor([alreadyWaiting, { ...other, phase: "waiting_for_input" }]),
+        states: [],
         preferences,
         nowMs: 0,
       }),
@@ -433,31 +433,45 @@ describe("Android delivery routing", () => {
     expect(
       FcmDeliveries.androidAlertForState({ ...state, phase: "waiting_for_input" }, preferences, 0),
     ).not.toHaveProperty("alert_request_id");
-    expect(
-      pendingRequestIds([
-        { ...state, phase: "waiting_for_approval", pendingApproval },
-        { ...state, threadId: ThreadId.make("other") },
-      ]),
-    ).toEqual(["request"]);
   });
 
-  it.effect("lists each pending request as a short digest the device can match", () => {
+  it.effect("alerts a second approval on a thread that is still waiting", () => {
     const h = harness();
-    const requestId = RuntimeRequestId.make(`runtime-request:${"x".repeat(300)}`);
-    h.current.state = {
+    const waiting = (requestId: string): RelayAgentActivityState => ({
       ...state,
       phase: "waiting_for_approval",
-      pendingApproval: { requestThreadId: state.threadId, requestId, actionable: true },
-    };
+      pendingApproval: {
+        requestThreadId: state.threadId,
+        requestId: RuntimeRequestId.make(requestId),
+        actionable: true,
+      },
+    });
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([waiting("first")]));
+    h.current.state = waiting("second");
     return Effect.gen(function* () {
       const delivery = yield* FcmDeliveries.FcmDeliveries;
       yield* delivery.process({ ...h.job, state: h.current.state });
-      const digest = yield* (yield* Digest.Digest).digest(
-        Digest.sha256,
-        new TextEncoder().encode(requestId),
-      );
-      expect(h.sent[0]?.data.activity_pending_requests).toBe(Hex.encode(digest).slice(0, 16));
-    }).pipe(Effect.provide(Layer.merge(h.layer, NodeCryptoLayer.layer)));
+      expect(h.sent[0]?.alert).toBe(true);
+      expect(h.sent[0]?.data.alert_request_id).toBe("second");
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("tells the device which request each updated thread still waits on", () => {
+    const h = harness();
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      liveActivitiesEnabled: false,
+    });
+    h.current.state = { ...state, phase: "running" };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.alert).toBe(false);
+      expect(h.sent[0]?.data).toMatchObject({
+        alert_cancel_group: JSON.stringify([state.environmentId, state.threadId]),
+        alert_keep_request_id: "",
+      });
+    }).pipe(Effect.provide(h.layer));
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {

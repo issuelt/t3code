@@ -8,14 +8,8 @@ import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
-enum class ApprovalAction(val id: String, val label: String, val progress: String) {
-  Accept("t3.approval.accept", "Allow once", "Allowing…"),
-  Decline("t3.approval.decline", "Decline", "Declining…");
-
-  companion object {
-    fun from(id: String?) = entries.firstOrNull { it.id == id }
-  }
-}
+/** One of the app's `APPROVAL_ACTIONS`, stored by `configure`. */
+data class ApprovalAction(val id: String, val label: String, val progress: String)
 
 sealed interface ApprovalAlertState {
   data object Ready : ApprovalAlertState
@@ -46,7 +40,8 @@ data class ApprovalRequest(
 
 class AgentApprovalActionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
-    val action = ApprovalAction.from(intent.action) ?: return
+    val action = AgentNotifications.approvalActions(context).firstOrNull { it.id == intent.action }
+      ?: return
     val notificationId = intent.getIntExtra(AgentNotifications.NOTIFICATION_ID_EXTRA, 0)
     val request = AgentNotifications.beginApprovalAction(context, notificationId, action) ?: return
     val task = Intent(context, AgentApprovalTaskService::class.java)

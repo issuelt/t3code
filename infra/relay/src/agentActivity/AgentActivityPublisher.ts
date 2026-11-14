@@ -102,6 +102,7 @@ const make = Effect.gen(function* () {
               : apnsDeliveries.sendPushNotificationForTarget({
                   target,
                   aggregate: notificationOnlyAggregate,
+                  pendingApproval: input.state?.pendingApproval,
                 }),
           ],
           { concurrency: 2 },

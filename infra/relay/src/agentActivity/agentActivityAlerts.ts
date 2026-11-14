@@ -64,22 +64,16 @@ function alertAllowedForPhase(
   }
 }
 
-function attentionKey(row: RelayAgentActivityAggregateRow): string {
-  return JSON.stringify([row.environmentId, row.threadId, row.pendingApproval?.requestId ?? null]);
-}
-
 // A missing baseline is a replay, not a transition that should buzz the phone.
 export function attentionTransitionRows(input: TransitionInput) {
   if (input.previousAggregate === null) return [];
   const previouslyAttention = new Set(
-    input.previousAggregate.activities
-      .filter((row) => isAttentionPhase(row.phase))
-      .map(attentionKey),
+    input.previousAggregate.activities.filter((row) => isAttentionPhase(row.phase)).map(rowKey),
   );
   return input.nextAggregate.activities.filter(
     (row) =>
       isAttentionPhase(row.phase) &&
-      !previouslyAttention.has(attentionKey(row)) &&
+      !previouslyAttention.has(rowKey(row)) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }
