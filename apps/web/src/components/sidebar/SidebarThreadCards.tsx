@@ -4,7 +4,7 @@ import type {
   ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
 import { resolveThreadCards } from "@t3tools/client-runtime/thread-cards";
-import { EyeIcon, EyeOffIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { useState } from "react";
 
 import { threadEnvironment } from "~/state/threads";
@@ -86,11 +86,12 @@ function PullRequestChecksCard({
         {completed.length > 0 ? (
           <Button
             variant="ghost-muted"
-            size="micro"
+            size="icon-micro"
             aria-expanded={showAll}
+            aria-label={showAll ? "Show fewer checks" : "Show all checks"}
             onClick={() => setShowAll(!showAll)}
           >
-            {showAll ? "Show less" : "Show all"}
+            {showAll ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
           </Button>
         ) : null}
         <Tooltip>
