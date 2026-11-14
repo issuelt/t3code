@@ -13,6 +13,10 @@ const runtime = ManagedRuntime.make(
   layerSocketless.pipe(Layer.provideMerge(ConnectionPlatform.layer)),
 );
 
+/** Never rejects: a failure to load the saved connection is unreachable too. */
 export function answerApproval(answer: ApprovalAnswer) {
-  return runtime.runPromise(respondToRuntimeRequestOverHttp(answer));
+  return runtime.runPromise(respondToRuntimeRequestOverHttp(answer)).catch((cause: unknown) => {
+    console.error("[approval-actions] could not answer the approval", cause);
+    return { _tag: "Unreachable", environmentLabel: null } as const;
+  });
 }

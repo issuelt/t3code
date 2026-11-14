@@ -2,10 +2,12 @@ import { and, eq } from "drizzle-orm";
 import {
   RelayAgentActivityState,
   RelayAgentActivityAggregateState,
+  type RelayAgentActivityAggregateRow,
   RelayAgentAwarenessPreferences,
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -70,28 +72,23 @@ export function androidAlertForState(
   nowMs: number,
 ) {
   if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
-  const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+  return alertForRow({ ...state, status: statusForPhase(state.phase) });
+}
+
+/** One thread's alert. A second approval on a thread that is still waiting is a new alert. */
+function alertForRow(row: RelayAgentActivityAggregateRow) {
+  const notification = notificationForActivity(row);
+  const identity = [row.environmentId, row.threadId, row.phase, row.updatedAt];
   return {
-    alert_id: JSON.stringify(alertIdentity(state)),
-    alert_group: JSON.stringify([state.environmentId, state.threadId]),
+    alert_id: JSON.stringify(
+      row.pendingApproval === undefined ? identity : [...identity, row.pendingApproval.requestId],
+    ),
+    alert_group: JSON.stringify([row.environmentId, row.threadId]),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
-    ...androidApprovalData(state),
+    ...androidApprovalData(row),
   };
-}
-
-/** A second approval on a thread that is still waiting is a new alert. */
-function alertIdentity(
-  row: Pick<
-    RelayAgentActivityState,
-    "environmentId" | "threadId" | "phase" | "updatedAt" | "pendingApproval"
-  >,
-) {
-  const identity = [row.environmentId, row.threadId, row.phase, row.updatedAt];
-  return row.pendingApproval === undefined
-    ? identity
-    : [...identity, row.pendingApproval.requestId];
 }
 
 export function androidAlertForAggregate(input: {
@@ -109,17 +106,7 @@ export function androidAlertForAggregate(input: {
   const first = activities[0];
   const alert = alertForActivityRows(activities);
   if (!first || !alert) return null;
-  if (activities.length === 1) {
-    const notification = notificationForActivity(first);
-    return {
-      alert_id: JSON.stringify(alertIdentity(first)),
-      alert_group: JSON.stringify([first.environmentId, first.threadId]),
-      alert_title: notification.title,
-      alert_body: notification.body,
-      alert_path: notification.deepLink,
-      ...androidApprovalData(first),
-    };
-  }
+  if (activities.length === 1) return alertForRow(first);
   return {
     // Stable group IDs let the native handler deduplicate across jobs, retries, and row orders.
     alert_id: JSON.stringify(
@@ -168,13 +155,7 @@ const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const db = yield* RelayDb.RelayDb;
   const sha256Hex = (value: string) =>
-    crypto
-      .digest(Digest.sha256, new TextEncoder().encode(value))
-      .pipe(
-        Effect.map((digest) =>
-          Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
-        ),
-      );
+    crypto.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.map(Hex.encode));
 
   return FcmDeliveries.of({
     enqueue: Effect.fn("relay.fcm.enqueue")(function* (input) {

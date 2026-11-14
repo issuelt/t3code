@@ -8,7 +8,7 @@ import { RelayApprovalNotificationAction, RelayPendingApproval } from "@t3tools/
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-/** Labels match the default options on `PendingApprovalCard` and the native Android alert. */
+/** Also the default options on `PendingApprovalCard`; the native Android alert repeats the labels. */
 export const APPROVAL_ACTIONS = {
   "t3.approval.accept": { decision: "accept", label: "Allow once" },
   "t3.approval.decline": { decision: "decline", label: "Decline" },
@@ -34,11 +34,10 @@ const AndroidApprovalTask = Schema.Struct({
 });
 
 /** The relay puts these IDs in an approval push's `body`, which Expo reads as `data`. */
-export const ApprovalNotificationData = Schema.Struct({
+const ApprovalNotificationData = Schema.Struct({
   environmentId: EnvironmentId,
   pendingApproval: RelayPendingApproval,
 });
-export type ApprovalNotificationData = typeof ApprovalNotificationData.Type;
 
 const IosApprovalResponse = Schema.Struct({
   actionIdentifier: RelayApprovalNotificationAction,

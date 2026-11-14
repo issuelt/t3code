@@ -188,10 +188,7 @@ object AgentNotifications {
     alertId: String
   ) {
     val id = alertId.hashCode()
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
-    val title = data["alert_title"].orEmpty().take(120)
-    // Grouped alerts list up to five 120-character thread titles.
-    val body = data["alert_body"].orEmpty().take(608)
+    val group = alertGroup(data)
     manager(context).notify(
       ALERT_TAG,
       id,
@@ -206,8 +203,8 @@ object AgentNotifications {
         style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
       }
       val summary = base(context, ALERT_CHANNEL)
-        .setContentTitle(title)
-        .setContentText(body)
+        .setContentTitle(alertTitle(data))
+        .setContentText(alertBody(data))
         .setStyle(style)
         .setGroup(group)
         .setGroupSummary(true)
@@ -227,18 +224,16 @@ object AgentNotifications {
     id: Int,
     state: ApprovalAlertState
   ): NotificationCompat.Builder {
-    val title = data["alert_title"].orEmpty().take(120)
     val body = when (state) {
-      ApprovalAlertState.Ready -> data["alert_body"].orEmpty().take(608)
+      ApprovalAlertState.Ready -> alertBody(data)
       is ApprovalAlertState.Sending -> state.action.progress
       is ApprovalAlertState.Failed -> state.message
     }
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
     val builder = base(context, ALERT_CHANNEL)
-      .setContentTitle(title).setContentText(body)
+      .setContentTitle(alertTitle(data)).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .setAutoCancel(true)
-      .setGroup(group)
+      .setGroup(alertGroup(data))
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
       .addExtras(alertExtras(scheme, data))
     if (state != ApprovalAlertState.Ready) builder.setSilent(true).setOnlyAlertOnce(true)
@@ -249,6 +244,14 @@ object AgentNotifications {
     }
     return builder
   }
+
+  private fun alertTitle(data: Map<String, String>) = data["alert_title"].orEmpty().take(120)
+
+  // Grouped alerts list up to five 120-character thread titles.
+  private fun alertBody(data: Map<String, String>) = data["alert_body"].orEmpty().take(608)
+
+  private fun alertGroup(data: Map<String, String>) =
+    data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
 
   private fun alertExtras(scheme: String, data: Map<String, String>) = Bundle().apply {
     putString(SCHEME_EXTRA, scheme)
@@ -275,15 +278,26 @@ object AgentNotifications {
       .build()
   }
 
-  private fun activeAlert(context: Context, notificationId: Int) =
-    manager(context).activeNotifications.firstOrNull {
+  /** Re-posts an active alert in [state] when [accept] its stored data, and returns that data. */
+  private fun repostAlert(
+    context: Context,
+    notificationId: Int,
+    state: ApprovalAlertState,
+    accept: (Map<String, String>) -> Boolean = { true }
+  ): Map<String, String>? {
+    val extras = manager(context).activeNotifications.firstOrNull {
       it.tag == ALERT_TAG && it.id == notificationId
-    }
-
-  private fun storedAlert(extras: Bundle): Pair<String, Map<String, String>> {
+    }?.notification?.extras ?: return null
     val data = extras.keySet().filter { it.startsWith("alert_") }
       .mapNotNull { key -> extras.getString(key)?.let { key to it } }.toMap()
-    return (extras.getString(SCHEME_EXTRA) ?: "t3code") to data
+    if (!accept(data)) return null
+    val scheme = extras.getString(SCHEME_EXTRA) ?: "t3code"
+    manager(context).notify(
+      ALERT_TAG,
+      notificationId,
+      alert(context, scheme, data, notificationId, state).build()
+    )
+    return data
   }
 
   /**
@@ -295,25 +309,13 @@ object AgentNotifications {
     context: Context,
     notificationId: Int,
     action: ApprovalAction
-  ): ApprovalRequest? {
-    val active = activeAlert(context, notificationId) ?: return null
-    val (scheme, data) = storedAlert(active.notification.extras)
-    val request = ApprovalRequest.from(data)?.takeIf { it.actionable } ?: return null
-    val sending = alert(context, scheme, data, notificationId, ApprovalAlertState.Sending(action))
-    manager(context).notify(ALERT_TAG, notificationId, sending.build())
-    return request
-  }
+  ): ApprovalRequest? = repostAlert(context, notificationId, ApprovalAlertState.Sending(action)) {
+    ApprovalRequest.from(it)?.actionable == true
+  }?.let { ApprovalRequest.from(it) }
 
   @Synchronized
   fun showApprovalFailure(context: Context, notificationId: Int, message: String) {
-    val active = activeAlert(context, notificationId) ?: return
-    val (scheme, data) = storedAlert(active.notification.extras)
-    val failed = ApprovalAlertState.Failed(message)
-    manager(context).notify(
-      ALERT_TAG,
-      notificationId,
-      alert(context, scheme, data, notificationId, failed).build()
-    )
+    repostAlert(context, notificationId, ApprovalAlertState.Failed(message))
   }
 
   @Synchronized

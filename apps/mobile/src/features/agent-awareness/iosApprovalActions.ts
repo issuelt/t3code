@@ -14,18 +14,14 @@ const emitter = requireOptionalNativeModule<{
 const actionOptions = { opensAppToForeground: false, isAuthenticationRequired: true };
 
 export function registerIosApprovalCategory(): Promise<unknown> {
-  return Notifications.setNotificationCategoryAsync(RELAY_APPROVAL_NOTIFICATION_CATEGORY, [
-    {
-      identifier: "t3.approval.accept",
-      buttonTitle: APPROVAL_ACTIONS["t3.approval.accept"].label,
-      options: actionOptions,
-    },
-    {
-      identifier: "t3.approval.decline",
-      buttonTitle: APPROVAL_ACTIONS["t3.approval.decline"].label,
-      options: { ...actionOptions, isDestructive: true },
-    },
-  ]);
+  return Notifications.setNotificationCategoryAsync(
+    RELAY_APPROVAL_NOTIFICATION_CATEGORY,
+    Object.entries(APPROVAL_ACTIONS).map(([identifier, { decision, label }]) => ({
+      identifier,
+      buttonTitle: label,
+      options: { ...actionOptions, isDestructive: decision === "decline" },
+    })),
+  );
 }
 
 /**
@@ -36,10 +32,7 @@ export async function handleIosApprovalResponse(
   approval: NonNullable<ReturnType<typeof iosApprovalResponse>>,
 ): Promise<void> {
   try {
-    const outcome = await answerApproval(approval.answer).catch((cause: unknown) => {
-      console.error("[approval-actions] could not answer the approval", cause);
-      return { _tag: "Unreachable", environmentLabel: null } as const;
-    });
+    const outcome = await answerApproval(approval.answer);
     if (outcome._tag === "Answered") {
       await Notifications.dismissNotificationAsync(approval.notificationIdentifier);
     } else {

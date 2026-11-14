@@ -331,13 +331,14 @@ export function pendingApprovalFor(input: {
 }): RelayPendingApproval {
   const request = input.runtimeRequests.find((candidate) => candidate.id === input.requestId);
   const item = input.turnItems.find(
-    (candidate) => candidate.type === "approval_request" && candidate.requestId === input.requestId,
+    (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "approval_request" }> =>
+      candidate.type === "approval_request" && candidate.requestId === input.requestId,
   );
-  const options = item?.type === "approval_request" ? item.options : undefined;
+  const options = item?.options;
   const actionable =
     request?.status === "pending" &&
     request.responseCapability.type === "live" &&
-    item?.type === "approval_request" &&
+    item !== undefined &&
     item.fullAccessOverride === undefined &&
     (options === undefined ||
       (options.every((option) => option.warning === undefined) &&
@@ -758,6 +759,8 @@ export const make = Effect.gen(function* () {
       owner.threadId,
       ["runtimeRequests", "turnItems"],
       {
+        runtimeRequestStatuses: ["pending"],
+        turnItemRequestIds: [owner.requestId],
         turnItemTypes: ["approval_request"],
       },
     );

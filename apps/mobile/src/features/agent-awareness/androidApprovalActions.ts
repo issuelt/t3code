@@ -12,10 +12,7 @@ export async function runAndroidApprovalAction(data: unknown): Promise<void> {
     console.error("[approval-actions] ignored an approval action with an unexpected payload");
     return;
   }
-  const outcome = await answerApproval(task.answer).catch((cause: unknown) => {
-    console.error("[approval-actions] could not answer the approval", cause);
-    return { _tag: "Unreachable", environmentLabel: null } as const;
-  });
+  const outcome = await answerApproval(task.answer);
   if (outcome._tag === "Answered") {
     finishAndroidApprovalAction(task.notificationId);
   } else {
