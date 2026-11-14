@@ -66,16 +66,14 @@ export function androidApprovalData(
       };
 }
 
-/**
- * Every request the user's threads still wait on, so the device cancels alerts for the rest.
- * Sent only when the relay read all of the user's rows.
- */
-export function androidPendingRequestsData(states: ReadonlyArray<RelayAgentActivityState>) {
-  return {
-    activity_pending_requests: states
-      .flatMap((state) => (state.pendingApproval ? [state.pendingApproval.requestId] : []))
-      .join(","),
-  };
+/** Hex digits of a request ID's SHA-256 the device compares; IDs alone can outgrow FCM's budget. */
+export const PENDING_REQUEST_DIGEST_LENGTH = 16;
+
+/** Every request the user's threads still wait on. */
+export function pendingRequestIds(states: ReadonlyArray<RelayAgentActivityState>) {
+  return states.flatMap((state) =>
+    state.pendingApproval ? [state.pendingApproval.requestId] : [],
+  );
 }
 
 /** Keep Unicode, escaping and grouped alerts within FCM's 4 KB data budget. */

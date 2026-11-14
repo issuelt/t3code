@@ -12,6 +12,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import java.security.MessageDigest
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -134,9 +135,10 @@ object AgentNotifications {
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
-      // Rows are present only when the relay read every activity row for this user.
+      // Present only when the relay read every activity row for this user.
       data[PENDING_REQUESTS]?.let { pending ->
-        cancelResolvedApprovals(context, null, pending.split(',').filter { it.isNotEmpty() }.toSet())
+        val digests = pending.split(',').filter { it.isNotEmpty() }.toSet()
+        cancelResolvedApprovals(context, null) { requestDigest(it) in digests }
       }
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       val alerted = showAlert(context, prefs, scheme, data)
@@ -319,19 +321,24 @@ object AgentNotifications {
     manager(context).cancel(ALERT_TAG, notificationId)
   }
 
-  /** Cancels this environment's approval alerts whose requests are not in [pendingRequestIds]. */
+  /** Cancels approval alerts, of one environment or all, whose requests are no longer pending. */
   @Synchronized
   fun cancelResolvedApprovals(
     context: Context,
     environmentId: String?,
-    pendingRequestIds: Set<String>
+    isPending: (requestId: String) -> Boolean
   ) {
     manager(context).activeNotifications.filter {
       val requestId = it.notification.extras.getString(REQUEST_ID)
-      it.tag == ALERT_TAG && requestId != null && requestId !in pendingRequestIds &&
+      it.tag == ALERT_TAG && requestId != null && !isPending(requestId) &&
         (environmentId == null || it.notification.extras.getString(ENVIRONMENT_ID) == environmentId)
     }.forEach { manager(context).cancel(it.tag, it.id) }
   }
+
+  /** Matches the relay's `PENDING_REQUEST_DIGEST_LENGTH` hex digits of the ID's SHA-256. */
+  private fun requestDigest(requestId: String): String =
+    MessageDigest.getInstance("SHA-256").digest(requestId.toByteArray())
+      .joinToString("") { "%02x".format(it) }.take(16)
 
   /**
    * Renders a relay-shaped payload without the registration, freshness and

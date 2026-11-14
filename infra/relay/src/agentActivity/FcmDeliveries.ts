@@ -25,8 +25,9 @@ import * as FcmClient from "./FcmClient.ts";
 import {
   androidActivityData,
   androidApprovalData,
-  androidPendingRequestsData,
   fitFcmData,
+  PENDING_REQUEST_DIGEST_LENGTH,
+  pendingRequestIds,
 } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
@@ -166,6 +167,14 @@ const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const db = yield* RelayDb.RelayDb;
+  const sha256Hex = (value: string) =>
+    crypto
+      .digest(Digest.sha256, new TextEncoder().encode(value))
+      .pipe(
+        Effect.map((digest) =>
+          Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        ),
+      );
 
   return FcmDeliveries.of({
     enqueue: Effect.fn("relay.fcm.enqueue")(function* (input) {
@@ -310,16 +319,20 @@ const make = Effect.gen(function* () {
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
-        ...(preferences.value.liveActivitiesEnabled ? androidPendingRequestsData(states) : {}),
         ...alert,
       };
+      // Sent only when the relay read all of the user's rows, so the device can cancel the rest.
+      if (preferences.value.liveActivitiesEnabled) {
+        const digests = yield* Effect.forEach(pendingRequestIds(states), (requestId) =>
+          sha256Hex(requestId).pipe(
+            Effect.map((hex) => hex.slice(0, PENDING_REQUEST_DIGEST_LENGTH)),
+          ),
+        );
+        data.activity_pending_requests = digests.join(",");
+      }
       if (alert) {
         // Hash the full stable group identity to stay within the payload budget.
-        const digest = yield* crypto.digest(
-          Digest.sha256,
-          new TextEncoder().encode(alert.alert_id),
-        );
-        data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        data.alert_id = yield* sha256Hex(alert.alert_id);
       }
       const result = yield* client.send({
         token: job.token,

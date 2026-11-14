@@ -42,7 +42,8 @@ class T3AgentNotificationsModule : Module() {
 
     Function("cancelResolvedApprovals") { environmentId: String, pendingRequestIds: List<String> ->
       appContext.reactContext?.let {
-        AgentNotifications.cancelResolvedApprovals(it, environmentId, pendingRequestIds.toSet())
+        val pending = pendingRequestIds.toSet()
+        AgentNotifications.cancelResolvedApprovals(it, environmentId) { id -> id in pending }
       }
     }
 

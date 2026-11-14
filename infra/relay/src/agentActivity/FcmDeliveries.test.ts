@@ -19,7 +19,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-import { androidActivityData, androidPendingRequestsData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, fitFcmData, pendingRequestIds } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
@@ -432,11 +432,27 @@ describe("Android delivery routing", () => {
       FcmDeliveries.androidAlertForState({ ...state, phase: "waiting_for_input" }, preferences, 0),
     ).not.toHaveProperty("alert_request_id");
     expect(
-      androidPendingRequestsData([
+      pendingRequestIds([
         { ...state, phase: "waiting_for_approval", pendingApproval },
         { ...state, threadId: ThreadId.make("other") },
       ]),
-    ).toEqual({ activity_pending_requests: "request" });
+    ).toEqual(["request"]);
+  });
+
+  it.effect("lists each pending request as a short digest the device can match", () => {
+    const h = harness();
+    const requestId = RuntimeRequestId.make(`runtime-request:${"x".repeat(300)}`);
+    h.current.state = {
+      ...state,
+      phase: "waiting_for_approval",
+      pendingApproval: { threadId: state.threadId, requestId, actionable: true },
+    };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      // The first 16 hex digits of the ID's SHA-256.
+      expect(h.sent[0]?.data.activity_pending_requests).toBe("1b4ba157d0207f1c");
+    }).pipe(Effect.provide(h.layer));
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {
