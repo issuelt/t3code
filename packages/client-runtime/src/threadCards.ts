@@ -35,10 +35,7 @@ export function summarizeWatchChecks(counts: ThreadPullRequestWatchCheckCounts):
   const total = countedTotal(counts);
   if (counts.failed > 0) return `${counts.failed} of ${total} failing`;
   if (counts.awaiting > 0) return `${counts.awaiting} awaiting action`;
-  if (counts.running > 0 && counts.queued > 0) {
-    return `${counts.running} running, ${counts.queued} queued`;
-  }
-  if (counts.running > 0) return `${counts.running} of ${total} running`;
+  if (counts.running > 0) return `${counts.running + counts.queued} of ${total} running`;
   if (counts.queued > 0) return `${counts.queued} of ${total} queued`;
   return counts.passed === total ? "All checks passed" : `${counts.passed} of ${total} passing`;
 }

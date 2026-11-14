@@ -74,7 +74,7 @@ describe("summarizeWatchChecks", () => {
   it.each([
     [{ ...none, failed: 1, running: 2, passed: 40 }, "1 of 43 failing"],
     [{ ...none, awaiting: 2, passed: 3 }, "2 awaiting action"],
-    [{ ...none, running: 2, queued: 1, passed: 40 }, "2 running, 1 queued"],
+    [{ ...none, running: 2, queued: 1, passed: 40 }, "3 of 43 running"],
     [{ ...none, running: 3, passed: 40 }, "3 of 43 running"],
     [{ ...none, queued: 3, passed: 40 }, "3 of 43 queued"],
     [{ ...none, passed: 40, skipped: 2 }, "40 of 42 passing"],
