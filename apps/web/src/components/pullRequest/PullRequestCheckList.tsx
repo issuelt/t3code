@@ -10,7 +10,6 @@ import { PullRequestCheckStatusIcon, pullRequestCheckStatusLabel } from "./pullR
 export type PullRequestCheckListItem = Pick<PullRequestCheck, "name" | "status" | "phase" | "url"> &
   Partial<Pick<PullRequestCheck, "description">>;
 
-/** Dense rows fit under a sidebar row: the name opens the job, and icons stay still. */
 export function PullRequestCheckList({
   checks,
   threadRef,

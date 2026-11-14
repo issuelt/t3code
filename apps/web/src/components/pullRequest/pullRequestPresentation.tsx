@@ -210,7 +210,6 @@ export const PULL_REQUEST_WATCHING_HINT =
 interface CheckStatusPresentation {
   readonly label: string;
   readonly Icon: typeof CircleCheckIcon | typeof Spinner;
-  /** Stands in for an animated icon where it would stay on screen. */
   readonly StillIcon?: typeof CircleCheckIcon;
   readonly toneClassName: string;
 }

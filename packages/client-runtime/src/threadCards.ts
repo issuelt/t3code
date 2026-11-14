@@ -7,7 +7,6 @@ export type ThreadCard = {
   readonly checks: ThreadPullRequestWatchChecks;
 };
 
-/** Cards a thread shows under its row: one per watched open pull request with checks. */
 export function resolveThreadCards(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
 ): ReadonlyArray<ThreadCard> {

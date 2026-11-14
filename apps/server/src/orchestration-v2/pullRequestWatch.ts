@@ -38,19 +38,17 @@ const isFailedCheck = (check: PullRequestCheck) =>
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
 
-// The limit keeps what needs attention: problems, then unfinished checks, then the rest.
-const displayRank = (check: PullRequestCheck) =>
-  check.status === "pending"
-    ? 1
-    : isFailedCheck(check) || check.status === "action-required"
-      ? 0
-      : 2;
+const needsAttention = (check: PullRequestCheck) =>
+  isFailedCheck(check) || check.status === "action-required";
 
 function watchChecksOf(checks: ReadonlyArray<PullRequestCheck>): ThreadPullRequestWatchChecks {
   return {
     total: checks.length,
-    runs: checks
-      .toSorted((left, right) => displayRank(left) - displayRank(right))
+    runs: [
+      ...checks.filter(needsAttention),
+      ...checks.filter((check) => check.status === "pending"),
+      ...checks.filter((check) => !needsAttention(check) && check.status !== "pending"),
+    ]
       .slice(0, THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT)
       .map(({ name, status, phase, url }) => ({ name, status, ...(phase && { phase }), url })),
   };

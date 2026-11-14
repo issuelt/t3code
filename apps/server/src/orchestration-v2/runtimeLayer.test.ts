@@ -4398,7 +4398,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.isTrue(yield* checksPending);
         assert.deepEqual(yield* shownChecks, ["failure", "queued"]);
 
-        // A job starting changes nothing the agent hears about, but the card still shows it.
         e2ePhase = "running";
         yield* TestClock.adjust("2 minutes");
         yield* reactor.sweep;
