@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
@@ -24,6 +25,28 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+
+const val INTERRUPTED = "Couldn't send your answer. Try again."
+
+val APPROVAL_ACTIONS = listOf(
+  ApprovalAction("t3.approval.accept", "Allow once", "Allowing…"),
+  ApprovalAction("t3.approval.decline", "Decline", "Declining…"),
+)
+
+fun configureForTest(
+  context: Context,
+  deviceId: String,
+  userId: String,
+  ongoingEnabled: Boolean
+) = AgentNotifications.configure(
+  context,
+  deviceId,
+  userId,
+  "t3code-dev",
+  ongoingEnabled,
+  APPROVAL_ACTIONS,
+  INTERRUPTED
+)
 
 abstract class AgentNotificationsFixture {
   protected lateinit var context: Application
@@ -47,7 +70,7 @@ abstract class AgentNotificationsFixture {
       }
     )
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     AgentNotifications.setThreadOnScreen("/threads/environment/thread")
   }
 
@@ -206,10 +229,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   fun reopeningSameAccountPreservesCardsDeduplicationAndDismissal() {
     val message = update("attention", true)
     AgentNotifications.receive(context, message)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     assertEquals(2, manager.activeNotifications.size)
     AgentNotifications.dismiss(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     AgentNotifications.receive(context, message)
     assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
   }
@@ -217,10 +240,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   @Test
   fun changingAccountOrDeviceClearsOldCardsAndRejectsOldPushes() {
     AgentNotifications.receive(context, update("attention", true))
-    AgentNotifications.configure(context, "device", "different-user", "t3code-dev", true)
+    configureForTest(context, "device", "different-user", true)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
-    AgentNotifications.configure(context, "different-device", "user", "t3code-dev", true)
+    configureForTest(context, "different-device", "user", true)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.clear(context)
@@ -298,7 +321,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("new-work", true))
     assertEquals("t3-agent-activity", manager.activeNotifications.single().tag)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    configureForTest(context, "device", "user", false)
     assertTrue(manager.activeNotifications.isEmpty())
   }
 
@@ -536,13 +559,13 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.dismiss(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", false)
+    configureForTest(context, "device", "user", true)
     AgentNotifications.receive(context, update("work", true))
     assertEquals(1, alarms.scheduledAlarms.size)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    configureForTest(context, "device", "user", false)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.clear(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
@@ -650,6 +673,151 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, message)
     assertEquals(2, manager.activeNotifications.size)
   }
+
+  private fun approval(alertId: String, requestId: String, actionable: Boolean = true) =
+    update(alertId, true) + mapOf(
+      "alert_request_id" to requestId,
+      "alert_request_thread_id" to "thread",
+      "alert_environment_id" to "environment",
+      "alert_request_actionable" to actionable.toString(),
+    )
+
+  private fun alert(id: String) = manager.activeNotifications.single {
+    it.tag == "t3-agent-alert" && it.id == id.hashCode()
+  }.notification
+
+  @Test
+  fun approvalAlertsOfferAllowOnceAndDeclineOnlyWhenActionableOnAndroid12() {
+    AgentNotifications.receive(context, approval("actionable", "request-a"))
+    AgentNotifications.receive(context, approval("passive", "request-b", actionable = false))
+    // Before API 31 an action runs from the lock screen without unlocking.
+    assertEquals(
+      if (Build.VERSION.SDK_INT >= 31) listOf("Allow once", "Decline") else null,
+      alert("actionable").actions?.map { it.title.toString() }
+    )
+    assertEquals(null, alert("passive").actions)
+  }
+
+  @Test
+  fun approvalActionShowsProgressThenFailureWithItsActionsKept() {
+    AgentNotifications.receive(context, approval("approval", "request-a"))
+    val request = AgentNotifications.beginApprovalAction(
+      context,
+      "approval".hashCode(),
+      APPROVAL_ACTIONS[1]
+    )
+    assertEquals(ApprovalRequest("environment", "thread", "request-a", true), request)
+    assertEquals("Declining…", text("approval"))
+    assertEquals(null, alert("approval").actions)
+    AgentNotifications.showApprovalFailure(context, "approval".hashCode(), "Couldn't reach Studio")
+    assertEquals("Couldn't reach Studio", text("approval"))
+    assertEquals(actionCount(), alert("approval").actions?.size ?: 0)
+    AgentNotifications.cancelAlert(context, "approval".hashCode())
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-alert" })
+    assertEquals(
+      null,
+      AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
+    )
+  }
+
+  @Test
+  fun rejectedAnswersShowWhyWithoutActions() {
+    AgentNotifications.receive(context, approval("approval", "request-a"))
+    AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
+    AgentNotifications.showApprovalRejected(
+      context,
+      "approval".hashCode(),
+      "This approval can no longer be answered."
+    )
+    assertEquals("This approval can no longer be answered.", text("approval"))
+    assertEquals(null, alert("approval").actions)
+  }
+
+  @Test
+  fun anAnswerThatEndsWithoutReportingBringsBackTheActions() {
+    AgentNotifications.receive(context, approval("approval", "request-a"))
+    AgentNotifications.failUnreportedApproval(context, "approval".hashCode())
+    assertEquals("Done: Test project", text("approval"))
+    AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
+    AgentNotifications.failUnreportedApproval(context, "approval".hashCode())
+    assertEquals(INTERRUPTED, text("approval"))
+    assertEquals(actionCount(), alert("approval").actions?.size ?: 0)
+  }
+
+  @Test
+  fun aTaskThatEndsUnreportedFailsOnlyItsOwnAlert() {
+    AgentNotifications.receive(context, approval("first", "request-a"))
+    AgentNotifications.receive(context, approval("second", "request-b"))
+    val tasks = ApprovalTasks { AgentNotifications.failUnreportedApproval(context, it) }
+    AgentNotifications.beginApprovalAction(context, "first".hashCode(), APPROVAL_ACTIONS[0])
+    tasks.queue("first".hashCode())
+    tasks.started(1)
+    AgentNotifications.beginApprovalAction(context, "second".hashCode(), APPROVAL_ACTIONS[0])
+    tasks.queue("second".hashCode())
+    tasks.started(1)
+    tasks.started(2)
+    tasks.finished(1)
+    assertEquals(INTERRUPTED, text("first"))
+    assertEquals("Allowing…", text("second"))
+    tasks.finished(2)
+    assertEquals(INTERRUPTED, text("second"))
+  }
+
+  @Test
+  fun aPushFailsAnAnswerLeftSendingByAProcessThatDied() {
+    AgentNotifications.receive(context, approval("approval", "request-a"))
+    AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
+    val now = System.currentTimeMillis()
+    AgentNotifications.receive(context, update("soon", true), now + 30_000)
+    assertEquals("Allowing…", text("approval"))
+    AgentNotifications.receive(context, update("later", true), now + 120_000)
+    assertEquals(INTERRUPTED, text("approval"))
+  }
+
+  @Test
+  fun eachAlertsActionsCarryItsOwnNotificationId() {
+    AgentNotifications.receive(context, approval("first", "request-a"))
+    AgentNotifications.receive(context, approval("second", "request-b"))
+    val intents = listOf("first", "second").flatMap { id ->
+      alert(id).actions.orEmpty().map { shadowOf(it.actionIntent).savedIntent.data.toString() }
+    }
+    val expected = if (Build.VERSION.SDK_INT >= 31) {
+      listOf("first", "first", "second", "second")
+        .map { "t3-approval://notification/${it.hashCode()}" }
+    } else {
+      emptyList()
+    }
+    assertEquals(expected, intents)
+  }
+
+  private fun text(id: String) =
+    alert(id).extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+
+  private fun actionCount() = if (Build.VERSION.SDK_INT >= 31) APPROVAL_ACTIONS.size else 0
+
+  @Test
+  fun threadUpdatesCancelAlertsForRequestsTheThreadNoLongerWaitsOn() {
+    AgentNotifications.receive(context, approval("answered", "request-a"))
+    AgentNotifications.receive(
+      context,
+      approval("other-thread", "request-c") + ("alert_group" to "elsewhere")
+    )
+    AgentNotifications.receive(
+      context,
+      approval("waiting", "request-b") +
+        ("alert_cancel_group" to "environment/thread") + ("alert_keep_request_id" to "request-b")
+    )
+    assertTrue(manager.activeNotifications.none { it.id == "answered".hashCode() })
+    assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })
+    assertTrue(manager.activeNotifications.any { it.id == "other-thread".hashCode() })
+    AgentNotifications.receive(
+      context,
+      update("settled", false) +
+        ("alert_cancel_group" to "environment/thread") + ("alert_keep_request_id" to "")
+    )
+    assertTrue(manager.activeNotifications.none { it.id == "waiting".hashCode() })
+  }
+
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -661,7 +829,7 @@ class AgentNotificationChannelsTest {
     val manager = context.getSystemService(NotificationManager::class.java)
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     val running = mapOf(
       "device_id" to "device",
       "user_id" to "user",
@@ -676,7 +844,7 @@ class AgentNotificationChannelsTest {
     val initialCard = manager.activeNotifications.single()
     assertEquals("t3-agent-activity", initialCard.tag)
 
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    configureForTest(context, "device", "user", true)
     AgentNotifications.receive(
       context,
       running + mapOf(

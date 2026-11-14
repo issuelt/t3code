@@ -6,10 +6,12 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -42,6 +44,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { idleThreadProjection } from "../mcp/McpToolAccess.testkit.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
@@ -119,6 +122,50 @@ function waitingChild(
   });
 }
 
+function approvalRecords(
+  requestId: RuntimeRequestId,
+  overrides: {
+    readonly request?: Partial<OrchestrationV2RuntimeRequest>;
+    readonly item?: Partial<Extract<OrchestrationV2TurnItem, { type: "approval_request" }>>;
+  } = {},
+) {
+  const nodeId = NodeId.make(`node-${requestId}`);
+  const now = DateTime.makeUnsafe(NOW);
+  const request: OrchestrationV2RuntimeRequest = {
+    id: requestId,
+    nodeId,
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: "command",
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId: ProviderSessionId.make("session") },
+    createdAt: now,
+    resolvedAt: null,
+    ...overrides.request,
+  };
+  const item: OrchestrationV2TurnItem = {
+    id: TurnItemId.make(`approval-${requestId}`),
+    threadId: THREAD_ID,
+    runId: null,
+    nodeId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "waiting",
+    title: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+    type: "approval_request",
+    requestId,
+    requestKind: "command",
+    ...overrides.item,
+  };
+  return { runtimeRequests: [request], turnItems: [item] };
+}
+
 const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
@@ -172,6 +219,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly readRecords?: (threadId: ThreadId) => ReturnType<typeof approvalRecords>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -245,7 +293,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getMessageCount: () => Effect.die("unused message count"),
     getMessagesById: () => Effect.die("unused messages by id"),
     getTurnItem: () => Effect.die("unused turn item read"),
-    getThreadRecords: () => Effect.die("unused record read"),
+    getThreadRecords: (threadId) =>
+      Effect.succeed({
+        ...idleThreadProjection(shell({ id: threadId })),
+        ...options.readRecords?.(threadId),
+      }),
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
@@ -360,6 +412,11 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 2);
       assert.isTrue(publications[1]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
       assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+      assert.deepStrictEqual(publications[1]?.state?.pendingApproval, {
+        requestThreadId: CHILD_THREAD_ID,
+        requestId: RuntimeRequestId.make("child-request"),
+        actionable: false,
+      });
 
       // A rename keeps the same request's alert time, so the phone doesn't re-alert.
       yield* setShell(
@@ -643,6 +700,34 @@ describe("AgentAwarenessRelay", () => {
         { threadId: SECOND_THREAD_ID, revision: 2 },
         { threadId: THREAD_ID, revision: 2 },
       ]);
+    }),
+  );
+
+  it.effect("publishes the pending approval and republishes the next request on its thread", () =>
+    Effect.gen(function* () {
+      const first = RuntimeRequestId.make("approval-a");
+      const second = RuntimeRequestId.make("approval-b");
+      const waiting = (id: RuntimeRequestId) =>
+        shell({
+          status: "running",
+          pendingRuntimeRequest: { id, kind: "command", createdAt: DateTime.makeUnsafe(NOW) },
+        });
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        readRecords: () => approvalRecords(first),
+      });
+      yield* Ref.set(currentShell, waiting(first));
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepStrictEqual(publications[0]?.state?.pendingApproval, {
+        requestThreadId: THREAD_ID,
+        requestId: first,
+        actionable: true,
+      });
+
+      yield* Ref.set(currentShell, waiting(second));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.pendingApproval?.requestId, second);
+      assert.isFalse(publications[1]?.state?.pendingApproval?.actionable);
     }),
   );
 
@@ -1178,3 +1263,58 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
   }),
 );
+
+describe("pendingApprovalFor", () => {
+  const requestId = RuntimeRequestId.make("approval");
+  const actionable = (records: ReturnType<typeof approvalRecords>) =>
+    AgentAwarenessRelay.pendingApprovalFor({ threadId: THREAD_ID, requestId, ...records })
+      .actionable;
+
+  it.each([
+    ["default options", approvalRecords(requestId), true],
+    [
+      "the provider's own options",
+      approvalRecords(requestId, {
+        item: {
+          options: [
+            { decision: "accept", label: "Yes, run it" },
+            { decision: "decline", label: "No" },
+          ],
+        },
+      }),
+      false,
+    ],
+    [
+      "an option with a warning",
+      approvalRecords(requestId, {
+        item: {
+          options: [
+            { decision: "accept", label: "Allow once", warning: "Writes outside the workspace" },
+            { decision: "decline", label: "Decline" },
+          ],
+        },
+      }),
+      false,
+    ],
+    [
+      "no decline option",
+      approvalRecords(requestId, {
+        item: { options: [{ decision: "accept", label: "Allow once" }] },
+      }),
+      false,
+    ],
+    [
+      "a full-access override",
+      approvalRecords(requestId, { item: { fullAccessOverride: "ask_rule" } }),
+      false,
+    ],
+    [
+      "a request answered by message",
+      approvalRecords(requestId, { request: { responseCapability: { type: "message" } } }),
+      false,
+    ],
+    ["a resolved request", approvalRecords(requestId, { request: { status: "resolved" } }), false],
+  ] as const)("%s → actionable %s", (_name, records, expected) => {
+    assert.equal(actionable(records), expected);
+  });
+});

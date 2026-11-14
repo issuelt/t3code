@@ -2,10 +2,12 @@ import { and, eq } from "drizzle-orm";
 import {
   RelayAgentActivityState,
   RelayAgentActivityAggregateState,
+  type RelayAgentActivityAggregateRow,
   RelayAgentAwarenessPreferences,
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -22,7 +24,13 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidAlertGroup,
+  androidApprovalData,
+  androidCancelData,
+  fitFcmData,
+} from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -64,19 +72,31 @@ export function androidAlertForState(
   nowMs: number,
 ) {
   if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
-  const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+  return alertForRow({ ...state, status: statusForPhase(state.phase) }, state.pendingApproval);
+}
+
+function alertForRow(
+  row: RelayAgentActivityAggregateRow,
+  pendingApproval: RelayAgentActivityState["pendingApproval"],
+) {
+  const notification = notificationForActivity(row);
+  const identity = [row.environmentId, row.threadId, row.phase, row.updatedAt];
   return {
-    alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
-    alert_group: JSON.stringify([state.environmentId, state.threadId]),
+    alert_id: JSON.stringify(
+      pendingApproval === undefined ? identity : [...identity, pendingApproval.requestId],
+    ),
+    alert_group: androidAlertGroup(row),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
+    ...androidApprovalData({ environmentId: row.environmentId, pendingApproval }),
   };
 }
 
 export function androidAlertForAggregate(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState;
   readonly nextAggregate: RelayAgentActivityAggregateState;
+  readonly states: ReadonlyArray<RelayAgentActivityState>;
   readonly preferences: RelayAgentAwarenessPreferences;
   readonly nowMs: number;
 }) {
@@ -90,14 +110,11 @@ export function androidAlertForAggregate(input: {
   const alert = alertForActivityRows(activities);
   if (!first || !alert) return null;
   if (activities.length === 1) {
-    const notification = notificationForActivity(first);
-    return {
-      alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
-      alert_group: JSON.stringify([first.environmentId, first.threadId]),
-      alert_title: notification.title,
-      alert_body: notification.body,
-      alert_path: notification.deepLink,
-    };
+    const state = input.states.find(
+      (candidate) =>
+        candidate.environmentId === first.environmentId && candidate.threadId === first.threadId,
+    );
+    return alertForRow(first, state?.pendingApproval);
   }
   return {
     // Stable group IDs let the native handler deduplicate across jobs, retries, and row orders.
@@ -146,6 +163,8 @@ const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const db = yield* RelayDb.RelayDb;
+  const sha256Hex = (value: string) =>
+    crypto.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.map(Hex.encode));
 
   return FcmDeliveries.of({
     enqueue: Effect.fn("relay.fcm.enqueue")(function* (input) {
@@ -214,12 +233,14 @@ const make = Effect.gen(function* () {
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
+      const state = job.state
+        ? yield* rows.getForUserThread({
+            userId: job.userId,
+            environmentId: job.state.environmentId,
+            threadId: job.state.threadId,
+          })
+        : null;
       if (job.state && preferences.value.notificationsEnabled) {
-        const state = yield* rows.getForUserThread({
-          userId: job.userId,
-          environmentId: job.state.environmentId,
-          threadId: job.state.threadId,
-        });
         if (
           !previousAggregate &&
           (!state || state.phase !== job.state.phase || state.updatedAt !== job.state.updatedAt)
@@ -269,9 +290,15 @@ const make = Effect.gen(function* () {
                 allowedEnvironments.has(row.environmentId),
               ),
             },
+            states,
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
           });
+          // The thread kept waiting, so the aggregate shows no transition; its alert id names the
+          // request, so the device shows a new request once and drops repeats.
+          if (alert === null && state?.pendingApproval !== undefined) {
+            alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
+          }
         } else if (
           deliveryUser?.notificationsEnabled &&
           state?.phase === job.state.phase &&
@@ -283,22 +310,21 @@ const make = Effect.gen(function* () {
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
-      if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
         user_id: job.userId,
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
+        // Every thread update carries its current request, also with Live Updates off.
+        ...(job.state
+          ? androidCancelData(state ?? { ...job.state, pendingApproval: undefined })
+          : {}),
         ...alert,
       };
       if (alert) {
         // Hash the full stable group identity to stay within the payload budget.
-        const digest = yield* crypto.digest(
-          Digest.sha256,
-          new TextEncoder().encode(alert.alert_id),
-        );
-        data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        data.alert_id = yield* sha256Hex(alert.alert_id);
       }
       const result = yield* client.send({
         token: job.token,

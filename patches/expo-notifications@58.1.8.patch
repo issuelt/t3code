@@ -1,8 +1,47 @@
+diff --git a/ios/ExpoNotifications/Notifications/Emitter/EmitterModule.swift b/ios/ExpoNotifications/Notifications/Emitter/EmitterModule.swift
+index 1c7872b..316f25d 100644
+--- a/ios/ExpoNotifications/Notifications/Emitter/EmitterModule.swift
++++ b/ios/ExpoNotifications/Notifications/Emitter/EmitterModule.swift
+@@ -30,6 +30,13 @@ open class EmitterModule: Module, NotificationDelegate {
+     Function("clearLastNotificationResponse") {
+       lastResponse = nil
+     }
++
++    Function("acknowledgeNotificationResponse") { (notificationIdentifier: String, actionIdentifier: String) in
++      NotificationCenterManager.shared.acknowledgeResponse(
++        notificationIdentifier: notificationIdentifier,
++        actionIdentifier: actionIdentifier
++      )
++    }
+   }
+ 
+   open func didReceive(_ response: UNNotificationResponse, completionHandler: @escaping () -> Void) -> Bool {
 diff --git a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
-index 5e3a90236..e9ca24d7b 100644
+index 5e3a902..eba19df 100644
 --- a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
 +++ b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
-@@ -82,12 +82,24 @@ internal final class NotificationDelegateRegistry {
+@@ -53,6 +53,20 @@ internal final class NotificationDelegateRegistry {
+   private struct State {
+     var delegates: [NotificationDelegate] = []
+     var pendingResponses: [UNNotificationResponse] = []
++    var heldCompletions: [String: () -> Void] = [:]
++  }
++
++  func holdCompletion(_ identifier: String, _ completionHandler: @escaping () -> Void) {
++    let previous = state.withLock { state in
++      let previous = state.heldCompletions[identifier]
++      state.heldCompletions[identifier] = completionHandler
++      return previous
++    }
++    previous?()
++  }
++
++  func releaseCompletion(_ identifier: String) -> (() -> Void)? {
++    state.withLock { $0.heldCompletions.removeValue(forKey: identifier) }
+   }
+ 
+   /**
+@@ -82,12 +96,24 @@ internal final class NotificationDelegateRegistry {
      state.withLock { $0.delegates.removeAll { $0 === delegate } }
    }
  
@@ -31,7 +70,7 @@ index 5e3a90236..e9ca24d7b 100644
    }
  }
  
-@@ -162,12 +174,11 @@ public class NotificationCenterManager: NSObject,
+@@ -162,12 +188,11 @@ public class NotificationCenterManager: NSObject,
    }
  
    public func addDelegate(_ delegate: NotificationDelegate) {
@@ -48,18 +87,55 @@ index 5e3a90236..e9ca24d7b 100644
      }
    }
  
-@@ -228,11 +239,11 @@ public class NotificationCenterManager: NSObject,
+@@ -227,15 +252,45 @@ public class NotificationCenterManager: NSObject,
+     didReceive response: UNNotificationResponse,
      withCompletionHandler completionHandler: @escaping () -> Void
    ) {
++    // A background action keeps the app running until JS acknowledges it, within the time iOS
++    // allows. Delegates then complete nothing themselves.
++    let holds = Self.isBackgroundAction(response)
++    let delegateCompletion = holds ? {} : completionHandler
++    if holds {
++      let identifier = Self.responseIdentifier(response)
++      registry.holdCompletion(identifier, completionHandler)
++      DispatchQueue.main.asyncAfter(deadline: .now() + Self.heldCompletionTimeout) { [registry] in
++        registry.releaseCompletion(identifier)?()
++      }
++    }
      var handled = false
 -    for delegate in delegates {
+-      handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
 +    for delegate in registry.appendPendingResponse(response) {
-       handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
++      handled = delegate.didReceive(response, completionHandler: delegateCompletion) || handled
      }
 -    if !handled {
 -      registry.appendPendingResponse(response)
 +    if handled {
 +      registry.removePendingResponses([response])
++    }
++    chainedDelegate?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: delegateCompletion)
++    if !holds {
++      completionHandler()
      }
-     chainedDelegate?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler)
-     completionHandler()
+-    chainedDelegate?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler)
+-    completionHandler()
++  }
++
++  public func acknowledgeResponse(notificationIdentifier: String, actionIdentifier: String) {
++    registry.releaseCompletion("\(notificationIdentifier)\n\(actionIdentifier)")?()
++  }
++
++  /** iOS suspends a background-launched app about 30 seconds after the action. */
++  private static let heldCompletionTimeout: TimeInterval = 25
++
++  private static func isBackgroundAction(_ response: UNNotificationResponse) -> Bool {
++    response.actionIdentifier != UNNotificationDefaultActionIdentifier &&
++      response.actionIdentifier != UNNotificationDismissActionIdentifier &&
++      UIApplication.shared.applicationState != .active
++  }
++
++  private static func responseIdentifier(_ response: UNNotificationResponse) -> String {
++    "\(response.notification.request.identifier)\n\(response.actionIdentifier)"
+   }
+ 
+   public func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {

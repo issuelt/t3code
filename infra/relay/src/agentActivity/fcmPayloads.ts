@@ -1,4 +1,7 @@
-import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import type {
+  RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
+} from "@t3tools/contracts/relay";
 import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -45,6 +48,36 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     activity_path: rows[0]?.deepLink ?? "/",
     activity_expires_at: String(expiresAt),
   };
+}
+
+export function androidApprovalData(
+  state: Pick<RelayAgentActivityState, "environmentId" | "pendingApproval">,
+) {
+  const pending = state.pendingApproval;
+  return pending === undefined
+    ? {}
+    : {
+        alert_request_id: pending.requestId,
+        alert_request_thread_id: pending.requestThreadId,
+        alert_environment_id: state.environmentId,
+        alert_request_actionable: String(pending.actionable),
+      };
+}
+
+/** The thread's approval alerts for any other request are answered: the device cancels them. */
+export function androidCancelData(
+  state: Pick<RelayAgentActivityState, "environmentId" | "threadId" | "pendingApproval">,
+) {
+  return {
+    alert_cancel_group: androidAlertGroup(state),
+    alert_keep_request_id: state.pendingApproval?.requestId ?? "",
+  };
+}
+
+export function androidAlertGroup(
+  thread: Pick<RelayAgentActivityState, "environmentId" | "threadId">,
+) {
+  return JSON.stringify([thread.environmentId, thread.threadId]);
 }
 
 /** Keep Unicode, escaping and grouped alerts within FCM's 4 KB data budget. */

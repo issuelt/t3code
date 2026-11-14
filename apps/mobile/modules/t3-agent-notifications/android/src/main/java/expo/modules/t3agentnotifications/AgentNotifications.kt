@@ -11,6 +11,9 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -51,6 +54,18 @@ object AgentNotifications {
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
   private const val MAX_LIFETIME_MS = 24 * 60 * 60 * 1000L
+  private const val SCHEME_EXTRA = "t3_scheme"
+  const val NOTIFICATION_ID_EXTRA = "t3_notification_id"
+  const val REQUEST_ID = "alert_request_id"
+  const val REQUEST_THREAD_ID = "alert_request_thread_id"
+  const val ENVIRONMENT_ID = "alert_environment_id"
+  const val REQUEST_ACTIONABLE = "alert_request_actionable"
+  private const val CANCEL_GROUP = "alert_cancel_group"
+  private const val KEEP_REQUEST_ID = "alert_keep_request_id"
+  private const val APPROVAL_ACTIONS = "approvalActions"
+  private const val APPROVAL_INTERRUPTED_TEXT = "approvalInterruptedText"
+  private const val SENDING_SINCE_EXTRA = "t3_sending_since"
+  private const val STALE_SENDING_MS = 60_000L
 
   @Synchronized
   fun configure(
@@ -58,7 +73,9 @@ object AgentNotifications {
     deviceId: String,
     userId: String,
     scheme: String,
-    ongoingEnabled: Boolean
+    ongoingEnabled: Boolean,
+    approvalActions: List<ApprovalAction>,
+    approvalInterruptedText: String
   ) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     // JS identity is empty on a cold start. Compare the durable identity here
@@ -73,7 +90,15 @@ object AgentNotifications {
       "deviceId",
       deviceId
     ).putString("userId", userId).putString("scheme", scheme)
-      .putBoolean("enabled", true).putBoolean("ongoing", ongoingEnabled).apply()
+      .putBoolean("enabled", true).putBoolean("ongoing", ongoingEnabled)
+      .putString(
+        APPROVAL_ACTIONS,
+        JSONArray(
+          approvalActions.map {
+            JSONObject().put("id", it.id).put("label", it.label).put("progress", it.progress)
+          }
+        ).toString()
+      ).putString(APPROVAL_INTERRUPTED_TEXT, approvalInterruptedText).apply()
     if (ongoingEnabled && !wasEnabled) prefs.edit().putBoolean("dismissed", false).apply()
     if (!ongoingEnabled) cancelActivity(context)
     channels(context)
@@ -117,15 +142,21 @@ object AgentNotifications {
   }
 
   @Synchronized
-  fun receive(context: Context, data: Map<String, String>) {
+  fun receive(context: Context, data: Map<String, String>, now: Long = System.currentTimeMillis()) {
     val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
     val updatedAt = data["updated_at"]?.toLongOrNull() ?: return
     val registered = prefs.getBoolean("enabled", false) &&
       data["device_id"] == prefs.getString("deviceId", null) &&
       data["user_id"] == prefs.getString("userId", null)
-    val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
+    val fresh = now - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
+      failStaleApprovals(context, now)
+      data[CANCEL_GROUP]?.let { group ->
+        cancelApprovals(context) {
+          it.getString("alert_group") == group && it.getString(REQUEST_ID) != data[KEEP_REQUEST_ID]
+        }
+      }
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       val alerted = showAlert(context, prefs, scheme, data)
       updateActivity(context, prefs, data, updatedAt, alerted)
@@ -173,19 +204,13 @@ object AgentNotifications {
     data: Map<String, String>,
     alertId: String
   ) {
-    val title = data["alert_title"].orEmpty().take(120)
-    // Grouped alerts list up to five 120-character thread titles.
-    val body = data["alert_body"].orEmpty().take(608)
     val id = alertId.hashCode()
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
-    val notification = base(context, ALERT_CHANNEL)
-      .setContentTitle(title).setContentText(body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-      .setAutoCancel(true)
-      .setGroup(group)
-      .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
-      .build()
-    manager(context).notify(ALERT_TAG, id, notification)
+    val group = alertGroup(data)
+    manager(context).notify(
+      ALERT_TAG,
+      id,
+      alert(context, scheme, data, id, ApprovalAlertState.Ready).build()
+    )
     val children = manager(context).activeNotifications.filter {
       it.tag == ALERT_TAG && it.notification.group == group
     }
@@ -195,8 +220,8 @@ object AgentNotifications {
         style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
       }
       val summary = base(context, ALERT_CHANNEL)
-        .setContentTitle(title)
-        .setContentText(body)
+        .setContentTitle(alertTitle(data))
+        .setContentText(alertBody(data))
         .setStyle(style)
         .setGroup(group)
         .setGroupSummary(true)
@@ -205,6 +230,171 @@ object AgentNotifications {
         .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
         .build()
       manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
+    }
+  }
+
+  private fun alert(
+    context: Context,
+    scheme: String,
+    data: Map<String, String>,
+    id: Int,
+    state: ApprovalAlertState
+  ): NotificationCompat.Builder {
+    val body = when (state) {
+      ApprovalAlertState.Ready -> alertBody(data)
+      is ApprovalAlertState.Sending -> state.action.progress
+      is ApprovalAlertState.Failed -> state.message
+      is ApprovalAlertState.Rejected -> state.message
+    }
+    val builder = base(context, ALERT_CHANNEL)
+      .setContentTitle(alertTitle(data)).setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setAutoCancel(true)
+      .setGroup(alertGroup(data))
+      .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
+      .addExtras(alertExtras(scheme, data, state))
+    if (state != ApprovalAlertState.Ready) builder.setSilent(true).setOnlyAlertOnce(true)
+    if (state is ApprovalAlertState.Sending) builder.setProgress(0, 0, true)
+    val request = ApprovalRequest.from(data)
+    val offersActions = state == ApprovalAlertState.Ready || state is ApprovalAlertState.Failed
+    // Older Android runs a notification action from the lock screen without unlocking.
+    if (Build.VERSION.SDK_INT >= 31 && request != null && request.actionable && offersActions) {
+      approvalActions(context).forEachIndexed { index, action ->
+        builder.addAction(approvalAction(context, action, index, id))
+      }
+    }
+    return builder
+  }
+
+  private fun alertTitle(data: Map<String, String>) = data["alert_title"].orEmpty().take(120)
+
+  // Grouped alerts list up to five 120-character thread titles.
+  private fun alertBody(data: Map<String, String>) = data["alert_body"].orEmpty().take(608)
+
+  private fun alertGroup(data: Map<String, String>) =
+    data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
+
+  private fun alertExtras(
+    scheme: String,
+    data: Map<String, String>,
+    state: ApprovalAlertState
+  ) = Bundle().apply {
+    putString(SCHEME_EXTRA, scheme)
+    if (state is ApprovalAlertState.Sending) {
+      putLong(SENDING_SINCE_EXTRA, System.currentTimeMillis())
+    }
+    data.filterKeys { it.startsWith("alert_") }.forEach { (key, value) -> putString(key, value) }
+  }
+
+  private fun approvalAction(
+    context: Context,
+    action: ApprovalAction,
+    index: Int,
+    notificationId: Int
+  ): NotificationCompat.Action {
+    // The data URI keeps each alert's intents apart even when request codes collide.
+    val intent = Intent(context, AgentApprovalActionReceiver::class.java)
+      .setAction(action.id)
+      .setData(Uri.parse("t3-approval://notification/$notificationId"))
+      .putExtra(NOTIFICATION_ID_EXTRA, notificationId)
+    val pending = PendingIntent.getBroadcast(
+      context,
+      notificationId * 31 + index,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    return NotificationCompat.Action.Builder(0, action.label, pending)
+      .setAuthenticationRequired(true)
+      .setShowsUserInterface(false)
+      .build()
+  }
+
+  private fun repostAlert(
+    context: Context,
+    notificationId: Int,
+    state: ApprovalAlertState,
+    accept: (Map<String, String>) -> Boolean = { true }
+  ): Map<String, String>? {
+    val extras = manager(context).activeNotifications.firstOrNull {
+      it.tag == ALERT_TAG && it.id == notificationId
+    }?.notification?.extras ?: return null
+    val data = extras.keySet().filter { it.startsWith("alert_") }
+      .mapNotNull { key -> extras.getString(key)?.let { key to it } }.toMap()
+    if (!accept(data)) return null
+    val scheme = extras.getString(SCHEME_EXTRA) ?: "t3code"
+    manager(context).notify(
+      ALERT_TAG,
+      notificationId,
+      alert(context, scheme, data, notificationId, state).build()
+    )
+    return data
+  }
+
+  @Synchronized
+  fun beginApprovalAction(
+    context: Context,
+    notificationId: Int,
+    action: ApprovalAction
+  ): ApprovalRequest? = repostAlert(context, notificationId, ApprovalAlertState.Sending(action)) {
+    ApprovalRequest.from(it)?.actionable == true
+  }?.let { ApprovalRequest.from(it) }
+
+  @Synchronized
+  fun showApprovalFailure(context: Context, notificationId: Int, message: String) {
+    repostAlert(context, notificationId, ApprovalAlertState.Failed(message))
+  }
+
+  @Synchronized
+  fun showApprovalRejected(context: Context, notificationId: Int, message: String) {
+    repostAlert(context, notificationId, ApprovalAlertState.Rejected(message))
+  }
+
+  /** Restores the actions of an alert still sending after its answer stopped without a report. */
+  @Synchronized
+  fun failUnreportedApproval(context: Context, notificationId: Int) {
+    val sending = manager(context).activeNotifications.any {
+      it.tag == ALERT_TAG && it.id == notificationId &&
+        it.notification.extras.getLong(SENDING_SINCE_EXTRA) > 0
+    }
+    if (!sending) return
+    val message = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString(APPROVAL_INTERRUPTED_TEXT, null) ?: return
+    repostAlert(context, notificationId, ApprovalAlertState.Failed(message))
+  }
+
+  /** An answer whose process died before reporting leaves its alert sending until the next push. */
+  private fun failStaleApprovals(context: Context, now: Long) {
+    manager(context).activeNotifications.filter {
+      val since = it.notification.extras.getLong(SENDING_SINCE_EXTRA)
+      it.tag == ALERT_TAG && since > 0 && now - since > STALE_SENDING_MS
+    }.forEach { failUnreportedApproval(context, it.id) }
+  }
+
+  @Synchronized
+  fun cancelAlert(context: Context, notificationId: Int) {
+    manager(context).cancel(ALERT_TAG, notificationId)
+  }
+
+  /** Cancels the approval alerts whose stored extras [shouldCancel] matches. */
+  @Synchronized
+  fun cancelApprovals(context: Context, shouldCancel: (Bundle) -> Boolean) {
+    manager(context).activeNotifications.filter {
+      it.tag == ALERT_TAG && it.notification.extras.getString(REQUEST_ID) != null &&
+        shouldCancel(it.notification.extras)
+    }.forEach { manager(context).cancel(it.tag, it.id) }
+  }
+
+  fun approvalActions(context: Context): List<ApprovalAction> {
+    val stored = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString(APPROVAL_ACTIONS, null) ?: return emptyList()
+    val actions = JSONArray(stored)
+    return (0 until actions.length()).map {
+      val action = actions.getJSONObject(it)
+      ApprovalAction(
+        action.getString("id"),
+        action.getString("label"),
+        action.getString("progress")
+      )
     }
   }
 

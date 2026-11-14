@@ -2,12 +2,25 @@ import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo";
 import { Linking, Platform } from "react-native";
 
+import { APPROVAL_ACTIONS, APPROVAL_INTERRUPTED_TEXT } from "./approvalActions";
+
 interface AndroidAgentNotifications {
-  configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
+  configure(
+    deviceId: string,
+    userId: string,
+    scheme: string,
+    ongoingEnabled: boolean,
+    approvalActions: ReadonlyArray<{ id: string; label: string; progress: string }>,
+    approvalInterruptedText: string,
+  ): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
+  finishApprovalAction?(notificationId: number): void;
+  failApprovalAction?(notificationId: number, message: string): void;
+  rejectApprovalAction?(notificationId: number, message: string): void;
+  cancelResolvedApprovals?(environmentId: string, pendingRequestIds: ReadonlyArray<string>): void;
 }
 
 const native =
@@ -29,7 +42,14 @@ export function configureAndroidAgentNotifications(
   userId: string,
   ongoingEnabled: boolean,
 ): void {
-  native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
+  native?.configure?.(
+    deviceId,
+    userId,
+    appScheme(),
+    ongoingEnabled,
+    Object.entries(APPROVAL_ACTIONS).map(([id, { label, progress }]) => ({ id, label, progress })),
+    APPROVAL_INTERRUPTED_TEXT,
+  );
 }
 
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {
@@ -54,4 +74,23 @@ export async function openAndroidLiveUpdateSettings(): Promise<void> {
   if (!native?.openLiveUpdateSettings?.()) {
     await Linking.openSettings();
   }
+}
+
+export function cancelResolvedAndroidApprovals(
+  environmentId: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): void {
+  native?.cancelResolvedApprovals?.(environmentId, pendingRequestIds);
+}
+
+export function finishAndroidApprovalAction(notificationId: number): void {
+  native?.finishApprovalAction?.(notificationId);
+}
+
+export function failAndroidApprovalAction(notificationId: number, message: string): void {
+  native?.failApprovalAction?.(notificationId, message);
+}
+
+export function rejectAndroidApprovalAction(notificationId: number, message: string): void {
+  native?.rejectApprovalAction?.(notificationId, message);
 }

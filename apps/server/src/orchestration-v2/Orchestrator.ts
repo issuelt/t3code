@@ -77,6 +77,8 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   isHomeLaunchedThreadId,
+  RuntimeRequestId,
+  OrchestrationV2RuntimeRequestSettledStatus,
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
@@ -217,6 +219,20 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 ) {
   override get message(): string {
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
+  }
+}
+
+export class RuntimeRequestNotPendingError extends Schema.TaggedError<RuntimeRequestNotPendingError>()(
+  "RuntimeRequestNotPendingError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    status: OrchestrationV2RuntimeRequestSettledStatus,
+  },
+) {
+  override get message(): string {
+    return `Runtime request ${this.requestId} is ${this.status}.`;
   }
 }
 
@@ -364,6 +380,7 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
 
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
+  RuntimeRequestNotPendingError,
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
@@ -10639,10 +10656,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (runtimeRequest.status !== "pending") {
-        return yield* new OrchestratorDispatchError({
+        return yield* new RuntimeRequestNotPendingError({
           commandId: command.commandId,
-          commandType: command.type,
-          cause: `Runtime request ${command.requestId} is ${runtimeRequest.status}.`,
+          threadId: command.threadId,
+          requestId: command.requestId,
+          status: runtimeRequest.status,
         });
       }
       if (runtimeRequest.responseCapability.type === "not_resumable") {
