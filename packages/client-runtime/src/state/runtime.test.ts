@@ -1219,11 +1219,13 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "snapshot">>({
         removedAt: new Map(),
+        snapshot: Option.none(),
       }).pipe(Atom.keepAlive);
       const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
         removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
+        snapshot: Option.none(),
       });
       // Thread titles never use the HTTP client.
       const runtime = harness.runtime as unknown as Atom.AtomRuntime<

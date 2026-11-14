@@ -71,6 +71,7 @@ it.effect("makes Home name a project and watches the thread before launching it"
     } as OrchestrationV2ThreadShell;
     const steps: Array<string> = [];
     const launched: Array<unknown> = [];
+    const jobs: Array<string | undefined> = [];
     let home = { threadId: homeThreadId, watchAll: false, watches: [] } as HomeSettings;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -87,6 +88,7 @@ it.effect("makes Home name a project and watches the thread before launching it"
         execute: ({ request }) => {
           if (request.op !== "threads.launch") return Effect.die("Unexpected operation.");
           steps.push(`launch ${request.input.threadId}`);
+          jobs.push(request.input.job);
           return Effect.succeed({
             threadId: request.input.threadId!,
             link: `[${request.input.title}](t3-thread://v1/environment/${request.input.threadId})`,
@@ -156,10 +158,15 @@ it.effect("makes Home name a project and watches the thread before launching it"
     expect(steps).toEqual([]);
 
     // The watch is saved before the launch, under the id the launch then uses.
-    const result = yield* handle({ title: "Audit", projectId: ProjectId.make("project:app") });
+    const result = yield* handle({
+      title: "Audit",
+      job: "Release audit",
+      projectId: ProjectId.make("project:app"),
+    });
     const { threadId } = result.at(-1)!.result as { threadId: string };
     expect(isHomeLaunchedThreadId(threadId)).toBe(true);
     expect(steps).toEqual([`watch ${threadId}`, `launch ${threadId}`]);
+    expect(jobs).toEqual(["Release audit"]);
     expect(launched).toHaveLength(0);
 
     // Home archives and settles; it never deletes.
@@ -797,6 +804,26 @@ it.effect("a launch into an unknown project says the project was not found", () 
         message: "The project was not found.",
       });
     }
+    expect(launched).toHaveLength(0);
+  }),
+);
+
+it.effect("only Home names a job for a launch", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Fix", projectId, job: "Release audit" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     expect(launched).toHaveLength(0);
   }),
 );

@@ -139,6 +139,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             code: "capability_denied",
             message: "Only Home can act in another environment.",
           });
+        if (input.job !== undefined && !isHome)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Only Home names a job. Omit job.",
+          });
         const attachments = input.attachments ?? [];
         if (remote && attachments.length > 0)
           return yield* new OrchestratorMcpFailure({
@@ -187,6 +192,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
             ...(input.scratch === undefined ? {} : { scratch: input.scratch }),
             title: input.title,
+            ...(input.job === undefined ? {} : { job: input.job }),
             ...(modelSelection === undefined ? {} : { modelSelection }),
             runtimeMode,
             interactionMode,
@@ -338,6 +344,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
           // Kept only alongside linkOrigin: thread.create drops it otherwise.
           ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(input.job === undefined ? {} : { homeJob: input.job }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

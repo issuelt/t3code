@@ -61,7 +61,11 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
   );
 }
 
-const PAGE_ROW_CLASS = "px-3 py-2.5";
+/** A clickable row on a list page such as Pull requests or Fleet. */
+export const PAGE_ROW_BUTTON_CLASS = cn(
+  PULL_REQUEST_ROW_CLASS,
+  "min-w-0 flex-1 cursor-pointer px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+);
 
 export type PullRequestRowTarget = Pick<
   EnvironmentPullRequestEntry,
@@ -126,11 +130,7 @@ function PullRequestRowImpl({
         onBlur={(event) => {
           if (!event.currentTarget.matches(":hover")) onIntent?.(null);
         }}
-        className={cn(
-          PULL_REQUEST_ROW_CLASS,
-          PAGE_ROW_CLASS,
-          "min-w-0 flex-1 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-        )}
+        className={PAGE_ROW_BUTTON_CLASS}
       >
         <PullRequestRowGlyph
           state={entry.state}

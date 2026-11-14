@@ -1893,6 +1893,7 @@ export const layerWsRpc = (
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
+          latestRunResults: true,
           shellOlderSettled: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -2093,6 +2094,16 @@ export const layerWsRpc = (
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
                   message: "Failed to load thread link metadata",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getLatestRunResults]: (input) =>
+          threadManagement.getLatestRunResults(input.threadIds).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load the latest run results",
                   cause,
                 }),
             ),

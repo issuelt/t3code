@@ -88,8 +88,12 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin, so a client cannot set one.
-      const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
+      const {
+        linkOrigin: _linkOrigin,
+        delegatedFrom: _delegatedFrom,
+        homeJob: _homeJob,
+        ...rest
+      } = command;
       return { ...rest, ...provenance };
     }
     case "message.dispatch":
@@ -448,6 +452,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
   readonly getThreadLinkMetadata: Orchestrator.OrchestratorV2["Service"]["getThreadLinkMetadata"];
+  readonly getLatestRunResults: Orchestrator.OrchestratorV2["Service"]["getLatestRunResults"];
   readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
   /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
@@ -1832,6 +1837,7 @@ const make = Effect.gen(function* () {
     ),
     getThreadTitles: orchestrator.getThreadTitles,
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
+    getLatestRunResults: orchestrator.getLatestRunResults,
     listProjectThreads,
     sendToThread,
     deliverCoordinationResult,

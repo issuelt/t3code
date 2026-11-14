@@ -9,10 +9,18 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { installCommandPaletteCommands } from "./commandPaletteCommands";
+
+const hasFleetChiefsAtom = await vi.hoisted(async () => {
+  const { Atom } = await import("effect/reactivity");
+  return Atom.make(false).pipe(Atom.keepAlive);
+});
+vi.mock("../state/fleet", () => ({ hasFleetChiefsAtom }));
 
 const keybindings = compileResolvedKeybindingsConfig([
   { key: "mod+k", command: "commandPalette.toggle" },
+  { key: "mod+shift+9", command: "fleet.open" },
 ]);
 
 function MountedPalette() {
@@ -22,6 +30,7 @@ function MountedPalette() {
 
 function setup() {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
+  appAtomRegistry.set(hasFleetChiefsAtom, false);
 }
 
 describe("command palette shortcuts", () => {
@@ -53,6 +62,23 @@ describe("command palette shortcuts", () => {
 
     await screen.rerender(<div />);
     expect(useCommandPaletteStore.getState().open).toBe(false);
+  });
+
+  it("open the Fleet board only while it has a chief of staff", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+
+    await userEvent.keyboard("{Control>}{Shift>}9{/Shift}{/Control}");
+    expect(screen.router!.state.location.pathname).toBe("/");
+
+    appAtomRegistry.set(hasFleetChiefsAtom, true);
+    await userEvent.keyboard("{Control>}{Shift>}9{/Shift}{/Control}");
+    await vi.waitFor(() => expect(screen.router!.state.location.pathname).toBe("/fleet"));
   });
 
   it("keep a child search open on a composing Escape", async () => {

@@ -18,7 +18,17 @@ import {
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
+import { getTriggerDisplayModelName } from "./components/chat/providerIconUtils";
+
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
+
+export function providerModelLabel(
+  entry: Pick<ProviderInstanceEntry, "models" | "driverKind"> | null | undefined,
+  model: string,
+): string {
+  const listed = entry?.models.find((candidate) => candidate.slug === model);
+  return listed ? getTriggerDisplayModelName(listed, entry?.driverKind) : model;
+}
 
 /** Placeholder for untargetable drafts. Never persist or dispatch it; disable send until replaced. */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
@@ -45,7 +55,24 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+// The fields rows show. Provider status pushes refresh `checkedAt`,
+// status and auth on every provider; leaving those out keeps each
+// environment's map, and every memoized row, stable across them.
+export type ProviderEntrySummary = Pick<
+  ProviderInstanceEntry,
+  | "instanceId"
+  | "driverKind"
+  | "iconDriverKind"
+  | "enabled"
+  | "displayName"
+  | "accentColor"
+  | "acpRegistryAgentId"
+  | "acpRegistryIconUrl"
+  | "models"
+>;
+
 /** Disabled instances may retain ready status until reconciliation. */
+
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }

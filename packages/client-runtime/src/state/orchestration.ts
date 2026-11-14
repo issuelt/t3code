@@ -1,5 +1,6 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2RpcSchemas,
   type EnvironmentId,
   type ThreadId,
   type OrchestrationV2ThreadLinkMetadata,
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
@@ -32,6 +34,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
+import { persistQuery } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
@@ -41,7 +44,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     /** Re-checks `threadTitles` when one of their threads leaves the shell. */
     readonly shellState?: (
       environmentId: EnvironmentId,
-    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt">>;
+    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt" | "snapshot">>;
     /** Runs on each turn-range and full-thread diff the server answers. */
     readonly onCheckpointDiffAnswer?: QueryAnswerHandler<
       { readonly ignoreWhitespace?: boolean },
@@ -81,7 +84,53 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       return Math.max(-1, ...input.threadIds.map((threadId) => removedAt.get(threadId) ?? -1));
     });
   };
+  const refreshOnRunCompletion = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly threadIds: ReadonlyArray<ThreadId> };
+  }) => {
+    if (shellState === undefined) return undefined;
+    const state = shellState(environmentId);
+    const wanted = new Set(input.threadIds);
+    return Atom.make((get) => {
+      const threads = Option.getOrUndefined(get(state).snapshot)?.threads ?? [];
+      return threads
+        .filter((thread) => wanted.has(thread.id))
+        .map((thread) => `${thread.id}@${thread.latestRunCompletedAt ?? ""}`)
+        .join(",");
+    });
+  };
   return {
+    latestRunResults: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:latest-run-results",
+      persistence: persistQuery(
+        Schema.NullOr(OrchestrationV2RpcSchemas.getLatestRunResults.output),
+      ),
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      refreshTrigger: refreshOnRunCompletion,
+      execute: Effect.fn("orchestration.latestRunResults")(function* (input: {
+        readonly threadIds: ReadonlyArray<ThreadId>;
+      }) {
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+        const session = yield* SubscriptionRef.get(supervisor.session);
+        if (Option.isNone(session)) {
+          return yield* new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: "The environment has no session.",
+          });
+        }
+        const config = yield* session.value.initialConfig;
+        if (config.latestRunResults !== true) return null;
+        const lines: Readonly<Record<ThreadId, string>> = yield* request(
+          ORCHESTRATION_V2_WS_METHODS.getLatestRunResults,
+          input,
+        );
+        return lines;
+      }),
+    }),
     threadTitles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-titles",
       tag: ORCHESTRATION_V2_WS_METHODS.getThreadTitles,

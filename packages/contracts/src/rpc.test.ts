@@ -35,6 +35,16 @@ describe("WebSocket RPC contracts", () => {
     ).toBe(true);
   });
 
+  it("caps one latest-run-results read at 200 threads", () => {
+    const read = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.getLatestRunResults);
+    if (read === undefined) throw new Error("getLatestRunResults is not registered");
+    const decode = Schema.decodeUnknownExit(read.payloadSchema);
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `thread-${index}`);
+
+    expect(Exit.isSuccess(decode({ threadIds: ids(200) }))).toBe(true);
+    expect(Exit.isFailure(decode({ threadIds: ids(201) }))).toBe(true);
+  });
+
   it("lets the server pick a new worktree's folder", () => {
     const createWorktree = WsRpcGroup.requests.get(WS_METHODS.vcsCreateWorktree);
     if (createWorktree === undefined) throw new Error("vcs.createWorktree is not registered");

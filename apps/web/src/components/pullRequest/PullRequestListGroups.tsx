@@ -3,7 +3,7 @@ import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lu
 import { useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
-import { Separator } from "../ui/separator";
+import { ListGroupHeader } from "../ListGroupHeader";
 import {
   pullRequestEntryKey,
   scorePullRequestMatch,
@@ -34,24 +34,6 @@ function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
     left -= entries.length;
     return entries.length === 0 ? [] : [{ ...group, entries }];
   });
-}
-
-function PullRequestGroupHeader({
-  group,
-  count,
-}: {
-  group: { key: string; label: string };
-  count: number;
-}) {
-  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
-  return (
-    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
-      <Icon aria-hidden className="size-3.5 shrink-0" />
-      <h2 className="shrink-0">{group.label}</h2>
-      <span className="shrink-0 tabular-nums text-muted-foreground/50">{count}</span>
-      <Separator className="min-w-2 flex-1" />
-    </div>
-  );
 }
 
 export function PullRequestListGroups({
@@ -99,8 +81,9 @@ export function PullRequestListGroups({
         {shownGroups.map((group) => (
           <div key={group.key} className="space-y-0.5">
             {group.label ? (
-              <PullRequestGroupHeader
-                group={group}
+              <ListGroupHeader
+                icon={GROUP_ICONS[group.key] ?? LayersIcon}
+                label={group.label}
                 count={counts.get(group.key) ?? group.entries.length}
               />
             ) : null}

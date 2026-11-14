@@ -552,6 +552,16 @@ it.effect("only launches with a Home launch id it was given", () => {
       })
       .pipe(Effect.asVoid, Effect.flip);
     expect(error.code).toBe("invalid_request");
+    const jobError = yield* fleet
+      .execute({
+        actor,
+        request: {
+          op: "threads.launch",
+          input: { scratch: true, title: "Worker", job: "Release audit" },
+        },
+      })
+      .pipe(Effect.asVoid, Effect.flip);
+    expect(jobError.code).toBe("invalid_request");
   }).pipe(Effect.provide(layer));
 });
 
@@ -563,11 +573,13 @@ it.effect("replays a Home launch with the same thread id", () => {
       threadId: ThreadId.make("home-launched:retry"),
       projectId: ProjectId.make("app"),
       title: "Worker",
+      job: "Release audit",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
       message: "Work",
     };
     yield* fleet.execute({ actor, request: { op: "threads.launch", input } });
     yield* fleet.execute({ actor, request: { op: "threads.launch", input } });
+    expect(launched[0]?.homeJob).toBe("Release audit");
     expect(launched[0]?.commandId).toBe(launched[1]?.commandId);
     expect(launched[0]?.initialMessage?.messageId).toBe(launched[1]?.initialMessage?.messageId);
   }).pipe(Effect.provide(layer));

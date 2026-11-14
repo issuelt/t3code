@@ -6,6 +6,7 @@ import {
   ModelSelection,
   TrimmedNonEmptyString,
   OrchestrationV2DelegatedFrom,
+  HomeJob,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
   ProviderInteractionMode,
@@ -133,6 +134,12 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
       }),
     ),
     title: TrimmedNonEmptyString,
+    job: Schema.optional(
+      HomeJob.annotate({
+        description:
+          "Home only. The job this thread works on, in a few words. Reuse the exact name for every thread of one job; the Fleet board groups threads by it.",
+      }),
+    ),
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),

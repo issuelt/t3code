@@ -9,20 +9,20 @@ import {
   hasUnseenCompletion,
   resolveThreadLastVisitedAt,
   resolveSidebarThreadStatus,
-  type SidebarThreadStatus,
   type SidebarV2TopStatusKind,
 } from "../Sidebar.logic";
-import { SIDEBAR_TOP_STATUS } from "./sidebarTopStatus";
+import { SIDEBAR_TOP_STATUS, sidebarTopStatusKind } from "./sidebarTopStatus";
 import { SidebarTopRow } from "./SidebarTopRow";
 
-function homeTopStatus(
-  status: SidebarThreadStatus,
-  isUnread: boolean,
-): SidebarV2TopStatusKind | null {
-  if (status === "preparing") return "working";
-  if (status !== "ready") return status;
-  return isUnread ? "done" : null;
-}
+// Home keeps its brighter tones, and Waiting shows no icon: it is calm background presence.
+const HOME_STATUS_TONE: Partial<Record<SidebarV2TopStatusKind, string>> = {
+  working: "text-info",
+  limited: "text-warning",
+  failed: "text-error",
+  woke: "text-warning",
+  done: "text-success",
+};
+
 /**
  * The fixed row for the current Home thread, above every other row. Home has
  * no project, settle, or pin affordances, so it only shows its status.
@@ -43,13 +43,12 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
   const topStatusKind =
     thread === null
       ? null
-      : homeTopStatus(
-          resolveSidebarThreadStatus(thread),
-          hasUnseenCompletion({
+      : sidebarTopStatusKind(resolveSidebarThreadStatus(thread), {
+          isUnread: hasUnseenCompletion({
             ...thread,
             lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
           }),
-        );
+        });
   const topStatus = topStatusKind === null ? null : SIDEBAR_TOP_STATUS[topStatusKind];
   return (
     <SidebarTopRow
@@ -60,14 +59,16 @@ export const SidebarHomeRow = memo(function SidebarHomeRow(props: {
       title={label}
       onActivate={() => onActivate(threadRef)}
       trailing={
-        topStatus ? (
+        topStatusKind !== null && topStatus ? (
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
-              topStatus.className,
+              HOME_STATUS_TONE[topStatusKind] ?? topStatus.className,
             )}
           >
-            {topStatus.Icon ? <topStatus.Icon aria-hidden className="size-4 shrink-0" /> : null}
+            {topStatusKind === "waiting" ? null : (
+              <topStatus.Icon aria-hidden className="size-4 shrink-0" />
+            )}
             <span role="status">{topStatus.label}</span>
           </span>
         ) : null
