@@ -26,6 +26,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestCheck,
+  type PullRequestCheckPhase,
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
@@ -3596,7 +3597,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.deepEqual(yield* watchOf, started);
 
-      const recorded = { ...started, headSha: "abc123", failedChecks: ["lint"], wakes: 1 };
+      const recorded = {
+        ...started,
+        headSha: "abc123",
+        failedChecks: ["lint"],
+        wakes: 1,
+        checks: { total: 1, runs: [{ name: "lint", status: "failure" as const, url: null }] },
+      };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make("pr-watch-record"),
@@ -3633,6 +3640,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
       assert.equal(late._tag, "OrchestratorDispatchError");
       assert.isUndefined(yield* watchOf);
+      const { checks: _shown, ...told } = recorded;
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.endedWatch,
+        told,
+      );
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
     }),
@@ -4321,6 +4333,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         }
 
         let e2e: PullRequestCheck["status"] = "pending";
+        let e2ePhase: PullRequestCheckPhase = "queued";
         let comments: ReadonlyArray<PullRequestComment> = [];
         let gate: {
           readonly started: Deferred.Deferred<void>;
@@ -4344,7 +4357,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   }),
                   checks: [
                     { name: "test", status: "failure" as const, description: null, url: null },
-                    { name: "e2e", status: e2e, description: null, url: null },
+                    {
+                      name: "e2e",
+                      status: e2e,
+                      ...(e2e === "pending" && { phase: e2ePhase }),
+                      description: null,
+                      url: null,
+                    },
                   ],
                 };
               }),
@@ -4369,10 +4388,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           return answers[0];
         });
 
+        const shownChecks = Effect.map(orchestrator.getThreadShell(threadId), (thread) =>
+          thread?.pullRequests?.[0]?.watch?.checks?.runs.map((run) => run.phase ?? run.status),
+        );
+
         const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
         yield* reactor.sweep;
         assert.deepEqual(yield* summaries, []);
         assert.isTrue(yield* checksPending);
+        assert.deepEqual(yield* shownChecks, ["failure", "queued"]);
+
+        // A job starting changes nothing the agent hears about, but the card still shows it.
+        e2ePhase = "running";
+        yield* TestClock.adjust("2 minutes");
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, []);
+        assert.deepEqual(yield* shownChecks, ["failure", "running"]);
+
         const reopen = (id: string) =>
           orchestrator.dispatch({
             type: "thread.pull-request-watch.checks-reopen",
@@ -4382,6 +4414,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         // A push forgets a running answer too, so a read begun before it cannot settle it.
         yield* reopen("push-pending");
         assert.isUndefined(yield* checksPending);
+        assert.isUndefined(yield* shownChecks);
 
         e2e = "success";
         yield* TestClock.adjust("10 minutes");
@@ -4417,6 +4450,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* Fiber.join(inFlight);
         assert.lengthOf(yield* summaries, 1);
         assert.isUndefined(yield* checksPending);
+        assert.isUndefined(yield* shownChecks);
 
         // The next sweep reads it again though nothing on the host changed.
         yield* TestClock.adjust("2 minutes");

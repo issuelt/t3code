@@ -2,6 +2,7 @@ import { Spinner } from "~/components/ui/spinner";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestCheckPhase,
   PullRequestCheckStatus,
   PullRequestChecksState,
   PullRequestLabel,
@@ -13,9 +14,11 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
+  Clock3Icon,
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  LoaderCircleIcon,
   OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
@@ -46,7 +49,7 @@ export function PullRequestLabelChip({
 }: {
   label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
-  className?: string;
+  className?: string | undefined;
   focusable?: boolean;
   children?: ReactNode;
 }) {
@@ -150,7 +153,7 @@ export function PullRequestStateGlyph({
 }: {
   state: PullRequestState;
   isDraft: boolean;
-  className?: string;
+  className?: string | undefined;
 }) {
   const presentation = resolvePullRequestState({ state, isDraft });
   return (
@@ -178,7 +181,7 @@ export function PullRequestConflictGlyph({
   isDraft: boolean;
   mergeability?: PullRequestMergeability;
   baseBranch?: string;
-  className?: string;
+  className?: string | undefined;
 }) {
   const presentation = resolvePullRequestConflict({
     state,
@@ -201,8 +204,25 @@ export function PullRequestConflictGlyph({
   );
 }
 
+export const PULL_REQUEST_WATCHING_HINT =
+  "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.";
+
+interface CheckStatusPresentation {
+  readonly label: string;
+  readonly Icon: typeof CircleCheckIcon | typeof Spinner;
+  /** Stands in for an animated icon where it would stay on screen. */
+  readonly StillIcon?: typeof CircleCheckIcon;
+  readonly toneClassName: string;
+}
+
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
+  pending: {
+    label: "Running",
+    Icon: Spinner,
+    StillIcon: LoaderCircleIcon,
+    toneClassName: "text-amber-500",
+  },
+  queued: { label: "Queued", Icon: Clock3Icon, toneClassName: "text-muted-foreground/70" },
   "action-required": {
     label: "Awaiting action",
     Icon: CircleDotIcon,
@@ -221,10 +241,13 @@ const CHECK_STATUS_PRESENTATION = {
   },
   skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
   neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
-} as const satisfies Record<
-  PullRequestCheckStatus,
-  { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
->;
+} satisfies Record<PullRequestCheckStatus | "queued", CheckStatusPresentation>;
+
+type CheckStatus = Pick<PullRequestCheck, "status" | "phase">;
+
+function checkStatusPresentation({ status, phase }: CheckStatus): CheckStatusPresentation {
+  return phase === "queued" ? CHECK_STATUS_PRESENTATION.queued : CHECK_STATUS_PRESENTATION[status];
+}
 
 function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">): boolean {
   return (
@@ -235,20 +258,28 @@ function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">
 }
 
 export function pullRequestCheckStatusLabel(
-  check: Pick<PullRequestCheck, "status" | "url">,
+  check: Pick<PullRequestCheck, "status" | "phase" | "url">,
 ): string {
   return isWorkflowApprovalCheck(check)
     ? "Awaiting approval"
-    : CHECK_STATUS_PRESENTATION[check.status].label;
+    : checkStatusPresentation(check).label;
 }
 
-export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
-  const presentation = CHECK_STATUS_PRESENTATION[status];
+export function PullRequestCheckStatusIcon({
+  status,
+  phase,
+  still = false,
+  className,
+}: {
+  status: PullRequestCheckStatus;
+  phase?: PullRequestCheckPhase | undefined;
+  still?: boolean;
+  className?: string | undefined;
+}) {
+  const presentation = checkStatusPresentation({ status, phase });
+  const Icon = (still ? presentation.StillIcon : undefined) ?? presentation.Icon;
   return (
-    <presentation.Icon
-      aria-hidden
-      className={cn("size-3.5 shrink-0", presentation.toneClassName)}
-    />
+    <Icon aria-hidden className={cn("size-3.5 shrink-0", presentation.toneClassName, className)} />
   );
 }
 
@@ -352,7 +383,7 @@ export function PullRequestReviewOutcomeIcon({
   className,
 }: {
   outcome: PullRequestReviewOutcome;
-  className?: string;
+  className?: string | undefined;
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
@@ -394,7 +425,7 @@ export function PullRequestReviewOutcomeBadge({
   className,
 }: {
   outcome: PullRequestReviewOutcome;
-  className?: string;
+  className?: string | undefined;
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
@@ -412,7 +443,7 @@ export function PullRequestActorAvatar({
   className,
 }: {
   actor: PullRequestActor | null;
-  className?: string;
+  className?: string | undefined;
 }) {
   const login = actor?.login ?? "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
@@ -447,7 +478,7 @@ export function PullRequestActorLabel({
   profileUrl,
 }: {
   actor: PullRequestActor | null;
-  className?: string;
+  className?: string | undefined;
   variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
@@ -501,7 +532,7 @@ export function PullRequestDiffStat({
 }: {
   additions: number;
   deletions: number;
-  className?: string;
+  className?: string | undefined;
 }) {
   if (additions === 0 && deletions === 0) {
     return null;
@@ -523,7 +554,7 @@ export function PullRequestMetaLine({
   className,
 }: {
   children: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   const segments = Children.toArray(children);
   return (
@@ -546,7 +577,9 @@ export function PullRequestMetaLine({
   );
 }
 
-export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
+export function summarizePullRequestChecks(
+  checks: ReadonlyArray<Pick<PullRequestCheck, "status" | "url">>,
+): string {
   if (checks.length === 0) return "No checks reported";
   const actionRequired = checks.filter((check) => check.status === "action-required");
   const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;

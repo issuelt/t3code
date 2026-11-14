@@ -1,10 +1,13 @@
-import type {
-  OrchestrationV2Notification,
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetail,
-  ThreadPullRequestWatch,
+import {
+  THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT,
+  type OrchestrationV2Notification,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type ThreadPullRequestWatch,
+  type ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
 
 /** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
@@ -35,6 +38,15 @@ const isFailedCheck = (check: PullRequestCheck) =>
 // A GitHub Actions job's URL extends its workflow run's URL; their names need not match.
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
+
+function watchChecksOf(checks: ReadonlyArray<PullRequestCheck>): ThreadPullRequestWatchChecks {
+  return {
+    total: checks.length,
+    runs: sortChecks(checks)
+      .slice(0, THREAD_PULL_REQUEST_WATCH_CHECK_LIMIT)
+      .map(({ name, status, phase, url }) => ({ name, status, ...(phase && { phase }), url })),
+  };
+}
 
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -176,6 +188,9 @@ export function evaluatePullRequestWatch(
     checksPending = true;
   }
 
+  const checksRead =
+    checks.length > 0 ? watchChecksOf(checks) : headMoved ? undefined : watch.checks;
+
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
@@ -248,6 +263,7 @@ export function evaluatePullRequestWatch(
         }),
       checksAwaitedSince,
       checksPending,
+      ...(checksRead && { checks: checksRead }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };

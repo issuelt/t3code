@@ -547,6 +547,10 @@
       "types": "./src/pullRequestChecks.ts",
       "default": "./src/pullRequestChecks.ts"
     },
+    "./thread-cards": {
+      "types": "./src/threadCards.ts",
+      "default": "./src/threadCards.ts"
+    },
     "./pull-request-editing": {
       "types": "./src/pullRequestEditing.ts",
       "default": "./src/pullRequestEditing.ts"

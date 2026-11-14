@@ -789,7 +789,7 @@ function withPullRequestWatch(
 ): ThreadPullRequestLink {
   const { watch: previous, endedWatch, ...rest } = link;
   if (watch !== undefined) return { ...rest, watch };
-  const ended = previous ?? endedWatch;
+  const ended = previous === undefined ? endedWatch : withoutChecks(previous);
   return ended === undefined ? rest : { ...rest, endedWatch: ended };
 }
 
@@ -808,10 +808,15 @@ function syncedPullRequestWatch(
   return withoutChecksAnswer(command.watch);
 }
 
+const withoutChecks = ({
+  checks: _checks,
+  ...watch
+}: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
+
 const withoutChecksAnswer = ({
   checksPending: _answer,
   ...watch
-}: ThreadPullRequestWatch): ThreadPullRequestWatch => watch;
+}: ThreadPullRequestWatch): ThreadPullRequestWatch => withoutChecks(watch);
 
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,

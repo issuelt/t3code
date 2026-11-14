@@ -8,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -16,12 +15,9 @@ import { useEnvironmentQuery } from "~/state/query";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { toastManager } from "../ui/toast";
+import { PullRequestCheckList } from "./PullRequestCheckList";
 import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
-  PullRequestCheckStatusIcon,
-  pullRequestCheckStatusLabel,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -59,59 +55,21 @@ function ChecksBody({
   checks: ReadonlyArray<PullRequestCheck>;
   threadRef: ScopedThreadRef | null;
 }) {
-  const openLink = useOpenLink(threadRef);
   const [showAll, setShowAll] = useState(false);
   const { attention, running, completed } = groupPullRequestChecks(checks);
   const canCollapse = attention.length + running.length > 0 && completed.length > 0;
-  const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
-  const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
     <>
       <ScrollArea className="-me-3 w-auto max-h-64">
-        <ul
-          className={cn(
-            "grid gap-x-2 gap-y-1 pe-3",
-            hasDetails
-              ? "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
-              : "grid-cols-[auto_minmax(0,1fr)_auto]",
-          )}
-        >
-          {visibleChecks.map(
-            (check, index) => (
-              /* oxlint-disable react/no-array-index-key -- Check names can repeat; these status rows have no local state. */ <li
-                key={`${index}:${check.name}`}
-                className="col-span-full grid grid-cols-subgrid items-center text-xs"
-              >
-                <PullRequestCheckStatusIcon status={check.status} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-                </Tooltip>
-                <span className="justify-self-end whitespace-nowrap text-muted-foreground">
-                  {pullRequestCheckStatusLabel(check)}
-                </span>
-                {check.url === null ? null : (
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    onClick={() => {
-                      if (!check.url) return;
-                      void openLink(check.url).catch((error: unknown) => {
-                        console.error(error);
-                        toastManager.add({ type: "error", title: "Unable to open check details" });
-                      });
-                    }}
-                  >
-                    Details
-                  </button>
-                )}
-              </li>
-            ) /* oxlint-enable react/no-array-index-key */,
-          )}
-        </ul>
+        <div className="pe-3">
+          <PullRequestCheckList
+            checks={[...attention, ...running, ...(showAll || !canCollapse ? completed : [])]}
+            threadRef={threadRef}
+          />
+        </div>
       </ScrollArea>
       {canCollapse ? (
         <Button

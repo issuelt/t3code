@@ -120,6 +120,7 @@ import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { SidebarThreadCards } from "./SidebarThreadCards";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
@@ -1216,6 +1217,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </span>
   ) : null;
 
+  const threadCards = (
+    <SidebarThreadCards threadRef={threadRef} pullRequests={thread.pullRequests} />
+  );
+
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
     const inFolder = variant === "folder" || multiline;
@@ -1411,6 +1416,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        {threadCards}
       </li>
     );
   }
@@ -1613,6 +1619,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      {threadCards}
     </li>
   );
 });
