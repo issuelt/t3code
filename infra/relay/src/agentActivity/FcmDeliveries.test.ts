@@ -2,7 +2,9 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -412,7 +414,7 @@ describe("Android delivery routing", () => {
 
   it("carries the pending approval's IDs so the alert can answer and later clear it", () => {
     const pendingApproval = {
-      threadId: ThreadId.make("child"),
+      requestThreadId: ThreadId.make("child"),
       requestId: RuntimeRequestId.make("request"),
       actionable: true,
     };
@@ -445,14 +447,17 @@ describe("Android delivery routing", () => {
     h.current.state = {
       ...state,
       phase: "waiting_for_approval",
-      pendingApproval: { threadId: state.threadId, requestId, actionable: true },
+      pendingApproval: { requestThreadId: state.threadId, requestId, actionable: true },
     };
     return Effect.gen(function* () {
       const delivery = yield* FcmDeliveries.FcmDeliveries;
       yield* delivery.process({ ...h.job, state: h.current.state });
-      // The first 16 hex digits of the ID's SHA-256.
-      expect(h.sent[0]?.data.activity_pending_requests).toBe("1b4ba157d0207f1c");
-    }).pipe(Effect.provide(h.layer));
+      const digest = yield* (yield* Digest.Digest).digest(
+        Digest.sha256,
+        new TextEncoder().encode(requestId),
+      );
+      expect(h.sent[0]?.data.activity_pending_requests).toBe(Hex.encode(digest).slice(0, 16));
+    }).pipe(Effect.provide(h.layer), Effect.provide(NodeCryptoLayer.layer));
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {

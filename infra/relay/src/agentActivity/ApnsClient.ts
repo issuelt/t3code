@@ -82,7 +82,6 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   ),
 );
 function contentState(state: RelayAgentActivityAggregateState) {
-  // Request IDs drive alerts only; the Live Activity widget never reads them.
   const activities = state.activities.map(({ pendingApproval: _pendingApproval, ...row }) => row);
   return {
     name: LIVE_ACTIVITY_NAME,

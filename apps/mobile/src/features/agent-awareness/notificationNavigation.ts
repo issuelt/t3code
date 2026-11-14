@@ -34,7 +34,6 @@ export function installAgentNotificationNavigation(navigate: (href: string) => v
     );
   }
   const handleResponse = (response: Notifications.NotificationResponse): void => {
-    // Android approval actions run natively; only iOS delivers them here.
     const approval = Platform.OS === "ios" ? iosApprovalResponse(response) : null;
     if (approval !== null) {
       // The cold-start read and the listener can both deliver the same action.

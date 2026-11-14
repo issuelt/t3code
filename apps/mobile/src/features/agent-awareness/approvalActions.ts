@@ -8,7 +8,6 @@ import { RelayApprovalNotificationAction, RelayPendingApproval } from "@t3tools/
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-/** Also the default options on `PendingApprovalCard`; the native Android alert repeats the labels. */
 export const APPROVAL_ACTIONS = {
   "t3.approval.accept": { decision: "accept", label: "Allow once" },
   "t3.approval.decline": { decision: "decline", label: "Decline" },
@@ -24,7 +23,6 @@ export interface ApprovalAnswer {
   readonly decision: ProviderApprovalDecision;
 }
 
-/** The extras `AgentApprovalActionReceiver` passes to the `T3ApprovalAction` headless task. */
 const AndroidApprovalTask = Schema.Struct({
   actionIdentifier: RelayApprovalNotificationAction,
   notificationId: Schema.Int,
@@ -71,7 +69,6 @@ export function androidApprovalTask(data: unknown) {
   });
 }
 
-/** Null for a tap on the notification itself or on another category's action. */
 export function iosApprovalResponse(response: unknown) {
   return Option.match(decodeIosResponse(response), {
     onNone: () => null,
@@ -85,7 +82,7 @@ export function iosApprovalResponse(response: unknown) {
         data,
         answer: {
           environmentId,
-          threadId: pendingApproval.threadId,
+          threadId: pendingApproval.requestThreadId,
           requestId: pendingApproval.requestId,
           decision: APPROVAL_ACTIONS[actionIdentifier].decision,
         } satisfies ApprovalAnswer,
@@ -94,7 +91,6 @@ export function iosApprovalResponse(response: unknown) {
   });
 }
 
-/** The text an alert shows when its environment did not answer. */
 export function unreachableText(environmentLabel: string | null): string {
   return `Couldn't reach ${environmentLabel ?? "this environment"}`;
 }

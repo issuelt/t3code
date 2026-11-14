@@ -12,7 +12,6 @@ import { environmentThreadShells } from "../../state/threads";
 import { cancelResolvedAndroidApprovals } from "./androidNotifications";
 import { decodeApprovalNotificationData } from "./approvalActions";
 
-/** Pending requests of environments whose shell is live; others are unknown, so left alone. */
 const livePendingRequestsAtom = Atom.make((get) => {
   const pending = new Map<EnvironmentId, Set<string>>();
   for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
@@ -46,10 +45,6 @@ async function dismissResolvedIosApprovals(
   );
 }
 
-/**
- * While the app runs, an approval answered anywhere (web, desktop, another phone) clears its
- * alert here as soon as the shell stream reports it.
- */
 export function installApprovalNotificationClearing(): () => void {
   const reconciled = new Map<EnvironmentId, string>();
   return appAtomRegistry.subscribe(

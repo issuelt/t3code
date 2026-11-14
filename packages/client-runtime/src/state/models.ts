@@ -168,7 +168,6 @@ export interface EnvironmentThreadShell {
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
   readonly pendingApprovalAt?: string | null;
-  /** The pending approval's request, which a notification for it names. */
   readonly pendingApprovalRequestId?: RuntimeRequestId | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */

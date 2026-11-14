@@ -51,7 +51,6 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
   };
 }
 
-/** IDs the native alert keeps so its actions can answer the request and later clear it. */
 export function androidApprovalData(
   row: Pick<RelayAgentActivityAggregateRow, "environmentId" | "pendingApproval">,
 ) {
@@ -60,7 +59,7 @@ export function androidApprovalData(
     ? {}
     : {
         alert_request_id: pending.requestId,
-        alert_request_thread_id: pending.threadId,
+        alert_request_thread_id: pending.requestThreadId,
         alert_environment_id: row.environmentId,
         alert_request_actionable: String(pending.actionable),
       };
@@ -69,7 +68,6 @@ export function androidApprovalData(
 /** Hex digits of a request ID's SHA-256 the device compares; IDs alone can outgrow FCM's budget. */
 export const PENDING_REQUEST_DIGEST_LENGTH = 16;
 
-/** Every request the user's threads still wait on. */
 export function pendingRequestIds(states: ReadonlyArray<RelayAgentActivityState>) {
   return states.flatMap((state) =>
     state.pendingApproval ? [state.pendingApproval.requestId] : [],

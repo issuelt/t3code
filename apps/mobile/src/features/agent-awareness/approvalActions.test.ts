@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { androidApprovalTask, iosApprovalResponse } from "./approvalActions";
 
-const pendingApproval = { threadId: "child", requestId: "request", actionable: true };
+const pendingApproval = { requestThreadId: "child", requestId: "request", actionable: true };
 
 function iosResponse(
   actionIdentifier: string,

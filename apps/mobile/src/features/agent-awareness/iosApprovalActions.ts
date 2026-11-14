@@ -24,10 +24,6 @@ export function registerIosApprovalCategory(): Promise<unknown> {
   );
 }
 
-/**
- * Answers an approval from its notification action. When the environment does not answer, the
- * alert comes back with its actions so the user can try again.
- */
 export async function handleIosApprovalResponse(
   approval: NonNullable<ReturnType<typeof iosApprovalResponse>>,
 ): Promise<void> {

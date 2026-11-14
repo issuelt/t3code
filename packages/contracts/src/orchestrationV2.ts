@@ -1243,7 +1243,6 @@ export function latestProviderTurnForAttempt<
   return latest;
 }
 
-/** A runtime request that can no longer be answered. */
 export const OrchestrationV2RuntimeRequestSettledStatus = Schema.Literals([
   "resolved",
   "expired",

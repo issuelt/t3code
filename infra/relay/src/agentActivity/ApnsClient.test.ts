@@ -183,7 +183,7 @@ describe("ApnsClient", () => {
         deepLink: "/threads/env/thread",
       };
       const pendingApproval = {
-        threadId: ThreadId.make("child"),
+        requestThreadId: ThreadId.make("child"),
         requestId: RuntimeRequestId.make("request"),
         actionable: true,
       };

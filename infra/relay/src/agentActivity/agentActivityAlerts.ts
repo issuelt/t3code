@@ -64,7 +64,6 @@ function alertAllowedForPhase(
   }
 }
 
-/** A thread's wait: a second approval on a thread that is still waiting is a new one. */
 function attentionKey(row: RelayAgentActivityAggregateRow): string {
   return JSON.stringify([row.environmentId, row.threadId, row.pendingApproval?.requestId ?? null]);
 }

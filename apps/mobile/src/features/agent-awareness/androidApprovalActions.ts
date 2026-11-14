@@ -2,10 +2,6 @@ import { failAndroidApprovalAction, finishAndroidApprovalAction } from "./androi
 import { androidApprovalTask, unreachableText } from "./approvalActions";
 import { answerApproval } from "./approvalAnswers";
 
-/**
- * The `T3ApprovalAction` headless task: answers the approval the native alert's action named,
- * then clears the alert, or shows that the environment did not answer with its actions kept.
- */
 export async function runAndroidApprovalAction(data: unknown): Promise<void> {
   const task = androidApprovalTask(data);
   if (task === null) {

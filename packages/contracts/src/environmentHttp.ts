@@ -725,7 +725,6 @@ const EnvironmentRuntimeRequestRespondParams = Schema.Struct({
   requestId: RuntimeRequestId,
 });
 
-/** Answers an approval without a socket, for notification actions. */
 export const EnvironmentRuntimeRequestRespondPayload = Schema.Struct({
   commandId: CommandId,
   decision: ProviderApprovalDecision,

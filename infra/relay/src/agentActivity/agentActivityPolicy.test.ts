@@ -90,7 +90,7 @@ describe("shared agent activity policy", () => {
       ...state,
       phase: "waiting_for_approval" as const,
       pendingApproval: {
-        threadId: state.threadId,
+        requestThreadId: state.threadId,
         requestId: RuntimeRequestId.make(requestId),
         actionable: true,
       },

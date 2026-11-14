@@ -135,7 +135,6 @@ object AgentNotifications {
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
-      // Present only when the relay read every activity row for this user.
       data[PENDING_REQUESTS]?.let { pending ->
         val digests = pending.split(',').filter { it.isNotEmpty() }.toSet()
         cancelResolvedApprovals(context, null) { requestDigest(it) in digests }
@@ -216,7 +215,6 @@ object AgentNotifications {
     }
   }
 
-  /** Builds one alert; approval states re-post it under the same tag and id. */
   private fun alert(
     context: Context,
     scheme: String,
@@ -278,7 +276,6 @@ object AgentNotifications {
       .build()
   }
 
-  /** Re-posts an active alert in [state] when [accept] its stored data, and returns that data. */
   private fun repostAlert(
     context: Context,
     notificationId: Int,
@@ -300,10 +297,6 @@ object AgentNotifications {
     return data
   }
 
-  /**
-   * Re-posts an approval alert as sending and returns its request, or null when
-   * the alert is gone or offers no actions.
-   */
   @Synchronized
   fun beginApprovalAction(
     context: Context,
@@ -323,7 +316,6 @@ object AgentNotifications {
     manager(context).cancel(ALERT_TAG, notificationId)
   }
 
-  /** Cancels approval alerts, of one environment or all, whose requests are no longer pending. */
   @Synchronized
   fun cancelResolvedApprovals(
     context: Context,
@@ -337,10 +329,12 @@ object AgentNotifications {
     }.forEach { manager(context).cancel(it.tag, it.id) }
   }
 
-  /** Matches the relay's `PENDING_REQUEST_DIGEST_LENGTH` hex digits of the ID's SHA-256. */
-  private fun requestDigest(requestId: String): String =
+  /** The relay's `PENDING_REQUEST_DIGEST_LENGTH`. */
+  private const val PENDING_REQUEST_DIGEST_LENGTH = 16
+
+  fun requestDigest(requestId: String): String =
     MessageDigest.getInstance("SHA-256").digest(requestId.toByteArray())
-      .joinToString("") { "%02x".format(it) }.take(16)
+      .joinToString("") { "%02x".format(it) }.take(PENDING_REQUEST_DIGEST_LENGTH)
 
   /**
    * Renders a relay-shaped payload without the registration, freshness and

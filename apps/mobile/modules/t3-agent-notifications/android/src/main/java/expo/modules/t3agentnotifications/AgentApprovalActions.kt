@@ -8,7 +8,6 @@ import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
-/** Identifiers match `t3.approval.*` in the app's `approvalActions.ts`. */
 enum class ApprovalAction(val id: String, val label: String, val progress: String) {
   Accept("t3.approval.accept", "Allow once", "Allowing…"),
   Decline("t3.approval.decline", "Decline", "Declining…");
@@ -61,7 +60,6 @@ class AgentApprovalActionReceiver : BroadcastReceiver() {
   }
 }
 
-/** Runs the `T3ApprovalAction` headless task registered in the app's index. */
 class AgentApprovalTaskService : HeadlessJsTaskService() {
   override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
     val extras: Bundle = intent?.extras ?: return null

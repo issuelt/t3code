@@ -413,7 +413,7 @@ describe("AgentAwarenessRelay", () => {
       assert.isTrue(publications[1]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
       assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
       assert.deepStrictEqual(publications[1]?.state?.pendingApproval, {
-        threadId: CHILD_THREAD_ID,
+        requestThreadId: CHILD_THREAD_ID,
         requestId: RuntimeRequestId.make("child-request"),
         actionable: false,
       });
@@ -718,12 +718,11 @@ describe("AgentAwarenessRelay", () => {
       yield* Ref.set(currentShell, waiting(first));
       yield* relay.publishThread(THREAD_ID);
       assert.deepStrictEqual(publications[0]?.state?.pendingApproval, {
-        threadId: THREAD_ID,
+        requestThreadId: THREAD_ID,
         requestId: first,
         actionable: true,
       });
 
-      // Same phase, title and time: only the request identity tells the relay it is new.
       yield* Ref.set(currentShell, waiting(second));
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 2);

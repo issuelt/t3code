@@ -75,7 +75,6 @@ export function androidAlertForState(
   return alertForRow({ ...state, status: statusForPhase(state.phase) });
 }
 
-/** One thread's alert. A second approval on a thread that is still waiting is a new alert. */
 function alertForRow(row: RelayAgentActivityAggregateRow) {
   const notification = notificationForActivity(row);
   const identity = [row.environmentId, row.threadId, row.phase, row.updatedAt];
@@ -302,7 +301,6 @@ const make = Effect.gen(function* () {
         ...androidActivityData(displayedAggregate),
         ...alert,
       };
-      // Sent only when the relay read all of the user's rows, so the device can cancel the rest.
       if (preferences.value.liveActivitiesEnabled) {
         const digests = yield* Effect.forEach(pendingRequestIds(states), (requestId) =>
           sha256Hex(requestId).pipe(

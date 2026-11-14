@@ -897,7 +897,6 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(WorkFilesTransfer.layer),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
   Layer.provide(PeerLinkRequests.layer),
-  // Client commands, from the socket and from notification actions over HTTP.
   Layer.provide(ThreadMessageIntake.layerUserCommandDispatch),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),

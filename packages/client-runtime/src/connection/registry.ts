@@ -206,7 +206,6 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
-/** Reads the saved environments and their routes without starting any connection. */
 export const loadPersistedCatalog = Effect.fn("EnvironmentRegistry.loadPersistedCatalog")(
   function* () {
     const storage = yield* Persistence.ConnectionTargetStore;

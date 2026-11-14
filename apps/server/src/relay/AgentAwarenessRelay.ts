@@ -319,10 +319,22 @@ const waitingApprovalId = (thread: AgentAwarenessThread | null) =>
     ? thread.pendingRuntimeRequest?.id
     : undefined;
 
-/**
- * A notification may answer only a live request that offers both "accept" and "decline" without a
- * warning or a full-access override, so the phone never approves something its card would explain.
- */
+function notificationMayAnswer(
+  request: OrchestrationV2RuntimeRequest,
+  item: Extract<OrchestrationV2TurnItem, { type: "approval_request" }>,
+): boolean {
+  const options = item.options;
+  return (
+    request.status === "pending" &&
+    request.responseCapability.type === "live" &&
+    item.fullAccessOverride === undefined &&
+    (options === undefined ||
+      (options.every((option) => option.warning === undefined) &&
+        options.some((option) => option.decision === "accept") &&
+        options.some((option) => option.decision === "decline")))
+  );
+}
+
 export function pendingApprovalFor(input: {
   readonly threadId: ThreadId;
   readonly requestId: RuntimeRequestId;
@@ -334,17 +346,9 @@ export function pendingApprovalFor(input: {
     (candidate): candidate is Extract<OrchestrationV2TurnItem, { type: "approval_request" }> =>
       candidate.type === "approval_request" && candidate.requestId === input.requestId,
   );
-  const options = item?.options;
   const actionable =
-    request?.status === "pending" &&
-    request.responseCapability.type === "live" &&
-    item !== undefined &&
-    item.fullAccessOverride === undefined &&
-    (options === undefined ||
-      (options.every((option) => option.warning === undefined) &&
-        options.some((option) => option.decision === "accept") &&
-        options.some((option) => option.decision === "decline")));
-  return { threadId: input.threadId, requestId: input.requestId, actionable };
+    request !== undefined && item !== undefined && notificationMayAnswer(request, item);
+  return { requestThreadId: input.threadId, requestId: input.requestId, actionable };
 }
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {

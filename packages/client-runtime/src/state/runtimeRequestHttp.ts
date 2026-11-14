@@ -20,11 +20,6 @@ import {
 
 const RESPOND_TIMEOUT_MS = 15_000;
 
-/**
- * Answers a runtime request over HTTP with this device's saved credential, without opening a
- * socket, for work that runs while the app is in the background. Any failure is `Unreachable`:
- * the caller offers the same answer again rather than retrying on its own.
- */
 export const respondToRuntimeRequestOverHttp = Effect.fn(
   "clientRuntime.state.respondToRuntimeRequestOverHttp",
 )(function* (input: {
@@ -33,9 +28,7 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
   readonly requestId: RuntimeRequestId;
   readonly decision: ProviderApprovalDecision;
 }) {
-  // A fresh id per tap: if an earlier tap landed but its answer was lost, this one finds the
-  // request resolved instead of replaying that tap's receipt.
-  const commandId = CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
+  const commandIdForThisTap = CommandId.make(yield* (yield* SecureRandom.SecureRandom).uuidV4());
   const { entries } = yield* loadPersistedCatalog();
   const entry = entries.get(input.environmentId);
   if (entry === undefined || !entry.enabled) {
@@ -60,7 +53,7 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
             client.respondToRuntimeRequest({
               params,
               headers: withOrchestrationProtocolHeader(headers),
-              payload: { commandId, decision: input.decision },
+              payload: { commandId: commandIdForThisTap, decision: input.decision },
             }),
         });
       }),
@@ -74,7 +67,6 @@ export const respondToRuntimeRequestOverHttp = Effect.fn(
   );
 });
 
-/** The connection services that answer a request over HTTP; no socket or supervisor starts. */
 export const layerSocketless = ConnectionResolver.layer.pipe(
   Layer.provideMerge(RemoteEnvironmentAuthorization.layer),
 );

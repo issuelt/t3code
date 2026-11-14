@@ -222,7 +222,6 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   }
 }
 
-/** A response arrived for a request that was already answered, expired or cancelled. */
 export class RuntimeRequestNotPendingError extends Schema.TaggedError<RuntimeRequestNotPendingError>()(
   "RuntimeRequestNotPendingError",
   {

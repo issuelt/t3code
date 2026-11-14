@@ -117,17 +117,14 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
-/** The approval a waiting thread shows; IDs only, so a push never carries request details. */
 export const RelayPendingApproval = Schema.Struct({
-  /** The thread that owns the request: the activity's own thread or one of its subagents. */
-  threadId: ThreadId,
+  requestThreadId: ThreadId,
   requestId: RuntimeRequestId,
   /** Whether a notification may answer it with allow once or decline. */
   actionable: Schema.Boolean,
 });
 export type RelayPendingApproval = typeof RelayPendingApproval.Type;
 
-/** The iOS category and Android extras that put allow once and decline on an approval alert. */
 export const RELAY_APPROVAL_NOTIFICATION_CATEGORY = "t3.approval";
 
 export const RelayApprovalNotificationAction = Schema.Literals([

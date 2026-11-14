@@ -59,7 +59,6 @@ export async function openAndroidLiveUpdateSettings(): Promise<void> {
   }
 }
 
-/** Cancels this environment's approval alerts whose requests are no longer pending. */
 export function cancelResolvedAndroidApprovals(
   environmentId: string,
   pendingRequestIds: ReadonlyArray<string>,

@@ -276,7 +276,6 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     );
 });
 
-/** Runs a command a user's client sent, over the socket or HTTP, once the server has started. */
 export class UserCommandDispatch extends Context.Service<
   UserCommandDispatch,
   {

@@ -706,13 +706,11 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   fun aggregatePushesCancelAlertsForRequestsNoLongerPending() {
     AgentNotifications.receive(context, approval("answered", "request-a"))
     AgentNotifications.receive(context, approval("waiting", "request-b"))
-    // Without the list, the relay did not read every row, so nothing is known to be answered.
     AgentNotifications.receive(context, update("unrelated", true))
     assertEquals(3, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
     AgentNotifications.receive(
       context,
-      // The first 16 hex digits of SHA-256("request-b").
-      update("next", true) + ("activity_pending_requests" to "fbd41fd757b2b7fe")
+      update("next", true) + ("activity_pending_requests" to AgentNotifications.requestDigest("request-b"))
     )
     assertTrue(manager.activeNotifications.none { it.id == "answered".hashCode() })
     assertTrue(manager.activeNotifications.any { it.id == "waiting".hashCode() })

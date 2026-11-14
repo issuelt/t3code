@@ -20,7 +20,7 @@ diff --git a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
 index 5e3a902..eba19df 100644
 --- a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
 +++ b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
-@@ -53,6 +53,23 @@ internal final class NotificationDelegateRegistry {
+@@ -53,6 +53,20 @@ internal final class NotificationDelegateRegistry {
    private struct State {
      var delegates: [NotificationDelegate] = []
      var pendingResponses: [UNNotificationResponse] = []
@@ -36,15 +36,12 @@ index 5e3a902..eba19df 100644
 +    previous?()
 +  }
 +
-+  /**
-+   Removes and returns the completion handler held for the response, if it is still held.
-+   */
 +  func releaseCompletion(_ identifier: String) -> (() -> Void)? {
 +    state.withLock { $0.heldCompletions.removeValue(forKey: identifier) }
    }
  
    /**
-@@ -82,12 +99,24 @@ internal final class NotificationDelegateRegistry {
+@@ -82,12 +96,24 @@ internal final class NotificationDelegateRegistry {
      state.withLock { $0.delegates.removeAll { $0 === delegate } }
    }
  
@@ -73,7 +70,7 @@ index 5e3a902..eba19df 100644
    }
  }
  
-@@ -162,12 +191,11 @@ public class NotificationCenterManager: NSObject,
+@@ -162,12 +188,11 @@ public class NotificationCenterManager: NSObject,
    }
  
    public func addDelegate(_ delegate: NotificationDelegate) {
@@ -90,7 +87,7 @@ index 5e3a902..eba19df 100644
      }
    }
  
-@@ -227,15 +255,48 @@ public class NotificationCenterManager: NSObject,
+@@ -227,15 +252,45 @@ public class NotificationCenterManager: NSObject,
      didReceive response: UNNotificationResponse,
      withCompletionHandler completionHandler: @escaping () -> Void
    ) {
@@ -124,9 +121,6 @@ index 5e3a902..eba19df 100644
 -    completionHandler()
 +  }
 +
-+  /**
-+   Completes a background action response that JS has finished handling.
-+   */
 +  public func acknowledgeResponse(notificationIdentifier: String, actionIdentifier: String) {
 +    registry.releaseCompletion("\(notificationIdentifier)\n\(actionIdentifier)")?()
 +  }
