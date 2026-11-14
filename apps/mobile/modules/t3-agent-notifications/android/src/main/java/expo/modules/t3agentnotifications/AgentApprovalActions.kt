@@ -58,33 +58,65 @@ class AgentApprovalActionReceiver : BroadcastReceiver() {
   }
 }
 
+/** Ties each headless task to its alert, so a task that ends unreported fails only that alert. */
+class ApprovalTasks(private val settle: (notificationId: Int) -> Unit) {
+  private val queued = ArrayDeque<Int>()
+  private val alertByTask = mutableMapOf<Int, Int>()
+
+  fun queue(notificationId: Int) {
+    queued.addLast(notificationId)
+  }
+
+  // Adding the listener replays running tasks; only an unseen id is the task just started.
+  fun started(taskId: Int) {
+    if (taskId in alertByTask) return
+    queued.removeFirstOrNull()?.let { alertByTask[taskId] = it }
+  }
+
+  fun finished(taskId: Int) {
+    alertByTask.remove(taskId)?.let(settle)
+  }
+
+  fun expire(notificationId: Int) {
+    queued.remove(notificationId)
+    alertByTask.values.remove(notificationId)
+    settle(notificationId)
+  }
+
+  fun settleAll() {
+    val pending = queued + alertByTask.values
+    queued.clear()
+    alertByTask.clear()
+    pending.forEach(settle)
+  }
+}
+
 class AgentApprovalTaskService : HeadlessJsTaskService() {
-  private val notificationIds = mutableSetOf<Int>()
+  private val tasks = ApprovalTasks { AgentNotifications.failUnreportedApproval(this, it) }
   private val handler = Handler(Looper.getMainLooper())
 
   override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
     val extras: Bundle = intent?.extras ?: return null
     val notificationId = extras.getInt("notificationId")
-    notificationIds += notificationId
+    tasks.queue(notificationId)
     // A JS runtime that never boots never ends the task either.
-    handler.postDelayed({ settle(notificationId) }, TASK_TIMEOUT_MS + BOOT_GRACE_MS)
+    handler.postDelayed({ tasks.expire(notificationId) }, TASK_TIMEOUT_MS + BOOT_GRACE_MS)
     return HeadlessJsTaskConfig(TASK_NAME, Arguments.fromBundle(extras), TASK_TIMEOUT_MS, true)
   }
 
+  override fun onHeadlessJsTaskStart(taskId: Int) {
+    tasks.started(taskId)
+  }
+
   override fun onHeadlessJsTaskFinish(taskId: Int) {
-    notificationIds.toList().forEach(::settle)
+    tasks.finished(taskId)
     super.onHeadlessJsTaskFinish(taskId)
   }
 
   override fun onDestroy() {
     handler.removeCallbacksAndMessages(null)
-    notificationIds.toList().forEach(::settle)
+    tasks.settleAll()
     super.onDestroy()
-  }
-
-  private fun settle(notificationId: Int) {
-    notificationIds -= notificationId
-    AgentNotifications.failUnreportedApproval(this, notificationId)
   }
 
   private companion object {

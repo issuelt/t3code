@@ -45,7 +45,7 @@ const routes = (alternate: boolean): ConnectionCatalogEntry => ({
 });
 
 const layer = (input: {
-  readonly prepareDelay?: Duration.Input;
+  readonly prepareDelay?: (target: ConnectionTarget) => Duration.Input;
   readonly fetch: (url: string, body: string) => Promise<Response>;
 }) =>
   Layer.mergeAll(
@@ -53,7 +53,7 @@ const layer = (input: {
       ConnectionResolver.ConnectionResolver,
       ConnectionResolver.ConnectionResolver.of({
         prepare: (entry) =>
-          Effect.sleep(input.prepareDelay ?? "0 millis").pipe(
+          Effect.sleep(input.prepareDelay?.(entry.target) ?? "0 millis").pipe(
             Effect.as({
               environmentId: ENVIRONMENT_ID,
               label: entry.target.label,
@@ -118,7 +118,7 @@ describe("answerRuntimeRequestOverRoutes", () => {
       });
     }).pipe(
       Effect.provide(
-        layer({ prepareDelay: "15 seconds", fetch: () => new Promise<Response>(() => {}) }),
+        layer({ prepareDelay: () => "15 seconds", fetch: () => new Promise<Response>(() => {}) }),
       ),
     ),
   );
@@ -139,6 +139,38 @@ describe("answerRuntimeRequestOverRoutes", () => {
             url.startsWith("https://lan.")
               ? new Promise<Response>(() => {})
               : Promise.resolve(Response.json({ _tag: "AlreadyResolved", status: "resolved" })),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("lets a route that can answer beat a faster route paired with fewer scopes", () =>
+    Effect.gen(function* () {
+      const answer = yield* Effect.forkChild(answerRuntimeRequestOverRoutes(routes(true), ANSWER));
+      yield* TestClock.adjust("1 second");
+      assert.deepStrictEqual(yield* Fiber.join(answer), {
+        _tag: "Answered",
+        result: { _tag: "Responded", sequence: 4 },
+      });
+    }).pipe(
+      Effect.provide(
+        layer({
+          prepareDelay: (target) =>
+            target._tag === "RelayConnectionTarget" ? "500 millis" : "0 millis",
+          fetch: (url) =>
+            url.startsWith("https://lan.")
+              ? Promise.resolve(
+                  Response.json(
+                    {
+                      _tag: "EnvironmentScopeRequiredError",
+                      code: "insufficient_scope",
+                      requiredScope: "orchestration:operate",
+                      traceId: "trace",
+                    },
+                    { status: 403 },
+                  ),
+                )
+              : Promise.resolve(Response.json({ _tag: "Responded", sequence: 4 })),
         }),
       ),
     ),

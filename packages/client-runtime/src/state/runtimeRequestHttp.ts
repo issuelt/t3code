@@ -6,6 +6,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -42,9 +43,10 @@ export type RuntimeRequestAnswerOutcome =
   | { readonly _tag: "Rejected"; readonly reason: "not_permitted" | "unanswerable" }
   | { readonly _tag: "Unreachable"; readonly environmentLabel: string | null };
 
-const rejected = (
-  reason: Extract<RuntimeRequestAnswerOutcome, { _tag: "Rejected" }>["reason"],
-): RuntimeRequestAnswerOutcome => ({ _tag: "Rejected", reason });
+type RuntimeRequestRejected = Extract<RuntimeRequestAnswerOutcome, { _tag: "Rejected" }>;
+
+const rejected = (reason: RuntimeRequestRejected["reason"]) =>
+  Effect.fail<RuntimeRequestRejected>({ _tag: "Rejected", reason });
 
 interface RuntimeRequestAnswer {
   readonly threadId: ThreadId;
@@ -84,22 +86,33 @@ export const answerRuntimeRequestOverRoutes = Effect.fn(
       ),
       Effect.map((result): RuntimeRequestAnswerOutcome => ({ _tag: "Answered", result })),
       Effect.catchTags({
-        EnvironmentScopeRequiredError: () => Effect.succeed(rejected("not_permitted")),
-        EnvironmentRequestInvalidError: () => Effect.succeed(rejected("unanswerable")),
-        EnvironmentResourceNotFoundError: () => Effect.succeed(rejected("unanswerable")),
+        EnvironmentScopeRequiredError: () => rejected("not_permitted"),
+        EnvironmentRequestInvalidError: () => rejected("unanswerable"),
+        EnvironmentResourceNotFoundError: () => rejected("unanswerable"),
       }),
+      // Every route starts now, so a timeout per route is one budget for the whole answer.
+      Effect.timeout(ANSWER_BUDGET_MS),
     );
-  // Routes race under one budget; the shared command id makes the server answer only once.
-  return yield* Effect.raceAll(usableRoutes(entry).map(answerOver)).pipe(
-    Effect.timeout(ANSWER_BUDGET_MS),
-    Effect.catch((cause) =>
-      Effect.logWarning("Could not answer the runtime request.", { cause }).pipe(
-        Effect.as<RuntimeRequestAnswerOutcome>({
-          _tag: "Unreachable",
-          environmentLabel: entry.target.label,
-        }),
-      ),
-    ),
+  const unreachable: RuntimeRequestAnswerOutcome = {
+    _tag: "Unreachable",
+    environmentLabel: entry.target.label,
+  };
+  const routes = usableRoutes(entry);
+  if (routes.length === 0) return unreachable;
+  // Only an answer wins the race: a route paired with fewer scopes must not stop one that can answer.
+  return yield* Effect.raceAll(routes.map(answerOver)).pipe(
+    Effect.catchCause((cause) => {
+      const errors = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+      if (errors.length === 0) return Effect.failCause(cause);
+      const rejection = errors.find(
+        (error): error is RuntimeRequestRejected => error._tag === "Rejected",
+      );
+      return rejection !== undefined
+        ? Effect.succeed<RuntimeRequestAnswerOutcome>(rejection)
+        : Effect.logWarning("Could not answer the runtime request.", { cause }).pipe(
+            Effect.as(unreachable),
+          );
+    }),
   );
 });
 

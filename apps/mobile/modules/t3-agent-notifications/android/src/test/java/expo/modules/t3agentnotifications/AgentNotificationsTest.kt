@@ -745,6 +745,25 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   }
 
   @Test
+  fun aTaskThatEndsUnreportedFailsOnlyItsOwnAlert() {
+    AgentNotifications.receive(context, approval("first", "request-a"))
+    AgentNotifications.receive(context, approval("second", "request-b"))
+    val tasks = ApprovalTasks { AgentNotifications.failUnreportedApproval(context, it) }
+    AgentNotifications.beginApprovalAction(context, "first".hashCode(), APPROVAL_ACTIONS[0])
+    tasks.queue("first".hashCode())
+    tasks.started(1)
+    AgentNotifications.beginApprovalAction(context, "second".hashCode(), APPROVAL_ACTIONS[0])
+    tasks.queue("second".hashCode())
+    tasks.started(1)
+    tasks.started(2)
+    tasks.finished(1)
+    assertEquals(INTERRUPTED, text("first"))
+    assertEquals("Allowing…", text("second"))
+    tasks.finished(2)
+    assertEquals(INTERRUPTED, text("second"))
+  }
+
+  @Test
   fun aPushFailsAnAnswerLeftSendingByAProcessThatDied() {
     AgentNotifications.receive(context, approval("approval", "request-a"))
     AgentNotifications.beginApprovalAction(context, "approval".hashCode(), APPROVAL_ACTIONS[0])
