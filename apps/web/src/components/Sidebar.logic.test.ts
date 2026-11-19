@@ -798,12 +798,21 @@ describe("resolveHomeThreadRefs", () => {
       resolveHomeThreadRefs({
         serverConfigs,
         primaryEnvironmentId: localEnvironmentId,
+        order: [],
       }),
     ).toEqual([
       { environmentId: localEnvironmentId, threadId: "home:local" },
       { environmentId: remote, threadId: "home:remote" },
       { environmentId: offline, threadId: "home:offline" },
     ]);
+    // A saved order leads; environments it does not name keep their default order after it.
+    expect(
+      resolveHomeThreadRefs({
+        serverConfigs,
+        primaryEnvironmentId: localEnvironmentId,
+        order: [offline, "environment-forgotten"],
+      }).map((ref) => ref.environmentId),
+    ).toEqual([offline, localEnvironmentId, remote]);
   });
 });
 
