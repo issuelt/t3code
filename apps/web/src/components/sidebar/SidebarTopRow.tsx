@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import type { DraggableSyntheticListeners } from "@dnd-kit/core";
+import type { CSSProperties, ReactNode, Ref } from "react";
 
 import { cn } from "../../lib/utils";
 
@@ -10,6 +11,10 @@ export function SidebarTopRow({
   title,
   trailing,
   onActivate,
+  ref,
+  style,
+  dragListeners,
+  isDragging = false,
 }: {
   label: string;
   isActive: boolean;
@@ -18,10 +23,15 @@ export function SidebarTopRow({
   title: string;
   trailing: ReactNode;
   onActivate: () => void;
+  ref?: Ref<HTMLLIElement>;
+  style?: CSSProperties;
+  dragListeners?: DraggableSyntheticListeners;
+  isDragging?: boolean;
 }) {
   return (
-    <li className="list-none">
+    <li ref={ref} style={style} className={cn("list-none", isDragging && "relative z-10")}>
       <div
+        {...dragListeners}
         role="button"
         tabIndex={0}
         aria-label={label}
@@ -32,6 +42,7 @@ export function SidebarTopRow({
           isActive
             ? "bg-sidebar-row-active text-sidebar-foreground"
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
+          isDragging && "bg-sidebar-row-hover",
         )}
         onClick={onActivate}
         onKeyDown={(event) => {

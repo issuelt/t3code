@@ -2,7 +2,7 @@ import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { SidebarDecisionsRow } from "./sidebar/SidebarDecisionsRow";
-import { SidebarHomeRow } from "./sidebar/SidebarHomeRow";
+import { SidebarHomeRows } from "./sidebar/SidebarHomeRow";
 import { isHomeProject } from "@t3tools/client-runtime/state/projects";
 import {
   dropThreadContext,
@@ -1013,9 +1013,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlightKey, setSearchHighlightKey] = useState<string | null>(null);
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const sidebarHomeOrder = useUiStateStore((store) => store.sidebarHomeOrder);
   const homeThreadRefs = resolveHomeThreadRefs({
     serverConfigs,
     primaryEnvironmentId: primaryEnvironmentIdForHome,
+    order: sidebarHomeOrder,
   });
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
@@ -3481,19 +3483,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
                         <SidebarDecisionsRow key="decisions" />,
-                        ...homeThreadRefs.map((homeRef) => (
-                          <SidebarHomeRow
-                            key={`home:${scopedThreadKey(homeRef)}`}
-                            threadRef={homeRef}
-                            environmentLabel={
-                              homeThreadRefs.length > 1
-                                ? (environmentLabelById.get(homeRef.environmentId) ?? null)
-                                : null
-                            }
-                            isActive={routeThreadKey === scopedThreadKey(homeRef)}
-                            onActivate={navigateToThread}
-                          />
-                        )),
+                        <SidebarHomeRows
+                          key="home-rows"
+                          threadRefs={homeThreadRefs}
+                          environmentLabelById={environmentLabelById}
+                          activeThreadKey={routeThreadKey}
+                          onActivate={navigateToThread}
+                        />,
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}

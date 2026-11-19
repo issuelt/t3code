@@ -1446,9 +1446,9 @@ export function sortSidebarV2ProjectGroups<
 }
 
 /**
- * Each known environment's current Home thread, the primary's first. Home rows show them, offline
- * ones included so they stay put through reconnects, and the thread list leaves them out; older
- * Home threads stay in history.
+ * Each known environment's current Home thread, in the user's saved order, then the primary's,
+ * then the rest. Home rows show them, offline ones included so they stay put through reconnects,
+ * and the thread list leaves them out; older Home threads stay in history.
  */
 export function resolveHomeThreadRefs(input: {
   readonly serverConfigs: ReadonlyMap<
@@ -1456,13 +1456,18 @@ export function resolveHomeThreadRefs(input: {
     { readonly settings: { readonly home: { readonly threadId: ThreadId | null } } }
   >;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly order: readonly string[];
 }): ScopedThreadRef[] {
+  const rank = (environmentId: EnvironmentId) => {
+    const index = input.order.indexOf(environmentId);
+    return index === -1 ? input.order.length : index;
+  };
   const environmentIds = [
     ...(input.primaryEnvironmentId === null ? [] : [input.primaryEnvironmentId]),
     ...[...input.serverConfigs.keys()].filter(
       (environmentId) => environmentId !== input.primaryEnvironmentId,
     ),
-  ];
+  ].toSorted((left, right) => rank(left) - rank(right));
   return environmentIds.flatMap((environmentId) => {
     const threadId = input.serverConfigs.get(environmentId)?.settings.home.threadId ?? null;
     return threadId === null ? [] : [scopeThreadRef(environmentId, threadId)];
