@@ -12,6 +12,7 @@ import {
   NodeId,
   type ProjectId,
   ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as Context from "effect/Context";
@@ -134,6 +135,8 @@ export interface EventSinkV2Shape {
       readonly requestId: OrchestrationV2TurnItem["id"];
       readonly resultId: OrchestrationV2TurnItem["id"];
     };
+    /** Turn items in `events` whose newly allocated positions should take the run's first slot. */
+    readonly runStartTurnItemIds?: ReadonlyArray<TurnItemId>;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
@@ -386,7 +389,10 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    const normalizeEvents = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      runStartTurnItemIds?: ReadonlySet<TurnItemId>,
+    ) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -402,6 +408,7 @@ const layerBase: Layer.Layer<
                 .normalize(
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  runStartTurnItemIds?.has(event.payload.id) ? "run_start" : undefined,
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
@@ -638,6 +645,9 @@ const layerBase: Layer.Layer<
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
                 : input.events,
+              input.runStartTurnItemIds === undefined
+                ? undefined
+                : new Set(input.runStartTurnItemIds),
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

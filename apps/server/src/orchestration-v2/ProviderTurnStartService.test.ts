@@ -74,11 +74,18 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  homeThreadId?: ThreadId | null,
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(
+      homeThreadId === undefined
+        ? {}
+        : { home: { threadId: homeThreadId, watchAll: false, watches: [] } },
+    ),
   );
 
 function startWithMissingWorktree(
@@ -311,6 +318,7 @@ function makeLocalCommandHarness(input: {
     readonly threadUsedTokens?: number;
     readonly staleRollHandoff?: boolean;
     readonly backgroundWork?: boolean;
+    readonly former?: boolean;
     readonly history?: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly chiefOfStaffAnswer?: {
       readonly senderThreadId: ThreadId;
@@ -969,7 +977,7 @@ function makeLocalCommandHarness(input: {
   );
   const tryHandlePromptCommand = vi.fn(() =>
     input.logoutFailure === undefined
-      ? Effect.succeed(true)
+      ? Effect.succeed(input.home === undefined)
       : Effect.fail(
           new ProviderSetupError({
             instanceId: oldInstanceId,
@@ -1078,7 +1086,10 @@ function makeLocalCommandHarness(input: {
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({
           allocate: () => Effect.succeed(1),
         }),
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(
+          input.worktreesDir,
+          input.home === undefined ? undefined : input.home.former === true ? null : threadId,
+        ),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -2200,11 +2211,22 @@ const homeHistory = [
   ),
 ];
 
-const startHome = (home: NonNullable<Parameters<typeof makeLocalCommandHarness>[0]["home"]>) =>
+const startHome = (
+  home: NonNullable<Parameters<typeof makeLocalCommandHarness>[0]["home"]>,
+  options: {
+    readonly text?: string;
+    readonly previousMessages?: ReadonlyArray<string>;
+    readonly nativeGoals?: boolean;
+  } = {},
+) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
-      text: "Continue",
+      text: options.text ?? "Continue",
       previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      ...(options.previousMessages === undefined
+        ? {}
+        : { previousMessages: options.previousMessages }),
+      ...(options.nativeGoals === undefined ? {} : { nativeGoals: options.nativeGoals }),
       home,
     });
     // The harness dates its turns at 2026-09-04T12:00:00Z.
@@ -2252,9 +2274,29 @@ effectIt.effect.each([
     name: "idle for an hour while background work is still running",
     home: { idleMinutes: 60, usedTokens: 40_000, backgroundWork: true },
   },
-])("resumes a Home thread $name", ({ home }) =>
+  {
+    name: "that is no longer the active Home",
+    home: { idleMinutes: 60, usedTokens: 150_000, former: true },
+  },
+  {
+    name: "receiving /compact after an hour idle",
+    home: { idleMinutes: 60, usedTokens: 40_000 },
+    text: "/compact",
+    previousMessages: ["Earlier message"],
+  },
+  {
+    name: "receiving /goal after an hour idle",
+    home: { idleMinutes: 60, usedTokens: 40_000 },
+    text: "/goal ship it",
+    nativeGoals: true,
+  },
+])("resumes a Home thread $name", ({ home, text, previousMessages, nativeGoals }) =>
   Effect.gen(function* () {
-    const harness = yield* startHome(home);
+    const harness = yield* startHome(home, {
+      ...(text === undefined ? {} : { text }),
+      ...(previousMessages === undefined ? {} : { previousMessages }),
+      ...(nativeGoals === undefined ? {} : { nativeGoals }),
+    });
 
     expect(harness.previousTurnResumeThread).toHaveBeenCalledOnce();
     expect(harness.previousTurnEnsureThread).not.toHaveBeenCalled();

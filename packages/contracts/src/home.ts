@@ -162,6 +162,12 @@ export const isAgentDeliveredMessage = (
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;
 
+export const HomeStartFreshInput = Schema.Struct({
+  /** When set, refuse the fresh start if another client already replaced this Home thread. */
+  expectedThreadId: Schema.optional(ThreadId),
+});
+export type HomeStartFreshInput = typeof HomeStartFreshInput.Type;
+
 export const HomeThreadResult = Schema.Struct({ threadId: ThreadId });
 export type HomeThreadResult = typeof HomeThreadResult.Type;
 

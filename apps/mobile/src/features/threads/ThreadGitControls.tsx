@@ -5,7 +5,6 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   type GitRunStackedActionResult,
-  isHomeThreadId,
   type ProjectScript,
   ThreadId,
   type VcsStatusResult,
@@ -83,6 +82,7 @@ export type ThreadGitMenuProps = {
   readonly threadId: ThreadId | string;
   readonly currentBranch: string | null;
   readonly hasThread?: boolean;
+  readonly hideGitControls?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
@@ -308,7 +308,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
 /** The thread's git menu, shared by the thread bar and Review. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
   const model = useThreadGitControlModel(props);
-  if (isHomeThreadId(String(props.threadId))) return null;
+  if (props.hideGitControls) return null;
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",

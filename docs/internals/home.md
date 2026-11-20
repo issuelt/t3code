@@ -28,15 +28,17 @@ across every project and connected environment. User guide:
 
 ## Sessions roll instead of compacting
 
-Home is one thread that lives for weeks, so it never compacts. When its next turn starts after at
-least an hour idle, or with its native context half full or past Claude's auto-compact threshold
-(whichever is lower), `ProviderTurnStartService` skips the resume and takes the fresh-session
-recovery path: a new native session seeded with the thread's newest items
-(`orchestration-v2/homeSessionRoll.ts`). The roll waits while the old session still runs background
-work, and steering an active turn is unaffected. The 1-hour idle boundary matches Claude's
-subscription prompt cache TTL and ensures providers without context-usage telemetry still roll.
-Idle compaction, the client "Compact on return" chip, Claude's compact-on-resume prompt, and
-Claude Code's own `idleCompaction` setting all skip Home.
+Home is one thread that lives for weeks, so routine idle and pre-send compaction skip it in favor
+of rolling into a fresh session. When its next turn starts after at least an hour idle, or with its
+native context half full or past Claude's auto-compact threshold (whichever is lower),
+`ProviderTurnStartService` skips the resume and takes the fresh-session recovery path: a new native
+session seeded with the thread's newest items (`orchestration-v2/homeSessionRoll.ts`). The roll
+waits while the old session still runs background work, defers for commands that operate on the
+current native session (`/compact`, `/goal`), and leaves steering an active turn unaffected. The
+1-hour idle boundary matches Claude's subscription prompt cache TTL and ensures providers without
+context-usage telemetry still roll. Server idle compaction, the client "Compact on return" chip,
+Claude's compact-on-resume prompt, and Claude Code's own `idleCompaction` setting all skip Home
+(manual `/compact` remains available against the current session).
 
 Each roll writes its handoff and transfer under ids derived from the provider thread, so the next
 roll replaces them, and records a lightweight `handoff` turn item without `summary` (rendered as a

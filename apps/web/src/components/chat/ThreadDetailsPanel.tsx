@@ -1,5 +1,4 @@
 import {
-  isHomeThreadId,
   type EditorId,
   type EnvironmentId,
   type ProjectId,
@@ -105,7 +104,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
   const isHome =
-    isHomeThreadId(props.threadId) ||
+    serverConfig?.settings.home.threadId === props.threadId ||
     (serverConfig !== undefined &&
       project !== null &&
       isHomeProject(project, serverConfig.homeWorkspaceRoot));

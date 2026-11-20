@@ -324,7 +324,7 @@ export function useThreadActionMenu(input: {
         case "start-fresh": {
           const result = await startFreshHome({
             environmentId: threadRef.environmentId,
-            input: {},
+            input: { expectedThreadId: thread.id },
           });
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result)) {

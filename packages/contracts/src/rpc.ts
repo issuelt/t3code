@@ -345,6 +345,7 @@ import {
   FleetHostResponse,
   FleetInvokeInput,
   HomeEnableInput,
+  HomeStartFreshInput,
   HomeThreadResult,
   HomeUnavailableError,
   HomeWatchReport,
@@ -1827,7 +1828,7 @@ const WsHomeDisableRpc = Rpc.make(WS_METHODS.homeDisable, {
 });
 
 const WsHomeStartFreshRpc = Rpc.make(WS_METHODS.homeStartFresh, {
-  payload: Schema.Struct({}),
+  payload: HomeStartFreshInput,
   success: HomeThreadResult,
   error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
 });

@@ -228,7 +228,7 @@ it.effect("a Home thread that a fresh start replaced cannot change watches", () 
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const { threadId: old } = yield* home.enable({ modelSelection });
-    yield* home.startFresh;
+    yield* home.startFresh();
     const error = yield* home
       .updateWatches(old, (current) => ({ ...current, watchAll: true }))
       .pipe(Effect.flip);
@@ -275,7 +275,7 @@ it.effect("starting fresh moves the grant to a new thread and settles the old on
   return Effect.gen(function* () {
     const home = yield* HomeService.HomeService;
     const first = yield* home.enable({ modelSelection });
-    const fresh = yield* home.startFresh;
+    const fresh = yield* home.startFresh({ expectedThreadId: first.threadId });
     expect(fresh.threadId).not.toBe(first.threadId);
     expect(yield* home.isHome(first.threadId)).toBe(false);
     expect(yield* home.isHome(fresh.threadId)).toBe(true);
@@ -285,6 +285,27 @@ it.effect("starting fresh moves the grant to a new thread and settles the old on
     ]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "a stale start-fresh request for an already-replaced Home leaves the replacement alone",
+  () => {
+    const { layer, dispatched, launched, running } = makeHome();
+    return Effect.gen(function* () {
+      const home = yield* HomeService.HomeService;
+      const homeA = yield* home.enable({ modelSelection });
+      const homeB = yield* home.startFresh({ expectedThreadId: homeA.threadId });
+      running.add(homeB.threadId);
+      dispatched.length = 0;
+
+      const error = yield* home.startFresh({ expectedThreadId: homeA.threadId }).pipe(Effect.flip);
+
+      expect(error.message).toContain("no longer Home");
+      expect(yield* home.isHome(homeB.threadId)).toBe(true);
+      expect(launched).toHaveLength(2);
+      expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it("preserves an intentional watch when a launched thread is watched explicitly", () => {
   const threadId = ThreadId.make("t");

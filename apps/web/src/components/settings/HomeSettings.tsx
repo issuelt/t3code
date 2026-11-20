@@ -188,7 +188,7 @@ function HomeOnRows(props: {
 
   const runStartFresh = async () => {
     setPending(true);
-    const result = await startFresh({ environmentId, input: {} });
+    const result = await startFresh({ environmentId, input: { expectedThreadId: threadId } });
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {

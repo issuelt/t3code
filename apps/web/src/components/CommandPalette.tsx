@@ -517,7 +517,8 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const serverConfigs = useServerConfigs();
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const activeThreadIsHome =
@@ -862,14 +863,20 @@ function OpenCommandPaletteDialog(props: {
     await handleNewThread(scopeProjectRef(project.environmentId, project.id));
   };
 
-  const isPrimaryHomeProject = (project: {
+  const isHomeWorkspaceProject = (project: {
     readonly environmentId: EnvironmentId;
     readonly workspaceRoot: string;
-  }) => project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
+  }) => {
+    const config = serverConfigs.get(project.environmentId);
+    const homeRoot =
+      config?.homeWorkspaceRoot ??
+      (project.environmentId === primaryEnvironmentId ? homeWorkspaceRoot : null);
+    return isHomeProject(project, homeRoot);
+  };
   // Pinning from a row keeps rows in place while the palette is open.
   const projectSearchItems = useOrderWhileOpen(
     buildProjectSearchItems({
-      projects: pickerProjects.filter((project) => !isPrimaryHomeProject(project)),
+      projects: pickerProjects.filter((project) => !isHomeWorkspaceProject(project)),
       projectGroupByTargetKey,
       locationByEnvironmentId: projectEnvironmentLocationById,
       runProject: openProjectFromSearch,
@@ -889,7 +896,7 @@ function OpenCommandPaletteDialog(props: {
           : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
         projects: pickerProjects.filter(
-          (project) => !isScratch(project) && !isPrimaryHomeProject(project),
+          (project) => !isScratch(project) && !isHomeWorkspaceProject(project),
         ),
         currentProjectKey: currentEntry
           ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
@@ -1333,7 +1340,7 @@ function OpenCommandPaletteDialog(props: {
       return true;
     }
     const project = projectByKey.get(`${projectRef.environmentId}:${projectRef.projectId}`);
-    return project !== undefined && isPrimaryHomeProject(project);
+    return project !== undefined && isHomeWorkspaceProject(project);
   };
   const isHomeProjectGroup = (group: (typeof projectGroups)[number]) =>
     group.memberProjectRefs.some(isHomeProjectRef);
@@ -1346,7 +1353,7 @@ function OpenCommandPaletteDialog(props: {
     );
     const activeProjectTitle =
       preferredEntry?.group.displayName ??
-      (currentProject && !isPrimaryHomeProject(currentProject) && !activeThreadIsHomeFolder
+      (currentProject && !isHomeWorkspaceProject(currentProject) && !activeThreadIsHomeFolder
         ? currentProject.title
         : null);
 
@@ -1574,7 +1581,10 @@ function OpenCommandPaletteDialog(props: {
       description: "New Home thread; the current one stays in history",
       icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        const result = await startFreshHome({ environmentId, input: {} });
+        const result = await startFreshHome({
+          environmentId,
+          input: { expectedThreadId: activeThread.id },
+        });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             throw squashAtomCommandFailure(result);

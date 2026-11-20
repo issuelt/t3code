@@ -28,7 +28,6 @@ import {
   AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  isHomeThreadId,
   isProviderNativeSubagentThread,
   MessageId,
   ThreadId,
@@ -486,6 +485,13 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const routeConnectionState =
+    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
+  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const isActiveHomeThread =
+    selectedThread !== null &&
+    routeEnvironmentRuntime?.serverConfig?.settings.home.threadId === selectedThread.id;
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -500,6 +506,7 @@ function ThreadRouteContent(
         : chosenInspectorMode === null || chosenInspectorMode === "route"
           ? "route"
           : chosenInspectorMode;
+    if (mode === "git" && isActiveHomeThread) return null;
     return mode === "files" && selectedThreadCwd === null ? null : mode;
   })();
   const revealPreview = useEffectEvent(() => showInspector());
@@ -507,10 +514,6 @@ function ThreadRouteContent(
   useEffect(() => {
     if (previewTarget) revealPreview();
   }, [previewTarget]);
-  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
-  const routeConnectionState =
-    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
-  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
   const selectedThreadWithDraftSettings = selectedThread
     ? {
         ...selectedThread,
@@ -540,13 +543,9 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
-  const isHomeThread = selectedThread !== null && isHomeThreadId(selectedThread.id);
-  const isActiveHomeThread =
-    selectedThread !== null &&
-    routeEnvironmentRuntime?.serverConfig?.settings.home.threadId === selectedThread.id;
   const startFreshHome = useAtomCommand(homeEnvironment.startFresh, { reportFailure: false });
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null && !isHomeThread
+    selectedThread !== null && selectedThreadCwd !== null && !isActiveHomeThread
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -658,7 +657,9 @@ function ThreadRouteContent(
                 ]
               : []),
             { key: "files", render: renderFilesInspector, prewarm: true },
-            { key: "git", render: renderGitInspector, prewarm: true },
+            ...(isActiveHomeThread
+              ? []
+              : [{ key: "git", render: renderGitInspector, prewarm: true }]),
             ...(props.renderInspector ? [{ key: "route", render: props.renderInspector }] : []),
           ],
         };
@@ -816,7 +817,8 @@ function ThreadRouteContent(
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
     canOperateTerminal,
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    hideProjectScripts: isHomeThread,
+    hideGitControls: isActiveHomeThread,
+    hideProjectScripts: isActiveHomeThread,
     projectScripts: selectedThreadProject
       ? resolveProjectScripts(
           routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
@@ -974,7 +976,7 @@ function ThreadRouteContent(
     if (!selectedThread || !canOperateThread) return;
     const result = await startFreshHome({
       environmentId: selectedThread.environmentId,
-      input: {},
+      input: { expectedThreadId: selectedThread.id },
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {

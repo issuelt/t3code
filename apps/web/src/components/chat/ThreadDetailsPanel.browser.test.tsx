@@ -10,9 +10,11 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const SCRATCH_ROOT = "/home/user/.t3/scratch";
+const HOME_ROOT = "/home/user/.t3/home";
 
 const state = vi.hoisted(() => ({
   threadId: "thread",
+  homeThreadId: null as string | null,
   workspaceRoot: "",
   folder: "",
   pullRequests: [] as unknown[],
@@ -51,6 +53,8 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
               EnvironmentId.make("environment"),
               {
                 scratchWorkspaceRoot: SCRATCH_ROOT,
+                homeWorkspaceRoot: HOME_ROOT,
+                settings: { home: { threadId: state.homeThreadId, watchAll: false, watches: [] } },
                 environment: { capabilities: { pullRequests: true } },
               },
             ],
@@ -108,12 +112,14 @@ const linkedPullRequest: ThreadPullRequestLink = {
 
 function setup(input: {
   threadId?: string;
+  homeThreadId?: string | null;
   workspaceRoot: string;
   folder: string;
   pullRequests?: ThreadPullRequestLink[];
   configLoaded?: boolean;
 }) {
   state.threadId = input.threadId ?? "thread";
+  state.homeThreadId = input.homeThreadId ?? null;
   state.configLoaded = input.configLoaded ?? true;
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
@@ -232,8 +238,9 @@ it("offers no Initialize Git before the server config says where No project live
 it("hides git controls, pull requests, and project scripts on a Home thread", async () => {
   using fixture = setup({
     threadId: "home:1",
-    workspaceRoot: "/home/user/.t3/home",
-    folder: "/home/user/.t3/home",
+    homeThreadId: "home:1",
+    workspaceRoot: HOME_ROOT,
+    folder: HOME_ROOT,
     pullRequests: [linkedPullRequest],
   });
   await using _screen = await render(<Panel fixture={fixture} activeProjectScripts={[]} />);

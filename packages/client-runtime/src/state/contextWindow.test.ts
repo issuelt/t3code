@@ -259,7 +259,18 @@ describe("compactBeforeSendTokens", () => {
     { name: "while the thread is working", threadIdle: false, expected: false },
     { name: "with no conversation but /compact", onlyCompactMessages: true, expected: false },
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
-    { name: "on a Home thread", threadId: ThreadId.make("home:1"), expected: false },
+    {
+      name: "on the active Home thread",
+      threadId: ThreadId.make("home:1"),
+      settings: { home: { threadId: ThreadId.make("home:1"), watchAll: false, watches: [] } },
+      expected: false,
+    },
+    {
+      name: "on a former Home thread",
+      threadId: ThreadId.make("home:1"),
+      settings: { home: { threadId: ThreadId.make("home:2"), watchAll: false, watches: [] } },
+      expected: true,
+    },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,
