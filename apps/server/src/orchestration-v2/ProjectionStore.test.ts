@@ -1323,7 +1323,7 @@ it.effect("record reads filter notification sources without dropping matching me
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("shells flag a latest run triggered by a provider background wake", () =>
+it.effect("shells flag a latest run that a background wake or a user message started", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("background-wake");
@@ -1339,6 +1339,7 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
       ["subagent", { kind: "subagent" }, "updated", false],
       ["delegated", { kind: "delegated_task", taskIds: [] }, "updated", false],
       ["steered", { kind: "background_task" }, "updated", false],
+      ["typed", null, null, false],
     ] as const) {
       const messageId = MessageId.make(`message:background-wake:${id}`);
       yield* store.apply({
@@ -1351,15 +1352,17 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
           threadId,
           runId: null,
           nodeId: null,
-          createdBy: "agent",
-          creationSource: "server",
+          createdBy: source === null ? "user" : "agent",
+          creationSource: source === null ? "web" : "server",
           role: "user",
           text: id,
           attachments: [],
           streaming: false,
           createdAt: at,
           updatedAt: at,
-          notification: { source, outcome, summary: "Background activity updated" },
+          ...(source === null
+            ? {}
+            : { notification: { source, outcome, summary: "Background activity updated" } }),
           ...(id === "delegated"
             ? {
                 delegatedCompletion: {
@@ -1415,6 +1418,13 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
       assert.deepEqual(
         shells.map((shell) => shell?.latestRunBackgroundWake),
         [expected, expected],
+        id,
+      );
+      // Only a typed message that starts the run makes it the user's; a steer does not.
+      const startedByUser = id === "typed";
+      assert.deepEqual(
+        shells.map((shell) => shell?.latestRunStartedByUser),
+        [startedByUser, startedByUser],
         id,
       );
       yield* assertShellIndexCoversShells();

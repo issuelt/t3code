@@ -99,6 +99,8 @@ export interface ThreadRunSummary {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
   };
+  /** The user typed the message that started this run, not just a later steer. */
+  readonly startedByUser?: boolean;
 }
 
 export interface ThreadRuntimeSummary {
@@ -284,6 +286,7 @@ export function presentThreadShell(
                 : null
               : nullableIso(thread.latestRunCompletedAt),
           assistantMessageId: null,
+          startedByUser: thread.latestRunStartedByUser === true,
         } satisfies ThreadRunSummary);
   const runtime = shellRuntime(thread);
   return {
