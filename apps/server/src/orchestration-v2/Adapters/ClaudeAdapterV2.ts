@@ -12269,16 +12269,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
-              // Home rolls into a fresh session instead of compacting.
-              const idleCompaction = isHomeThreadId(input.threadId)
+              const currentSettings = Option.isSome(serverSettings)
+                ? yield* serverSettings.value.getSettings.pipe(
+                    Effect.orElseSucceed(() => undefined),
+                  )
+                : undefined;
+              // Active Home rolls into a fresh session instead of compacting.
+              const isActiveHome =
+                isHomeThreadId(input.threadId) &&
+                (currentSettings === undefined || currentSettings.home.threadId === input.threadId);
+              const idleCompaction = isActiveHome
                 ? "off"
-                : Option.isSome(serverSettings)
-                  ? yield* serverSettings.value.getSettings.pipe(
-                      Effect.map((settings) =>
-                        resolveIdleCompaction(settings, adapterOptions.instanceId),
-                      ),
-                      Effect.orElseSucceed(() => adapterOptions.settings.idleCompaction),
-                    )
+                : currentSettings !== undefined
+                  ? resolveIdleCompaction(currentSettings, adapterOptions.instanceId)
                   : adapterOptions.settings.idleCompaction;
               if (idleCompaction === "off") {
                 return { behavior: "completed" as const, result: "continue" as const };
@@ -12526,6 +12529,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const isActiveHomeTurn =
+            isHomeThreadId(turnInput.threadId) &&
+            (Option.isSome(serverSettings)
+              ? yield* serverSettings.value.getSettings.pipe(
+                  Effect.map((settings) => settings.home.threadId === turnInput.threadId),
+                  Effect.orElseSucceed(() => true),
+                )
+              : true);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,
@@ -12570,7 +12581,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
-            ...(isHomeThreadId(turnInput.threadId) ? { isHomeThread: true } : {}),
+            ...(isActiveHomeTurn ? { isHomeThread: true } : {}),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

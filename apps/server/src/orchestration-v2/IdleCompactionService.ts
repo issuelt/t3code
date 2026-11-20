@@ -100,7 +100,7 @@ export const make = Effect.gen(function* () {
           continue;
         }
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const window = idleCompactionWindow(records, nowMs);
+        const window = idleCompactionWindow(records, nowMs, current.home.threadId);
         if (window?.runId !== runId) return;
         if (nowMs < window.startMs) {
           yield* Effect.sleep(Duration.millis(window.startMs - nowMs));

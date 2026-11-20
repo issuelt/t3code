@@ -868,10 +868,12 @@ function OpenCommandPaletteDialog(props: {
     readonly workspaceRoot: string;
   }) => {
     const config = serverConfigs.get(project.environmentId);
-    const homeRoot =
-      config?.homeWorkspaceRoot ??
-      (project.environmentId === primaryEnvironmentId ? homeWorkspaceRoot : null);
-    return isHomeProject(project, homeRoot);
+    if (config === undefined) {
+      return project.environmentId === primaryEnvironmentId
+        ? homeWorkspaceRoot === null || isHomeProject(project, homeWorkspaceRoot)
+        : true;
+    }
+    return isHomeProject(project, config.homeWorkspaceRoot);
   };
   // Pinning from a row keeps rows in place while the palette is open.
   const projectSearchItems = useOrderWhileOpen(

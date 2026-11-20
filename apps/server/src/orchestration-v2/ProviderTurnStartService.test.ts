@@ -2285,6 +2285,12 @@ effectIt.effect.each([
     previousMessages: ["Earlier message"],
   },
   {
+    name: "receiving /compact with instructions after an hour idle",
+    home: { idleMinutes: 60, usedTokens: 40_000 },
+    text: "/compact keep the tests",
+    previousMessages: ["Earlier message"],
+  },
+  {
     name: "receiving /goal after an hour idle",
     home: { idleMinutes: 60, usedTokens: 40_000 },
     text: "/goal ship it",

@@ -1277,9 +1277,13 @@ export const layer: Layer.Layer<
         const isActiveHome =
           isHomeThreadId(projection.thread.id) &&
           (yield* serverSettings.getSettings).home.threadId === projection.thread.id;
-        // Commands that act on the current native session (/compact, /goal) defer inline handoffs,
-        // so rolling into an empty replacement session would run them without the conversation.
-        const deferHomeRollForCommand = isCompactionCommandMessage(message) || goalCommand;
+        // Commands that act on the current native session (/compact [instructions], /goal) defer
+        // inline handoffs or expect the existing native history, so rolling into an empty
+        // replacement session would run them without the conversation.
+        const isCompactSlashCommand =
+          message.attachments.length === 0 && /^\/compact(?:\s|$)/i.test(message.text.trim());
+        const deferHomeRollForCommand =
+          isCompactionCommandMessage(message) || isCompactSlashCommand || goalCommand;
         const homeRollReason =
           isActiveHome && !deferHomeRollForCommand
             ? homeSessionRollReason({

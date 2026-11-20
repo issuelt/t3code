@@ -60,10 +60,11 @@ or update a project. Cloning needs a connection that may write to source control
 **Settings → Home → Instructions** opens Home's `AGENTS.md`. Add standing
 instructions below T3 Code's section. Home can also keep notes in its folder.
 
-Home rolls into a fresh session instead of compacting automatically. When the
-next turn starts after an hour idle or once the conversation fills about half of
-the model's context, Home continues in a fresh session that carries its recent
-messages, and it can read the rest of its thread when it needs to.
+Home routinely rolls into a fresh session instead of running idle compaction.
+When a turn starts after an hour idle or once the conversation fills about half
+of the model's context — and no background work or session command (`/compact`,
+`/goal`) is pending — Home continues in a fresh session that carries its recent
+messages, and can read the rest of its thread when it needs to.
 
 **Start fresh** gives Home a new thread with the same model. The old thread
 stays in your history, and its notes and instructions carry over.
