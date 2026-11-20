@@ -654,16 +654,72 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
-    const launch = yield* Effect.flip(
-      callTool("t3_thread_launch", { title: "Repro", scratch: true, prompt: "say hi" }),
-    );
-    const wait = yield* Effect.flip(
-      callTool("t3_thread_wait", { threadId: "thread-excess-arguments", timeout: 5_000 }),
-    );
+    const traced = recordSpans();
+    const launch = yield* callTool("t3_thread_launch", {
+      title: "Repro",
+      scratch: true,
+      prompt: "say hi",
+    }).pipe(Effect.withTracer(traced.tracer));
+    const wait = yield* callTool("t3_thread_wait", {
+      threadId: "thread-excess-arguments",
+      timeout: 5_000,
+    });
 
     expect(calls).toEqual([]);
-    expect(launch.message).toContain('Unknown argument "prompt"');
-    expect(wait.message).toContain('Unknown argument "timeout"');
+    expect(launch.isError).toBe(true);
+    expect(launch.content).toEqual([
+      { type: "text", text: expect.stringContaining('Unknown argument "prompt"') },
+    ]);
+    expect(wait.isError).toBe(true);
+    expect(wait.content).toEqual([
+      { type: "text", text: expect.stringContaining('Unknown argument "timeout"') },
+    ]);
+    // Invalid arguments still fail the tool's trace span without recording argument values.
+    const toolSpans = traced.spans.filter((span) => span.name === "mcp.tool.t3_thread_launch");
+    expect(toolSpans).toHaveLength(1);
+    expect(toolSpans[0]?.status._tag).toBe("Ended");
+    expect(toolSpans[0]?.status._tag === "Ended" ? toolSpans[0].status.exit._tag : undefined).toBe(
+      "Failure",
+    );
+    expect(Object.fromEntries(toolSpans[0]?.attributes ?? [])).toEqual({
+      "rpc.system": "mcp",
+      "rpc.method": "tools/call",
+      "mcp.tool.name": "t3_thread_launch",
+    });
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("decodes a launch model selection in each form a model sends it", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const launch = (modelSelection: Record<string, unknown>) =>
+      callTool("t3_thread_launch", { title: "Audit", scratch: true, modelSelection });
+    const selection = { instanceId: "codex", model: "gpt-6.2-sol" };
+    yield* launch({ ...selection, options: [{ id: "reasoningEffort", value: "high" }] });
+    // The shape Gemini sent through Cursor: legacy `provider` beside an options record.
+    yield* launch({ ...selection, provider: "codex", options: { reasoningEffort: "high" } });
+    // Legacy compatibility: null entries inside an options object are ignored, and an unused
+    // non-string `provider` is ignored when `instanceId` is present.
+    yield* launch({ ...selection, options: { reasoningEffort: "high", legacy: null } });
+    yield* launch({ ...selection, provider: 123 });
+    const nullEntry = yield* launch({ ...selection, options: [null] });
+    const modelOnly = yield* launch({ model: "gpt-6.2-sol" });
+
+    expect(calls).toHaveLength(4);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2]).toEqual(calls[0]);
+    expect(calls[0]).toMatchObject({
+      modelSelection: { ...selection, options: [{ id: "reasoningEffort", value: "high" }] },
+    });
+    expect(calls[3]).toMatchObject({ modelSelection: selection });
+    expect(nullEntry.isError).toBe(true);
+    expect(nullEntry.content).toEqual([
+      { type: "text", text: expect.stringContaining('["modelSelection"]["options"]') },
+    ]);
+    expect(modelOnly.isError).toBe(true);
+    expect(modelOnly.content).toEqual([
+      { type: "text", text: expect.stringContaining('["modelSelection"]["instanceId"]') },
+    ]);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
@@ -722,9 +778,12 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
       const rejected = yield* callTool("t3_thread_read", {
         threadId: "thread-below-minimum",
         [field]: 0,
-      }).pipe(Effect.flip);
+      });
 
-      expect(String(rejected)).toContain("greater than or equal to 1");
+      expect(rejected.isError).toBe(true);
+      expect(rejected.content).toEqual([
+        { type: "text", text: expect.stringContaining("greater than or equal to 1") },
+      ]);
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layerRecordingTools(calls)));
   },

@@ -1022,6 +1022,13 @@ const withToolAnalytics =
             const messages = yield* threads.value.getMessagesById(id, [run.userMessageId]);
             return messages.get(run.userMessageId)?.scheduledTaskId !== undefined;
           }).pipe(Effect.orElseSucceed(() => false));
+    const isInvalidParamsCause = (cause: Cause.Cause<unknown>) =>
+      cause.reasons.some(
+        (reason) =>
+          Cause.isFailReason(reason) &&
+          Predicate.isObject(reason.error) &&
+          reason.error._tag === "InvalidParams",
+      );
     const record =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(
@@ -1029,13 +1036,16 @@ const withToolAnalytics =
           tool: string,
           args: unknown,
           result: McpSchema.CallToolResult | undefined,
+          invalidArguments: boolean,
           durationMs: number,
         ) {
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
             isInputTargetHandoff(tool, args) ||
             hasAction(RESULT_TARGET_ACTIONS, tool, args);
-          const outcome = toolOutcome(result);
+          const outcome = invalidArguments
+            ? { outcome: "error", errorCode: "invalid_arguments" }
+            : toolOutcome(result);
           // Agents call status, read, and preview tools in tight loops, so an
           // event per successful call floods analytics. Only failures count there.
           if (!handoff && outcome.outcome === "ok") return;
@@ -1082,7 +1092,8 @@ const withToolAnalytics =
             yield* analytics.value.record("mcp.tool.invoked", properties);
           }
         },
-        (effect, _tool, _args, _result, _durationMs) => effect.pipe(Effect.ignoreCause),
+        (effect, _tool, _args, _result, _invalidArguments, _durationMs) =>
+          effect.pipe(Effect.ignoreCause),
       );
     const recordingServer = McpServer.McpServer.of({
       ...server,
@@ -1096,12 +1107,20 @@ const withToolAnalytics =
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
                   const result = exit._tag === "Success" ? exit.value : undefined;
+                  const invalidArguments =
+                    exit._tag === "Failure" && isInvalidParamsCause(exit.cause);
                   // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
                     Effect.flatMap((endedAt) =>
-                      record(options.tool.name, payload, result, endedAt - startedAt),
+                      record(
+                        options.tool.name,
+                        payload,
+                        result,
+                        invalidArguments,
+                        endedAt - startedAt,
+                      ),
                     ),
                     Effect.forkDetach,
                     Effect.asVoid,
@@ -1174,6 +1193,38 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
 });
 
+/**
+ * `registerToolkit` raises `InvalidParams` only for invalid arguments. MCP before 2025-11-25 sends
+ * that as a JSON-RPC error, which Cursor shows models as "Tool execution error", so it goes back
+ * as a tool result the model can read and correct.
+ */
+const withReadableInvalidArguments = Effect.fn("McpHttpServer.withReadableInvalidArguments")(
+  function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
+    const server = yield* McpServer.McpServer;
+    const readableServer = McpServer.McpServer.of({
+      ...server,
+      addTool: Effect.fn("McpServer.addTool")(function (options) {
+        return server.addTool({
+          ...options,
+          handle: (payload) =>
+            options.handle(payload).pipe(
+              Effect.catchTags({
+                InvalidParams: (error) =>
+                  Effect.succeed(
+                    new McpSchema.CallToolResult({
+                      isError: true,
+                      content: [{ type: "text", text: error.message }],
+                    }),
+                  ),
+              }),
+            ),
+        });
+      }),
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, readableServer));
+  },
+);
+
 /** Hands each call the services its registration was built with; the request's own still win. */
 const provideRegistrationServices = <Services>() =>
   McpServer.middleware<{ provides: Services }>()(
@@ -1196,9 +1247,11 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
-      withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withReadableInvalidArguments(
+      withToolAnalytics(
+        withToolSpans(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(

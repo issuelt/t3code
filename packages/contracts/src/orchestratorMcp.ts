@@ -45,6 +45,7 @@ import {
   OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -96,6 +97,33 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
   OrchestratorMcpTargetOptionsFromRecord,
 ]);
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
+
+const OrchestratorMcpModelSelectionAdvertised = Schema.Struct({
+  instanceId: Schema.optional(
+    ProviderInstanceId.annotate({
+      description: "Provider instance id from `orchestrator_capabilities`.",
+    }),
+  ),
+  provider: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "Prefer `instanceId`." }),
+  ),
+  model: TrimmedNonEmptyString,
+  options: Schema.optional(
+    OrchestratorMcpTargetOptions.annotate({
+      description: "Options from `orchestrator_capabilities`, such as {effort:'max'}.",
+    }),
+  ),
+});
+
+// ModelSelection decodes from untyped fields for legacy compatibility, so JSON Schema sees each
+// field as `{}`. Keep ModelSelection as the decoder so legacy inputs still normalize, while
+// annotating the typed shape for MCP tool advertisement.
+export const OrchestratorMcpModelSelection = ModelSelection.annotate({
+  t3AdvertisedSchema: {
+    schema: OrchestratorMcpModelSelectionAdvertised,
+    anyOf: [{ required: ["instanceId"] }, { required: ["provider"] }],
+  },
+});
 
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(

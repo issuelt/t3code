@@ -423,12 +423,17 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
 );
 
 it.effect("records only failed calls of tools that hand off no work", () => {
-  // Recording runs detached from the tool response, so the first event is awaited.
-  const recorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
+  // Recording runs detached from the tool response, so each recorded event is awaited.
+  const recorded: Array<{ event: string; properties: object }> = [];
+  const firstRecorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
+  const secondRecorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const organize = (capabilities: McpInvocationContext.McpInvocationScope["capabilities"]) =>
-      server.callTool({ name: "t3_thread_organize", arguments: { action: "pin" } }).pipe(
+    const organize = (
+      capabilities: McpInvocationContext.McpInvocationScope["capabilities"],
+      args: Record<string, unknown> = { action: "pin" },
+    ) =>
+      server.callTool({ name: "t3_thread_organize", arguments: args }).pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, {
           ...scope,
           capabilities,
@@ -440,10 +445,22 @@ it.effect("records only failed calls of tools that hand off no work", () => {
       code: "capability_denied",
     });
     // The successful call ran first, so it would be the first event if it were recorded.
-    expect(yield* Deferred.await(recorded)).toMatchObject({
+    expect(yield* Deferred.await(firstRecorded)).toMatchObject({
       event: "mcp.tool.invoked",
       properties: { tool: "t3_thread_organize", outcome: "error" },
     });
+    const invalid = yield* organize(scope.capabilities, { action: "pin", secretArg: "do-not-log" });
+    expect(invalid.isError).toBe(true);
+    const invalidEvent = yield* Deferred.await(secondRecorded);
+    expect(invalidEvent).toMatchObject({
+      event: "mcp.tool.invoked",
+      properties: {
+        tool: "t3_thread_organize",
+        outcome: "error",
+        errorCode: "invalid_arguments",
+      },
+    });
+    expect(JSON.stringify(invalidEvent)).not.toContain("do-not-log");
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
@@ -464,10 +481,14 @@ it.effect("records only failed calls of tools that hand off no work", () => {
           Layer.succeed(
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
-              record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
-                  Effect.asVoid,
-                ),
+              record: (event, properties) => {
+                const entry = { event, properties: properties ?? {} };
+                recorded.push(entry);
+                return Deferred.succeed(
+                  recorded.length === 1 ? firstRecorded : secondRecorded,
+                  entry,
+                ).pipe(Effect.asVoid);
+              },
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -587,12 +608,11 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.result,
       );
     expect(dispatched).toEqual([]);
     expect(outcome).toMatchObject({
-      _tag: "Failure",
-      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
+      isError: true,
+      content: [{ type: "text", text: expect.stringContaining('Unknown argument "threadIds"') }],
     });
   }).pipe(
     Effect.provide(

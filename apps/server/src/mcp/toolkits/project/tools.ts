@@ -3,7 +3,7 @@ import {
   FleetProjectListInput,
   FleetThreadLaunchResult,
   NonNegativeInt,
-  ModelSelection,
+  OrchestratorMcpModelSelection,
   TrimmedNonEmptyString,
   OrchestrationV2DelegatedFrom,
   HomeJob,
@@ -140,7 +140,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
           "Home only. The job this thread works on, in a few words. Reuse the exact name for every thread of one job; the Fleet board groups threads by it.",
       }),
     ),
-    modelSelection: Schema.optional(ModelSelection),
+    modelSelection: Schema.optional(OrchestratorMcpModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(

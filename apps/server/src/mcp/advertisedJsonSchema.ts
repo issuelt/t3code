@@ -1,4 +1,6 @@
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
+import type * as SchemaAST from "effect/SchemaAST";
 import { Tool } from "effect/ai";
 
 type Json = unknown;
@@ -96,6 +98,42 @@ const compact = (schema: Json, optional: boolean): Json => {
   return result;
 };
 
+const advertisedOverrideOf = (
+  ast: SchemaAST.AST,
+): { readonly schema: Schema.Top; readonly anyOf?: ReadonlyArray<JsonObject> } | undefined => {
+  const direct = ast.annotations?.t3AdvertisedSchema;
+  if (Predicate.isObject(direct) && "schema" in direct) {
+    return direct as { readonly schema: Schema.Top; readonly anyOf?: ReadonlyArray<JsonObject> };
+  }
+  if (ast._tag === "Union") {
+    for (const member of ast.types) {
+      const found = advertisedOverrideOf(member);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+};
+
+const applyAdvertisedOverrides = (tool: Tool.Any, raw: Json): Json => {
+  if (!Predicate.isObject(raw) || !Predicate.isObject(raw.properties)) return raw;
+  const ast = tool.parametersSchema.ast;
+  if (ast._tag !== "Objects") return raw;
+  let properties: JsonObject | undefined;
+  for (const signature of ast.propertySignatures) {
+    if (typeof signature.name !== "string") continue;
+    const override = advertisedOverrideOf(signature.type);
+    if (override === undefined) continue;
+    const doc = Schema.toJsonSchemaDocument(override.schema as never).schema;
+    const replacement: JsonObject = {
+      ...(Predicate.isObject(doc) ? doc : {}),
+      ...(override.anyOf === undefined ? {} : { anyOf: override.anyOf }),
+    };
+    properties ??= { ...raw.properties };
+    properties[signature.name] = replacement;
+  }
+  return properties === undefined ? raw : { ...raw, properties };
+};
+
 /**
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
@@ -103,4 +141,6 @@ const compact = (schema: Json, optional: boolean): Json => {
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
-  compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+  compact(applyAdvertisedOverrides(tool, Tool.getJsonSchema(tool)), false) as ReturnType<
+    typeof Tool.getJsonSchema
+  >;
