@@ -1760,9 +1760,7 @@ export function threadShellFromProjection(
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
     latestRunStartedByUser:
-      latestRun != null &&
-      projection.messages.find((message) => message.id === latestRun.userMessageId)?.createdBy ===
-        "user",
+      latestRun != null && runStartMessage(latestRun, projection)?.createdBy === "user",
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
@@ -1861,6 +1859,23 @@ function isBackgroundWakeRunForShell(
       (candidate) => candidate.runId === run.id && candidate.createdBy === "user",
     )
   );
+}
+
+// A steering restart points userMessageId at the steer, so the run's earliest message started it.
+function runStartMessage(
+  run: OrchestrationV2ThreadProjection["runs"][number],
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
+) {
+  return projection.messages
+    .filter(
+      (message) =>
+        message.role === "user" && (message.runId === run.id || message.id === run.userMessageId),
+    )
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt) ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    )[0];
 }
 
 type ShellThreadState = {
@@ -7562,14 +7577,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       )`;
     };
 
-    // Mirrors latestRunStartedByUser in threadShellFromProjection.
+    // Mirrors runStartMessage.
     const isUserStartedShellRun = (alias: string) => {
       const run = sql.literal(alias);
-      return sql`EXISTS (
-        SELECT 1 FROM orchestration_v2_projection_messages start
-        WHERE start.message_id = json_extract(${run}.payload_json, '$.userMessageId')
-          AND json_extract(start.payload_json, '$.createdBy') = 'user'
-      )`;
+      return sql`COALESCE((
+        SELECT json_extract(start.payload_json, '$.createdBy') = 'user'
+        FROM orchestration_v2_projection_messages start
+        WHERE start.role = 'user'
+          AND (start.run_id = ${run}.run_id
+            OR start.message_id = json_extract(${run}.payload_json, '$.userMessageId'))
+        ORDER BY start.created_at, start.message_id
+        LIMIT 1
+      ), 0)`;
     };
 
     const selectShellThreadRows = (

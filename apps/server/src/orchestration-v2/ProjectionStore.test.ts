@@ -1339,9 +1339,13 @@ it.effect("shells flag a latest run that a background wake or a user message sta
       ["subagent", { kind: "subagent" }, "updated", false],
       ["delegated", { kind: "delegated_task", taskIds: [] }, "updated", false],
       ["steered", { kind: "background_task" }, "updated", false],
+      // A steering restart points the run's userMessageId at the steer.
+      ["restarted", { kind: "background_task" }, "updated", false],
       ["typed", null, null, false],
     ] as const) {
       const messageId = MessageId.make(`message:background-wake:${id}`);
+      const runId = RunId.make(`run:background-wake:${id}`);
+      const followUpId = MessageId.make(`message:background-wake:${id}:follow-up`);
       yield* store.apply({
         id: EventId.make(`event:background-wake:${id}:message`),
         type: "message.updated",
@@ -1350,7 +1354,7 @@ it.effect("shells flag a latest run that a background wake or a user message sta
         payload: {
           id: messageId,
           threadId,
-          runId: null,
+          runId: id === "restarted" ? runId : null,
           nodeId: null,
           createdBy: source === null ? "user" : "agent",
           creationSource: source === null ? "web" : "server",
@@ -1382,23 +1386,24 @@ it.effect("shells flag a latest run that a background wake or a user message sta
         occurredAt: at,
         payload: {
           ...initial.runs[0]!,
-          id: RunId.make(`run:background-wake:${id}`),
+          id: runId,
           ordinal,
-          userMessageId: messageId,
+          userMessageId: id === "restarted" ? followUpId : messageId,
           status: "completed",
           completedAt: at,
         },
       });
-      if (id === "steered") {
+      if (id === "steered" || id === "restarted") {
+        const steeredAt = DateTime.add(at, { seconds: 1 });
         yield* store.apply({
-          id: EventId.make("event:background-wake:steered:follow-up"),
+          id: EventId.make(`event:background-wake:${id}:follow-up`),
           type: "message.updated",
           threadId,
-          occurredAt: at,
+          occurredAt: steeredAt,
           payload: {
-            id: MessageId.make("message:background-wake:steered:follow-up"),
+            id: followUpId,
             threadId,
-            runId: RunId.make("run:background-wake:steered"),
+            runId,
             nodeId: null,
             createdBy: "user",
             creationSource: "web",
@@ -1406,8 +1411,8 @@ it.effect("shells flag a latest run that a background wake or a user message sta
             text: "also fix X",
             attachments: [],
             streaming: false,
-            createdAt: at,
-            updatedAt: at,
+            createdAt: steeredAt,
+            updatedAt: steeredAt,
           },
         });
       }
