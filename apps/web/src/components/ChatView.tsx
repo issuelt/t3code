@@ -64,6 +64,7 @@ import {
   type AssistantCitation,
   type ResponseContextRecord,
   type ChatFileAttachment,
+  isHomeThreadId,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type MessageId,
@@ -1743,6 +1744,7 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
+  const isHomeThread = activeThreadId !== null && isHomeThreadId(activeThreadId);
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
@@ -2407,7 +2409,7 @@ export default function ChatView(props: ChatViewProps) {
     threadPanelPresentation,
     isServerThread,
     embedded,
-    isGitRepo,
+    isGitRepo: isGitRepo && !isHomeThread,
     browserAvailable,
     canOperatePreview,
     diffOpen,
@@ -2415,8 +2417,8 @@ export default function ChatView(props: ChatViewProps) {
     rightPanelOpen,
     canMaximizeRightPanel,
     rightPanelMaximized,
-    supportsPullRequests,
-    pullRequestsSurfaceAvailable,
+    supportsPullRequests: supportsPullRequests && !isHomeThread,
+    pullRequestsSurfaceAvailable: pullRequestsSurfaceAvailable && !isHomeThread,
     gitCwd,
     activeProjectCwd,
     onDiffPanelOpen,
@@ -2511,7 +2513,9 @@ export default function ChatView(props: ChatViewProps) {
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
   // The context window is the current conversation's, so a handoff destination never inherits it.
+  // Home rolls into a fresh session instead of compacting on return.
   const resumeCompactionTokens =
+    !isHomeThread &&
     activeContextWindow &&
     pendingHandoff === null &&
     resolveIdleCompaction(
@@ -3928,7 +3932,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                     : {})}
                   onComposerFocusRequest={scheduleComposerFocusStable}
-                  {...(isServerThread && isGitRepo
+                  {...(isServerThread && isGitRepo && !isHomeThread
                     ? { onOpenChanges: openChangesFromThreadPanelStable }
                     : {})}
                   onRunProjectScript={runProjectScriptStable}
@@ -4023,10 +4027,10 @@ export default function ChatView(props: ChatViewProps) {
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && isGitRepo}
+          diffAvailable={isServerThread && isGitRepo && !isHomeThread}
           filesAvailable={activeProject !== null}
-          pullRequestAvailable={pullRequestSurfaceAvailable}
-          pullRequestsAvailable={pullRequestsSurfaceAvailable}
+          pullRequestAvailable={pullRequestSurfaceAvailable && !isHomeThread}
+          pullRequestsAvailable={pullRequestsSurfaceAvailable && !isHomeThread}
           deviceAvailable={activeThreadRef !== null}
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}

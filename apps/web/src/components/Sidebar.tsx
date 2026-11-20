@@ -2635,6 +2635,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              isHome:
+                serverConfigs.get(threadRef.environmentId)?.settings.home.threadId ===
+                threadRef.threadId,
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

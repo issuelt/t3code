@@ -2220,7 +2220,9 @@ effectIt.effect.each([
     name: "past Claude's auto-compact threshold",
     home: { idleMinutes: 1, usedTokens: 70_000, autoCompactThreshold: 67_000 },
   },
-])("rolls a half-full Home thread $name into a fresh session", ({ home }) =>
+  { name: "that sat idle for an hour", home: { idleMinutes: 60, usedTokens: 40_000 } },
+  { name: "that sat idle for an hour without token telemetry", home: { idleMinutes: 60 } },
+])("rolls a Home thread $name into a fresh session", ({ home }) =>
   Effect.gen(function* () {
     const harness = yield* startHome(home);
 
@@ -2229,16 +2231,26 @@ effectIt.effect.each([
       expect.objectContaining({ forceNewNativeThread: true }),
     );
     expect(harness.projection().contextHandoffs.at(-1)?.strategy).toBe("full_thread_summary");
-    expect(harness.projection().turnItems.filter((item) => item.type === "handoff")).toEqual([]);
+    const markers = harness.projection().turnItems.filter((item) => item.type === "handoff");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.title).toBe("New session");
+    expect(markers[0]?.summary).toBeUndefined();
   }),
 );
 
 effectIt.effect.each([
   { name: "whose prompt cache is still warm", home: { idleMinutes: 2, usedTokens: 40_000 } },
-  { name: "that sat idle for an hour", home: { idleMinutes: 60, usedTokens: 40_000 } },
+  {
+    name: "under an hour idle and below half context",
+    home: { idleMinutes: 59, usedTokens: 40_000 },
+  },
   {
     name: "whose session still runs background work",
     home: { idleMinutes: 1, usedTokens: 100_000, backgroundWork: true },
+  },
+  {
+    name: "idle for an hour while background work is still running",
+    home: { idleMinutes: 60, usedTokens: 40_000, backgroundWork: true },
   },
 ])("resumes a Home thread $name", ({ home }) =>
   Effect.gen(function* () {

@@ -391,6 +391,19 @@ export function readEnvironmentSupportsAutoSettleOptOut(environmentId: Environme
   );
 }
 
+/** The environment's active Home thread, or null when Home is off or not loaded. */
+export function readEnvironmentHomeThreadId(environmentId: EnvironmentId): ThreadId | null {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.settings.home.threadId ??
+    null
+  );
+}
+
+export function useIsActiveHomeThread(ref: ScopedThreadRef | null): boolean {
+  const configs = useServerConfigs();
+  return ref !== null && configs.get(ref.environmentId)?.settings.home.threadId === ref.threadId;
+}
+
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {

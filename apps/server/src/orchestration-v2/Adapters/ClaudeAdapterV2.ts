@@ -1998,6 +1998,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** Home rolls into a fresh session instead of letting Claude compact while idle. */
+  readonly isHomeThread?: boolean;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
@@ -2043,11 +2045,15 @@ export function makeClaudeQueryOptions(input: {
       ? undefined
       : input.settings.autoCompactWindow;
   const compactQuerySettings =
-    autoCompactWindow === undefined
+    (autoCompactWindow === undefined && input.isHomeThread !== true) ||
+    typeof querySettings === "string"
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
-          autoCompactWindow: Number(autoCompactWindow),
+          ...(autoCompactWindow === undefined
+            ? {}
+            : { autoCompactWindow: Number(autoCompactWindow) }),
+          ...(input.isHomeThread === true ? { idleCompaction: false } : {}),
         } as ClaudeSdkSettings);
   // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
   // pins the alias to itself.
@@ -12564,6 +12570,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            ...(isHomeThreadId(turnInput.threadId) ? { isHomeThread: true } : {}),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

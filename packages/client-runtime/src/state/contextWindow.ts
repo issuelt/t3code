@@ -1,4 +1,5 @@
 import {
+  isHomeThreadId,
   resolveIdleCompaction,
   type ModelSelection,
   type OrchestrationV2ProviderTurn,
@@ -266,6 +267,8 @@ export function compactBeforeSendTokens(input: {
   if (
     provider === undefined ||
     !input.threadIdle ||
+    // Home rolls into a fresh session instead of compacting on return.
+    isHomeThreadId(projection.thread.id) ||
     COMPACT_COMMAND_PATTERN.test(input.text) ||
     resolveIdleCompaction(input.settings, provider.instanceId) === "off" ||
     !provider.slashCommands.some((command) => command.name === "compact") ||

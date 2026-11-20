@@ -203,10 +203,13 @@ it.live("keeps one handoff record and no empty timeline slot across many Home ro
         SELECT turn_item_id FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
       `;
       const itemIds = new Set(projection.turnItems.map((item) => String(item.id)));
+      const rollMarkers = projection.turnItems.filter((item) => item.type === "handoff");
       return {
         handoffs: projection.contextHandoffs.length,
         transfers: projection.contextTransfers.length,
         emptyPositions: positions.filter((row) => !itemIds.has(row.turn_item_id)).length,
+        rollMarkers: rollMarkers.length,
+        rollMarkersWithSummary: rollMarkers.filter((item) => item.summary !== undefined).length,
       };
     }).pipe(
       Effect.provide(
@@ -222,6 +225,12 @@ it.live("keeps one handoff record and no empty timeline slot across many Home ro
     );
 
     assert.equal(yield* Ref.get(freshSessions), rolls + 1);
-    assert.deepEqual(result, { handoffs: 1, transfers: 1, emptyPositions: 0 });
+    assert.deepEqual(result, {
+      handoffs: 1,
+      transfers: 1,
+      emptyPositions: 0,
+      rollMarkers: rolls,
+      rollMarkersWithSummary: 0,
+    });
   }),
 );

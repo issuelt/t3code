@@ -1,14 +1,15 @@
-import type {
-  EditorId,
-  EnvironmentId,
-  ProjectId,
-  ProjectScript,
-  ResolvedKeybindingsConfig,
-  ThreadId,
+import {
+  isHomeThreadId,
+  type EditorId,
+  type EnvironmentId,
+  type ProjectId,
+  type ProjectScript,
+  type ResolvedKeybindingsConfig,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
@@ -103,9 +104,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
+  const isHome =
+    isHomeThreadId(props.threadId) ||
+    (serverConfig !== undefined &&
+      project !== null &&
+      isHomeProject(project, serverConfig.homeWorkspaceRoot));
   // A No project thread's folder sits inside the shared scratch root, so it must never get git.
+  // Home's folder is a notes workspace whose local repo exists only for checkpoints.
   // Until the config and project load, a No project thread looks like any other folder.
   const offersGit =
+    !isHome &&
     props.gitCwd !== null &&
     serverConfig !== undefined &&
     project !== null &&
@@ -168,10 +176,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         const show = {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
-          scripts: visible.scripts && props.activeProjectScripts !== undefined,
+          scripts: !isHome && visible.scripts && props.activeProjectScripts !== undefined,
           branch: offersGit && props.isGitRepo && visible.branch,
           // Without a branch selector, linked pull requests still need somewhere to show.
-          pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
+          pullRequests: !isHome && !(offersGit && props.isGitRepo) && visible.branch,
           git:
             offersGit &&
             props.activeProjectName !== undefined &&

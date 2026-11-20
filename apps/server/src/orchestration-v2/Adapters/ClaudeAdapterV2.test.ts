@@ -409,6 +409,26 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("disables Claude Code idleCompaction on Home threads only", () => {
+    const homeOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-home-idle",
+      resume: false,
+      cwd: "/workspace",
+      isHomeThread: true,
+    });
+    const normalOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-normal-idle",
+      resume: false,
+      cwd: "/workspace",
+    });
+    assert.equal((homeOptions.settings as { idleCompaction?: boolean }).idleCompaction, false);
+    assert.isUndefined(
+      (normalOptions.settings as { idleCompaction?: boolean } | undefined)?.idleCompaction,
+    );
+  });
+
   it("sends a custom model named like a Claude Code alias to the API unchanged", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: { instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId, model: "opus" },

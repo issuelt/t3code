@@ -5,6 +5,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   type GitRunStackedActionResult,
+  isHomeThreadId,
   type ProjectScript,
   ThreadId,
   type VcsStatusResult,
@@ -95,6 +96,7 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly canOpenTerminal: boolean;
   readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
+  readonly hideProjectScripts?: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
@@ -255,25 +257,27 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
     icon: "terminal",
     separateBackground: false,
     items: [
-      ...(props.projectScripts.length > 0
-        ? props.projectScripts.map((script) => ({
-            id: `script-${script.id}`,
-            title: projectScriptMenuLabel(script),
-            icon: projectScriptMenuIcon(script.icon),
-            subtitle: script.command,
-            disabled: !props.canOperateTerminal,
-            onPress: () => void props.onRunProjectScript(script),
-          }))
-        : [
-            {
-              id: "script-none",
-              title: "No project scripts",
-              icon: "play",
-              subtitle: "This project has no saved scripts yet",
-              disabled: true,
-              onPress: () => {},
-            },
-          ]),
+      ...(props.hideProjectScripts
+        ? []
+        : props.projectScripts.length > 0
+          ? props.projectScripts.map((script) => ({
+              id: `script-${script.id}`,
+              title: projectScriptMenuLabel(script),
+              icon: projectScriptMenuIcon(script.icon),
+              subtitle: script.command,
+              disabled: !props.canOperateTerminal,
+              onPress: () => void props.onRunProjectScript(script),
+            }))
+          : [
+              {
+                id: "script-none",
+                title: "No project scripts",
+                icon: "play",
+                subtitle: "This project has no saved scripts yet",
+                disabled: true,
+                onPress: () => {},
+              },
+            ]),
       ...props.terminalSessions.map((session) => ({
         id: `terminal-${session.terminalId}`,
         title: session.displayLabel,
@@ -304,6 +308,7 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
 /** The thread's git menu, shared by the thread bar and Review. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
   const model = useThreadGitControlModel(props);
+  if (isHomeThreadId(String(props.threadId))) return null;
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",

@@ -50,6 +50,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  isHomeThreadId,
   ProjectMutationError,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -122,6 +123,7 @@ import { configuredHostedAppUrl } from "../hostedPairing";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { hasFleetChiefsAtom } from "../state/fleet";
+import { homeEnvironment } from "../state/home";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -485,6 +487,7 @@ function OpenCommandPaletteDialog(props: {
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
+  const startFreshHome = useAtomCommand(homeEnvironment.startFresh, { reportFailure: false });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -517,6 +520,9 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const activeThreadIsHome =
+    activeThread !== null && activeThreadServerConfig?.settings.home.threadId === activeThread.id;
+  const activeThreadIsHomeFolder = activeThread !== null && isHomeThreadId(activeThread.id);
   const canContinueActiveThreadElsewhere = useEnvironmentCanContinueElsewhere(
     activeThread?.environmentId ?? null,
   );
@@ -856,8 +862,10 @@ function OpenCommandPaletteDialog(props: {
     await handleNewThread(scopeProjectRef(project.environmentId, project.id));
   };
 
-  const isPrimaryHomeProject = (project: CommandPaletteProject) =>
-    project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
+  const isPrimaryHomeProject = (project: {
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+  }) => project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
   // Pinning from a row keeps rows in place while the palette is open.
   const projectSearchItems = useOrderWhileOpen(
     buildProjectSearchItems({
@@ -1312,13 +1320,35 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
+  const isHomeProjectRef = (projectRef: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: string;
+  }) => {
+    if (
+      activeThreadIsHomeFolder &&
+      activeThread !== null &&
+      projectRef.environmentId === activeThread.environmentId &&
+      projectRef.projectId === activeThread.projectId
+    ) {
+      return true;
+    }
+    const project = projectByKey.get(`${projectRef.environmentId}:${projectRef.projectId}`);
+    return project !== undefined && isPrimaryHomeProject(project);
+  };
+  const isHomeProjectGroup = (group: (typeof projectGroups)[number]) =>
+    group.memberProjectRefs.some(isHomeProjectRef);
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
+    const preferredEntry = projectPickerEntries.find(
+      (entry) => entry.isPreferred && !isHomeProjectGroup(entry.group),
+    );
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      currentProject?.title ??
-      null;
+      preferredEntry?.group.displayName ??
+      (currentProject && !isPrimaryHomeProject(currentProject) && !activeThreadIsHomeFolder
+        ? currentProject.title
+        : null);
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1475,6 +1505,7 @@ function OpenCommandPaletteDialog(props: {
 
   if (
     activeThread !== null &&
+    !activeThreadIsHomeFolder &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -1501,7 +1532,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null && canShareActiveThreadWithGuest) {
+  if (activeThread !== null && !activeThreadIsHome && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
@@ -1515,7 +1546,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null && canContinueActiveThreadElsewhere) {
+  if (activeThread !== null && !activeThreadIsHome && canContinueActiveThreadElsewhere) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
@@ -1525,6 +1556,35 @@ function OpenCommandPaletteDialog(props: {
       icon: <MonitorUpIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openContinueOnMachineDialog(threadRef);
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadIsHome &&
+    readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+  ) {
+    const { environmentId } = activeThread;
+    actionItems.push({
+      kind: "action",
+      value: "action:home-start-fresh",
+      searchTerms: ["start fresh", "home", "new home", "reset home"],
+      title: "Start fresh",
+      description: "New Home thread; the current one stays in history",
+      icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        const result = await startFreshHome({ environmentId, input: {} });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            throw squashAtomCommandFailure(result);
+          }
+          return;
+        }
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(environmentId, result.value.threadId)),
+        });
       },
     });
   }
@@ -1794,10 +1854,12 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  // Every group, so an archived project's thread still opens its own settings.
+  // Every non-Home group, so an archived project's thread still opens its own settings
+  // while Home's hidden folder never surfaces as a configurable project.
+  const nonHomeProjectGroups = projectGroups.filter((group) => !isHomeProjectGroup(group));
   const currentProjectGroup =
     (contextualProjectRef
-      ? projectGroups.find((group) =>
+      ? nonHomeProjectGroups.find((group) =>
           group.memberProjectRefs.some(
             (ref) =>
               ref.environmentId === contextualProjectRef.environmentId &&
@@ -1820,7 +1882,7 @@ function OpenCommandPaletteDialog(props: {
       run: async () => toggleProjectGroupPin(currentProjectGroup),
     });
   }
-  const contextualProjectGroup = currentProjectGroup ?? projectGroups[0] ?? null;
+  const contextualProjectGroup = currentProjectGroup ?? nonHomeProjectGroups[0] ?? null;
   if (contextualProjectGroup) {
     actionItems.push({
       kind: "action",

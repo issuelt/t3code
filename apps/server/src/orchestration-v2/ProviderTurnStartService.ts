@@ -54,7 +54,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
-import { homeContextFull } from "./homeSessionRoll.ts";
+import { homeSessionRollReason } from "./homeSessionRoll.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1275,18 +1275,20 @@ export const layer: Layer.Layer<
           latestNativeContextUsage(projection, providerThread)?.usage ??
           providerThread.contextUsage ??
           undefined;
-        const homeFull =
-          isHomeThreadId(projection.thread.id) &&
-          homeContextFull({
-            usedTokens: nativeUsage?.usedTokens,
-            contextWindow:
-              nativeUsage?.maxTokens ??
-              session.getModelContextWindow?.(run.modelSelection, resolvedRuntimePolicy.cwd),
-            autoCompactThreshold: nativeUsage?.autoCompactThreshold,
-          });
+        const homeRollReason = isHomeThreadId(projection.thread.id)
+          ? homeSessionRollReason({
+              lastTurnAt: previousTurnRun?.completedAt ?? previousTurnRun?.startedAt ?? null,
+              usedTokens: nativeUsage?.usedTokens,
+              contextWindow:
+                nativeUsage?.maxTokens ??
+                session.getModelContextWindow?.(run.modelSelection, resolvedRuntimePolicy.cwd),
+              autoCompactThreshold: nativeUsage?.autoCompactThreshold,
+              now: yield* DateTime.now,
+            })
+          : null;
         // A replacement session cannot adopt background work still running in the old one.
         const homeHasBackgroundWork =
-          homeFull &&
+          homeRollReason !== null &&
           (yield* (
             session.hasPendingBackgroundWorkForThread?.(providerThread, {
               includeSubagents: true,
@@ -1294,11 +1296,11 @@ export const layer: Layer.Layer<
               session.hasPendingBackgroundWork ??
               Effect.succeed(false)
           ));
-        const homeRoll = homeFull && !homeHasBackgroundWork;
+        const homeRoll = homeHasBackgroundWork ? null : homeRollReason;
         const skipResume = uncertainDelivery
           ? "Uncertain native history injection"
-          : homeRoll
-            ? "Home session rolled over: context full"
+          : homeRoll !== null
+            ? `Home session rolled over: ${homeRoll}`
             : null;
         const resumed = yield* Effect.result(
           skipResume !== null
@@ -1388,8 +1390,8 @@ export const layer: Layer.Layer<
           runId,
           reason: uncertainDelivery
             ? "uncertain_history_delivery"
-            : homeRoll
-              ? "home_context_full"
+            : homeRoll !== null
+              ? `home_${homeRoll}`
               : resumed._tag === "Success"
                 ? "handoff_budget_exhausted"
                 : "resume_failed",
@@ -1408,9 +1410,8 @@ export const layer: Layer.Layer<
           }),
         );
         if (replacement === undefined) return undefined;
-        const { handoff, transferId, createdAt } = homeRoll
-          ? yield* prepareRecoveryHandoff(true)
-          : yield* recoveryHandoff;
+        const { handoff, transferId, createdAt } =
+          homeRoll !== null ? yield* prepareRecoveryHandoff(true) : yield* recoveryHandoff;
         effectiveHandoffs = withRecoveryHandoff(handoff);
         resumeFellBack = true;
         yield* eventSink.write({
@@ -1452,48 +1453,47 @@ export const layer: Layer.Layer<
             },
           ],
         });
-        // A Home rollover is routine, not a recovery, so it leaves no divider in the thread.
-        if (!homeRoll) {
-          // Stable per run so a retried start reuses the reserved run-start position.
-          const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
-            runId,
-            signal: "resume-fallback-handoff",
-          });
-          recoveryTurnItem = {
-            id: handoffTurnItemId,
+        // Stable per run so a retried start reuses the reserved run-start position.
+        // A Home rollover emits a lightweight marker without copying the 64 KB seed text onto
+        // every turn item, so repeated rolls never bloat the thread projection.
+        const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
+          runId,
+          signal: "resume-fallback-handoff",
+        });
+        recoveryTurnItem = {
+          id: handoffTurnItemId,
+          threadId: projection.thread.id,
+          runId,
+          nodeId: rootNode.id,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          // The summary is delivered ahead of this run's own handoffs and message.
+          ordinal: yield* turnItemPositions.allocate({
             threadId: projection.thread.id,
+            turnItemId: handoffTurnItemId,
             runId,
-            nodeId: rootNode.id,
-            providerThreadId: providerThread.id,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            // The summary is delivered ahead of this run's own handoffs and message.
-            ordinal: yield* turnItemPositions.allocate({
-              threadId: projection.thread.id,
-              turnItemId: handoffTurnItemId,
-              runId,
-              runOrdinal: run.ordinal,
-              placement: "run_start",
-            }),
-            status: "completed",
-            title: "Recovered context",
-            startedAt: createdAt,
-            completedAt: createdAt,
-            updatedAt: createdAt,
-            type: "handoff",
-            contextHandoffId: handoff.id,
-            fromProviderThreadIds: handoff.fromProviderThreadIds,
-            toProviderThreadId: handoff.toProviderThreadId,
-            fromProviderInstanceIds: [providerThread.providerInstanceId],
-            toProviderInstanceId: run.providerInstanceId,
-            fromModelSelections:
-              previousTurnRun === undefined ? [] : [previousTurnRun.modelSelection],
-            toModel: run.modelSelection.model,
-            strategy: handoff.strategy,
-            summary: handoff.summaryText,
-          };
-        }
+            runOrdinal: run.ordinal,
+            placement: "run_start",
+          }),
+          status: "completed",
+          title: homeRoll !== null ? "New session" : "Recovered context",
+          startedAt: createdAt,
+          completedAt: createdAt,
+          updatedAt: createdAt,
+          type: "handoff",
+          contextHandoffId: handoff.id,
+          fromProviderThreadIds: handoff.fromProviderThreadIds,
+          toProviderThreadId: handoff.toProviderThreadId,
+          fromProviderInstanceIds: [providerThread.providerInstanceId],
+          toProviderInstanceId: run.providerInstanceId,
+          fromModelSelections:
+            previousTurnRun === undefined ? [] : [previousTurnRun.modelSelection],
+          toModel: run.modelSelection.model,
+          strategy: handoff.strategy,
+          ...(homeRoll !== null ? {} : { summary: handoff.summaryText }),
+        };
         return replacement;
       });
       if (loadedProviderThread === undefined) return;
