@@ -271,11 +271,7 @@ import { openContinueOnMachineDialog } from "./chat/continueOnMachineDialogState
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerConfigAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerSettingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -499,10 +495,6 @@ function OpenCommandPaletteDialog(props: {
     (settings) => settings.home.threadId,
   );
   const hasFleetChiefs = useAtomValue(hasFleetChiefsAtom);
-  const homeWorkspaceRoot = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.homeWorkspaceRoot ?? null,
-  );
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -868,12 +860,7 @@ function OpenCommandPaletteDialog(props: {
     readonly workspaceRoot: string;
   }) => {
     const config = serverConfigs.get(project.environmentId);
-    if (config === undefined) {
-      return project.environmentId === primaryEnvironmentId
-        ? homeWorkspaceRoot === null || isHomeProject(project, homeWorkspaceRoot)
-        : true;
-    }
-    return isHomeProject(project, config.homeWorkspaceRoot);
+    return config === undefined || isHomeProject(project, config.homeWorkspaceRoot);
   };
   // Pinning from a row keeps rows in place while the palette is open.
   const projectSearchItems = useOrderWhileOpen(

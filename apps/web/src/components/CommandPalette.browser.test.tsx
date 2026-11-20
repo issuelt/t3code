@@ -14,11 +14,16 @@ import { CommandPalette } from "./CommandPalette";
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
   threads: [] as ReadonlyArray<Thread>,
+  serverConfigs: new Map<EnvironmentId, Record<string, unknown>>(),
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
   useVisibleThreadShells: () => entities.threads,
+  useServerConfigs: () =>
+    entities.serverConfigs as unknown as ReturnType<
+      typeof import("../state/entities").useServerConfigs
+    >,
 }));
 
 function setup(state: { projects?: ReadonlyArray<Project>; threads?: ReadonlyArray<Thread> } = {}) {
@@ -28,6 +33,15 @@ function setup(state: { projects?: ReadonlyArray<Project>; threads?: ReadonlyArr
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
+  entities.serverConfigs = new Map(
+    entities.projects.map(
+      (project) =>
+        [
+          project.environmentId,
+          { settings: { home: { threadId: null } }, environment: { capabilities: {} } },
+        ] as const,
+    ),
+  );
 }
 
 describe("CommandPalette open intents", () => {
