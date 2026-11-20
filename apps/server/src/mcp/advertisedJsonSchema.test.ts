@@ -65,6 +65,7 @@ it("advertises typed model selection fields, so clients do not invent their shap
             },
           },
           required: ["model"],
+          anyOf: [{ required: ["instanceId"] }, { required: ["provider"] }],
         },
       },
     });

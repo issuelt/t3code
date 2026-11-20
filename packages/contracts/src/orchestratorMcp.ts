@@ -98,9 +98,7 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
 ]);
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
-// ModelSelection decodes from untyped fields, so a tool taking it advertises each field as `{}`.
-// This form advertises real field types and decodes to the same ModelSelection.
-export const OrchestratorMcpModelSelection = Schema.Struct({
+const OrchestratorMcpModelSelectionAdvertised = Schema.Struct({
   instanceId: Schema.optional(
     ProviderInstanceId.annotate({
       description: "Provider instance id from `orchestrator_capabilities`.",
@@ -115,7 +113,17 @@ export const OrchestratorMcpModelSelection = Schema.Struct({
       description: "Options from `orchestrator_capabilities`, such as {effort:'max'}.",
     }),
   ),
-}).pipe(Schema.decodeTo(ModelSelection, SchemaTransformation.passthroughSubtype()));
+});
+
+// ModelSelection decodes from untyped fields for legacy compatibility, so JSON Schema sees each
+// field as `{}`. Keep ModelSelection as the decoder so legacy inputs still normalize, while
+// annotating the typed shape for MCP tool advertisement.
+export const OrchestratorMcpModelSelection = ModelSelection.annotate({
+  t3AdvertisedSchema: {
+    schema: OrchestratorMcpModelSelectionAdvertised,
+    anyOf: [{ required: ["instanceId"] }, { required: ["provider"] }],
+  },
+});
 
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(
