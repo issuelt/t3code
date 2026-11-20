@@ -1323,7 +1323,7 @@ it.effect("record reads filter notification sources without dropping matching me
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("shells flag a latest run triggered by a provider background wake", () =>
+it.effect("shells flag a latest run that a background wake or a user message started", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("background-wake");
@@ -1339,8 +1339,15 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
       ["subagent", { kind: "subagent" }, "updated", false],
       ["delegated", { kind: "delegated_task", taskIds: [] }, "updated", false],
       ["steered", { kind: "background_task" }, "updated", false],
+      // A steering restart points the run's userMessageId at the steer.
+      ["restarted", { kind: "background_task" }, "updated", false],
+      // An account fallback run after a steering restart only references the user's steer.
+      ["fallback", null, null, false],
+      ["typed", null, null, false],
     ] as const) {
       const messageId = MessageId.make(`message:background-wake:${id}`);
+      const runId = RunId.make(`run:background-wake:${id}`);
+      const followUpId = MessageId.make(`message:background-wake:${id}:follow-up`);
       yield* store.apply({
         id: EventId.make(`event:background-wake:${id}:message`),
         type: "message.updated",
@@ -1349,17 +1356,19 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
         payload: {
           id: messageId,
           threadId,
-          runId: null,
+          runId: id === "restarted" ? runId : null,
           nodeId: null,
-          createdBy: "agent",
-          creationSource: "server",
+          createdBy: source === null ? "user" : "agent",
+          creationSource: source === null ? "web" : "server",
           role: "user",
           text: id,
           attachments: [],
           streaming: false,
           createdAt: at,
           updatedAt: at,
-          notification: { source, outcome, summary: "Background activity updated" },
+          ...(source === null
+            ? {}
+            : { notification: { source, outcome, summary: "Background activity updated" } }),
           ...(id === "delegated"
             ? {
                 delegatedCompletion: {
@@ -1379,23 +1388,25 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
         occurredAt: at,
         payload: {
           ...initial.runs[0]!,
-          id: RunId.make(`run:background-wake:${id}`),
+          id: runId,
           ordinal,
-          userMessageId: messageId,
+          userMessageId: id === "restarted" ? followUpId : messageId,
+          ...(id === "fallback" ? { startedByUser: false } : {}),
           status: "completed",
           completedAt: at,
         },
       });
-      if (id === "steered") {
+      if (id === "steered" || id === "restarted") {
+        const steeredAt = DateTime.add(at, { seconds: 1 });
         yield* store.apply({
-          id: EventId.make("event:background-wake:steered:follow-up"),
+          id: EventId.make(`event:background-wake:${id}:follow-up`),
           type: "message.updated",
           threadId,
-          occurredAt: at,
+          occurredAt: steeredAt,
           payload: {
-            id: MessageId.make("message:background-wake:steered:follow-up"),
+            id: followUpId,
             threadId,
-            runId: RunId.make("run:background-wake:steered"),
+            runId,
             nodeId: null,
             createdBy: "user",
             creationSource: "web",
@@ -1403,8 +1414,8 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
             text: "also fix X",
             attachments: [],
             streaming: false,
-            createdAt: at,
-            updatedAt: at,
+            createdAt: steeredAt,
+            updatedAt: steeredAt,
           },
         });
       }
@@ -1415,6 +1426,13 @@ it.effect("shells flag a latest run triggered by a provider background wake", ()
       assert.deepEqual(
         shells.map((shell) => shell?.latestRunBackgroundWake),
         [expected, expected],
+        id,
+      );
+      // Only a typed message that starts the run makes it the user's; a steer does not.
+      const startedByUser = id === "typed";
+      assert.deepEqual(
+        shells.map((shell) => shell?.latestRunStartedByUser),
+        [startedByUser, startedByUser],
         id,
       );
       yield* assertShellIndexCoversShells();

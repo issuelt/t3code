@@ -165,6 +165,7 @@ import {
 import {
   applyToProjection,
   emptyProjection,
+  runStartedByUser,
   threadShellFromProjection,
   ProjectionStoreV2,
   type ProjectionRecordField,
@@ -6324,6 +6325,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       rootNodeId: nextRootNodeId,
       activeAttemptId: nextAttemptId,
       userMessageId: input.messageId,
+      startedByUser: runStartedByUser(targetRun, input.projection),
       status: "starting",
       contextHandoffId: restartHandoff?.id ?? targetRun.contextHandoffId,
     };
@@ -6536,6 +6538,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         : undefined,
     );
+    let accountFallbackSourceRun: OrchestrationV2Run | undefined;
     if (command.accountFallbackOfRunId !== undefined) {
       const run = projection.runs.at(-1);
       const failure = latestRootProviderFailure(run ?? null, projection.turnItems);
@@ -6560,7 +6563,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "The account fallback no longer targets the latest failed run.",
         });
       }
+      accountFallbackSourceRun = run;
     }
+    const startedByUser =
+      accountFallbackSourceRun !== undefined
+        ? runStartedByUser(accountFallbackSourceRun, projection)
+        : command.createdBy === "user";
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
@@ -7449,6 +7457,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
+        startedByUser,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -7894,6 +7903,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection, command),
         ...(freshContext ? { freshContext: true } : {}),
+        startedByUser,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -8684,6 +8694,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),
+      startedByUser,
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,

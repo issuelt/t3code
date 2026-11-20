@@ -251,29 +251,34 @@ describe("diffWatchedThreads", () => {
     expect(run(two.next, [parent, olderChild], home).events).toEqual([]);
   });
 
-  it("reports an agent run's completion but not one the user started in the thread", () => {
+  it("reports an agent run's completion, even one the user steered, but not one the user started", () => {
     const home = watching("a");
-    const completed = (runId: string, requestedAt: string, completedAt: string) =>
+    const completed = (runId: string, requestedAt: string, startedByUser: boolean) =>
       thread("a", {
-        latestRun: { runId, status: "completed", requestedAt, completedAt },
-        latestUserAuthoredMessageAt: "2026-10-03T10:00:00.000Z",
+        latestRun: {
+          runId,
+          status: "completed",
+          requestedAt,
+          completedAt: new Date(Date.parse(requestedAt) + 120_000).toISOString(),
+          startedByUser,
+        },
+        // The user typed into the thread 40 seconds into every run.
+        latestUserAuthoredMessageAt: new Date(Date.parse(requestedAt) + 40_000).toISOString(),
         runtime: null,
       } as Partial<EnvironmentThreadShell>);
     const first = run(new Map(), [thread("a")], home);
 
-    const userRun = run(
-      first.next,
-      [completed("run-1", "2026-10-03T10:00:00.000Z", "2026-10-03T10:01:00.000Z")],
-      home,
-    );
+    const userRun = run(first.next, [completed("run-1", "2026-10-03T10:00:00.000Z", true)], home);
     expect(userRun.events).toEqual([]);
 
-    const agentRun = run(
+    const steeredAgentRun = run(
       userRun.next,
-      [completed("run-2", "2026-10-03T10:02:00.000Z", "2026-10-03T10:03:00.000Z")],
+      [completed("run-2", "2026-10-03T10:05:00.000Z", false)],
       home,
     );
-    expect(agentRun.events).toMatchObject([{ threadId: "a", kind: "completed", runId: "run-2" }]);
+    expect(steeredAgentRun.events).toMatchObject([
+      { threadId: "a", kind: "completed", runId: "run-2" },
+    ]);
   });
 });
 
