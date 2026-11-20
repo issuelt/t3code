@@ -6,6 +6,7 @@ import {
   MessageId,
   EventId,
   NodeId,
+  PositiveInt,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -30,6 +31,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -3272,4 +3274,195 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
       assert.isTrue(question?.endsWith("What is the main thread doing?"));
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect(
+  "keeps an agent-launched run non-user-started after a steering restart and account fallback",
+  () =>
+    Effect.gen(function* () {
+      const { cwd, events, started, layer } = yield* nextTurnSelectionHarness(
+        "account-fallback-after-steered-launch",
+        true,
+        false,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:account-fallback-after-steered-launch");
+        const watchRun = (runId: string, status: string) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === runId &&
+                event.payload.status === status,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const watchTurnRunning = (ordinal: number) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.payload.ordinal === ordinal,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-agent-launch"),
+          threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Launched audit",
+          modelSelection: runSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const firstRunning = yield* watchTurnRunning(1);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("agent-launch"),
+          threadId,
+          messageId: MessageId.make("message:agent-launch"),
+          text: "Run audit",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(firstRunning);
+        const initial = started[0]!;
+
+        // User steers the launched run; the provider handles it with a steering restart.
+        const steerMessageId = MessageId.make("message:user-steer");
+        const steeredRunning = yield* watchTurnRunning(2);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("user-steer"),
+          threadId,
+          messageId: steerMessageId,
+          text: "also check export speed",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "steer_active", targetRunId: initial.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(steeredRunning);
+        const steered = started[1]!;
+        assert.equal(steered.runId, initial.runId);
+
+        // The restarted attempt fails with a usage limit, triggering account fallback on the steer.
+        const failed = yield* watchRun(initial.runId, "failed");
+        const steeredProviderTurn = (yield* orchestrator.getThreadProjection(
+          threadId,
+        )).providerTurns.find((candidate) => candidate.runAttemptId === steered.attemptId)!;
+        const limitFailure = {
+          class: "usage_limit" as const,
+          message: "Usage limit reached",
+          code: "usage_limit",
+          retryable: null,
+        };
+        const failedAt = yield* DateTime.now;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            ...steeredProviderTurn,
+            status: "failed",
+            completedAt: failedAt,
+          },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: steeredProviderTurn.providerThreadId,
+          providerTurnId: steeredProviderTurn.id,
+          runOrdinal: steered.runOrdinal,
+          failureItemOrdinal: PositiveInt.make(2),
+          status: "failed",
+          failure: limitFailure,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(failed);
+        yield* worker.drain();
+
+        const fallbackRunning = yield* watchTurnRunning(3);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`account-fallback:${initial.runId}`),
+          threadId,
+          accountFallbackOfRunId: initial.runId,
+          messageId: steerMessageId,
+          text: "also check export speed",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "server",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(fallbackRunning);
+        const fallback = started[2]!;
+        assert.notEqual(fallback.runId, initial.runId);
+
+        const completed = yield* watchRun(fallback.runId, "waiting");
+        const fallbackProviderTurn = (yield* orchestrator.getThreadProjection(
+          threadId,
+        )).providerTurns.find((candidate) => candidate.runAttemptId === fallback.attemptId)!;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            ...fallbackProviderTurn,
+            status: "completed",
+            completedAt: yield* DateTime.now,
+          },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: fallbackProviderTurn.providerThreadId,
+          providerTurnId: fallbackProviderTurn.id,
+          runOrdinal: fallback.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          projection.messages.find((message) => message.id === steerMessageId)?.createdBy,
+          "user",
+        );
+        assert.equal(
+          projection.runs.find((run) => run.id === fallback.runId)?.startedByUser,
+          false,
+        );
+        const sqlShell = (yield* orchestrator.getShellSnapshot({ threadIds: [threadId] }))
+          .threads[0];
+        assert.deepEqual(
+          [
+            sqlShell?.latestRunStartedByUser,
+            ProjectionStore.threadShellFromProjection(projection).latestRunStartedByUser,
+          ],
+          [false, false],
+        );
+      }).pipe(Effect.provide(layer));
+    }),
 );

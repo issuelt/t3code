@@ -1341,6 +1341,8 @@ it.effect("shells flag a latest run that a background wake or a user message sta
       ["steered", { kind: "background_task" }, "updated", false],
       // A steering restart points the run's userMessageId at the steer.
       ["restarted", { kind: "background_task" }, "updated", false],
+      // An account fallback run after a steering restart only references the user's steer.
+      ["fallback", null, null, false],
       ["typed", null, null, false],
     ] as const) {
       const messageId = MessageId.make(`message:background-wake:${id}`);
@@ -1389,6 +1391,7 @@ it.effect("shells flag a latest run that a background wake or a user message sta
           id: runId,
           ordinal,
           userMessageId: id === "restarted" ? followUpId : messageId,
+          ...(id === "fallback" ? { startedByUser: false } : {}),
           status: "completed",
           completedAt: at,
         },
