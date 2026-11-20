@@ -4,6 +4,7 @@ import {
   FleetRequestsListResult,
   FleetThreadOrganizeInput,
   OrchestratorMcpEnvironmentTarget,
+  OrchestratorMcpModelSelection,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -132,7 +133,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
-    modelSelection: Schema.optional(ModelSelection),
+    modelSelection: Schema.optional(OrchestratorMcpModelSelection),
   }),
   success: Schema.Union([threadConfiguration, OrchestrationV2DispatchCommandResult]),
 }).annotate(Tool.Destructive, true);

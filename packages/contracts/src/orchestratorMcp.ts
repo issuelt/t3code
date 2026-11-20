@@ -45,6 +45,7 @@ import {
   OrchestrationV2UserInputQuestion,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -96,6 +97,25 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
   OrchestratorMcpTargetOptionsFromRecord,
 ]);
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
+
+// ModelSelection decodes from untyped fields, so a tool taking it advertises each field as `{}`.
+// This form advertises real field types and decodes to the same ModelSelection.
+export const OrchestratorMcpModelSelection = Schema.Struct({
+  instanceId: Schema.optional(
+    ProviderInstanceId.annotate({
+      description: "Provider instance id from `orchestrator_capabilities`.",
+    }),
+  ),
+  provider: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "Prefer `instanceId`." }),
+  ),
+  model: TrimmedNonEmptyString,
+  options: Schema.optional(
+    OrchestratorMcpTargetOptions.annotate({
+      description: "Options from `orchestrator_capabilities`, such as {effort:'max'}.",
+    }),
+  ),
+}).pipe(Schema.decodeTo(ModelSelection, SchemaTransformation.passthroughSubtype()));
 
 export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(

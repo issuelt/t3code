@@ -676,6 +676,29 @@ it.effect("rejects arguments a tool does not declare instead of dropping them", 
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
+it.effect("decodes a launch model selection in each form a model sends it", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const launch = (modelSelection: Record<string, unknown>) =>
+      callTool("t3_thread_launch", { title: "Audit", scratch: true, modelSelection });
+    const selection = { instanceId: "codex", model: "gpt-6.2-sol" };
+    yield* launch({ ...selection, options: [{ id: "reasoningEffort", value: "high" }] });
+    // The shape Gemini sent through Cursor: legacy `provider` beside an options record.
+    yield* launch({ ...selection, provider: "codex", options: { reasoningEffort: "high" } });
+    const nullEntry = yield* launch({ ...selection, options: [null] });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[0]).toMatchObject({
+      modelSelection: { ...selection, options: [{ id: "reasoningEffort", value: "high" }] },
+    });
+    expect(nullEntry.isError).toBe(true);
+    expect(nullEntry.content).toEqual([
+      { type: "text", text: expect.stringContaining('["modelSelection"]["options"]') },
+    ]);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
 it.effect("accepts a nested key the merged advertised schema shows", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {

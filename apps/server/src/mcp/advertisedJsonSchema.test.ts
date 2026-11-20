@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 
 it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
   const Every = Schema.Struct({ ms: Schema.Int });
@@ -42,4 +44,29 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     },
     required: ["beforeRunId", "every"],
   });
+});
+
+it("advertises typed model selection fields, so clients do not invent their shape", () => {
+  for (const tool of [
+    ProjectToolkit.tools.t3_thread_launch,
+    ThreadToolkit.tools.t3_thread_configure,
+  ]) {
+    expect(advertisedJsonSchema(tool), tool.name).toMatchObject({
+      properties: {
+        modelSelection: {
+          properties: {
+            instanceId: { type: "string" },
+            model: { type: "string" },
+            options: {
+              anyOf: [
+                { type: "array", items: { type: "object", required: ["id", "value"] } },
+                { type: "object" },
+              ],
+            },
+          },
+          required: ["model"],
+        },
+      },
+    });
+  }
 });
