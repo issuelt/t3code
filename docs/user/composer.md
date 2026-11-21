@@ -273,34 +273,6 @@ a saved preference, but simultaneous same-name inputs remain separately selectab
 T3 Code deletes the temporary recording from your phone after transcription or
 cancellation. The transcript stays in your draft until you send the message to the agent.
 
-## Dictation on web and desktop
-
-Dictation turns speech into text with a speech model that runs on one of your T3 Code
-machines. Set it up for that machine in **Settings → Devices → Dictation**: turn it on and
-pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
-base is a small English-only model. Nothing downloads until dictation is on; then the machine
-downloads the model you picked and the status line shows the progress. **Language** can pin
-Whisper turbo to one language; the other models always detect it automatically. Remove models
-you no longer use to free disk. Whisper turbo is slow without a GPU.
-
-Click the composer's microphone to record, then the stop button to insert the text where your
-selection was. You can also hold `Option+Space` on macOS or `Ctrl+Shift+Space` on Windows and
-Linux while T3 Code is focused, and release to insert. `Esc` cancels. Recordings can be up to
-five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
-[keybindings](keybindings.md).
-
-After you choose a destination in **Settings → Voice**, the composer's microphone uses
-[Voice input](voice-input.md) instead. The hold shortcut still runs Dictation.
-
-The machine that owns the thread transcribes when its dictation is ready; otherwise another
-ready machine does. With two or more machines connected, you can pick one for this device in
-**Settings → Connections → Dictation machine**. Your audio goes only to that machine.
-
-Say a skill's name followed by "skill", such as "use the bug fix skill", to insert it as a skill.
-
-The first recording asks for microphone access. Browsers allow the microphone only over HTTPS
-or on localhost.
-
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is

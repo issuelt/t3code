@@ -407,7 +407,12 @@ export function derivePendingUserOnlyRequests(projection: {
   );
   let latestUserMessageAt: DateTime.Utc | null = null;
   for (const message of projection.messages) {
-    if (message.role !== "user" || idleCompactionOf(message) !== undefined) continue;
+    if (
+      message.role !== "user" ||
+      message.createdBy !== "user" ||
+      idleCompactionOf(message) !== undefined
+    )
+      continue;
     if (
       latestUserMessageAt === null ||
       DateTime.isGreaterThan(message.updatedAt, latestUserMessageAt)

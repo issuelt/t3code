@@ -154,11 +154,10 @@ describe("global voice input", () => {
         createVoiceInputTarget("second", () => "other prompt", vi.fn(), { start: 12, end: 12 }),
       );
       await session.controller.stop();
-      expect(commit).toHaveBeenCalledWith(
-        expected,
-        { start: cursor, end: cursor },
-        expect.anything(),
-      );
+      expect(commit).toHaveBeenCalledWith(expected, {
+        start: cursor,
+        end: cursor,
+      });
     },
   );
 
@@ -232,11 +231,7 @@ describe("global voice input", () => {
       transcription.resolve("spoken text");
       await (stopping ?? session.controller.stop());
       expect(recorder.record).toHaveBeenCalledTimes(1);
-      expect(firstCommit).toHaveBeenCalledWith(
-        "first spoken text",
-        { start: 17, end: 17 },
-        expect.anything(),
-      );
+      expect(firstCommit).toHaveBeenCalledWith("first spoken text", { start: 17, end: 17 });
       expect(secondCommit).not.toHaveBeenCalled();
     },
   );
@@ -268,11 +263,7 @@ describe("global voice input", () => {
     await session.retry();
     await session.controller.stop();
     expect(prepare).toHaveBeenCalledTimes(2);
-    expect(commit).toHaveBeenCalledWith(
-      "first spoken text draft",
-      { start: 17, end: 17 },
-      { start: 5, end: 17 },
-    );
+    expect(commit).toHaveBeenCalledWith("first spoken text draft", { start: 17, end: 17 });
   });
 
   it("finishes the original draft at the recording limit while it is off screen", async () => {
@@ -287,11 +278,7 @@ describe("global voice input", () => {
       error: null,
       url: recorder.uri,
     });
-    expect(commit).toHaveBeenCalledWith(
-      "first spoken text",
-      { start: 17, end: 17 },
-      expect.anything(),
-    );
+    expect(commit).toHaveBeenCalledWith("first spoken text", { start: 17, end: 17 });
     expect(session.controller.currentState.phase).toBe("idle");
   });
 
@@ -325,11 +312,7 @@ describe("global voice input", () => {
     expect(recorder.stop).not.toHaveBeenCalled();
     expect(session.controller.currentState.phase).toBe("recording");
     await session.controller.stop();
-    expect(commit).toHaveBeenCalledWith(
-      "hello spoken text",
-      { start: 17, end: 17 },
-      expect.anything(),
-    );
+    expect(commit).toHaveBeenCalledWith("hello spoken text", { start: 17, end: 17 });
   });
 
   it("waits for canceled native work before starting a recording for another draft", async () => {
@@ -358,11 +341,7 @@ describe("global voice input", () => {
     await session.controller.stop();
     expect(recorder.record).toHaveBeenCalledTimes(1);
     expect(oldCommit).not.toHaveBeenCalled();
-    expect(nextCommit).toHaveBeenCalledWith(
-      "second spoken text",
-      { start: 18, end: 18 },
-      expect.anything(),
-    );
+    expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
   });
 
   it("holds the screen awake and meters only while recording", async () => {

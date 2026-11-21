@@ -182,6 +182,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
+          { key: "alt+space", command: "composer.dictate", when: "!terminalFocus" },
         ]),
       );
 
@@ -193,6 +194,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.isTrue(configState.keybindings.some((entry) => entry.command === "terminal.toggle"));
       assert.isFalse(
         configState.keybindings.some((entry) => String(entry.command) === "invalid.command"),
+      );
+      // A fork build's hold-to-dictate binding now runs upstream's voice input.
+      assert.isTrue(
+        configState.keybindings.some(
+          (entry) => entry.command === "composer.dictation" && entry.shortcut.key === " ",
+        ),
       );
       assert.deepEqual(configState.issues, [
         {

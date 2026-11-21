@@ -1,4 +1,3 @@
-import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
@@ -149,7 +148,6 @@ import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInpu
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
-import { isInSideChatPane } from "../../lib/sideChatPane";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -221,12 +219,6 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { isCommandPaletteOpen } from "../../commandPaletteBus";
-import { resolveShortcutCommand } from "../../keybindings";
-import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
-import { ComposerDictationControl } from "./ComposerDictationControl";
-import { useComposerDictation } from "../../dictation/useComposerDictation";
-import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { nudgeComposerMenuItemId, resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -961,53 +953,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
     m,
   );
-  // These callbacks run after recording, once the handlers declared below exist.
-  const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
-  const dictation = useComposerDictation({
-    ownerKey: `${composerDraftTargetKey}:${activePendingProgress?.activeQuestion?.id ?? "prompt"}`,
-    draftEnvironmentId: environmentId,
-    // Spoken "review skill" becomes a $review chip, matching what typing would insert.
-    rewriteTranscript: (text) =>
-      replaceSpokenSkills(text, selectedProviderSkills.filter(isProviderSkillUserInvocable)),
-    readDraft: () => {
-      const text = promptRef.current;
-      return {
-        text,
-        selection: composerEditorRef.current?.readSelectionRange() ?? {
-          start: text.length,
-          end: text.length,
-        },
-      };
-    },
-    commitDraft: (text, selection, inserted) => {
-      const closed = closeSkillTokenAtCursor(
-        text,
-        selection.start,
-        selectedProviderSkills.filter(isProviderSkillUserInvocable),
-      );
-      // A space added after a trailing skill token belongs to the inserted range.
-      dictationInsertedRangeRef.current = {
-        start: inserted.start,
-        end: inserted.end + (closed.cursor - selection.start),
-      };
-      onPromptChange(
-        closed.text,
-        collapseExpandedComposerCursor(closed.text, closed.cursor, isLiteralPendingAnswer),
-        closed.cursor,
-        isLiteralPendingAnswer,
-        isLiteralPendingAnswer ? [] : collectInlineContextIds(closed.text),
-        true,
-      );
-    },
-    onCommitted: () => {
-      composerEditorRef.current?.focusAt(composerCursor);
-      const inserted = dictationInsertedRangeRef.current;
-      dictationInsertedRangeRef.current = null;
-      if (inserted) composerEditorRef.current?.flashRange(inserted);
-    },
-  });
   const sendDisabledReason =
-    (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? gt("Select at least one model.") : null) ??
     (activePendingProgress
@@ -1088,12 +1034,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  // Focusing the composer usually comes right before dictating; load the speech model early.
-  const warmDictation = dictation.warm;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- many paths focus the composer; warming follows the focus state, not one handler
-  useEffect(() => {
-    if (isComposerFocused) warmDictation();
-  }, [isComposerFocused, warmDictation]);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
@@ -1260,9 +1200,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
-  /** The editor refuses text for these reasons; dictation also freezes it while active. */
-  const composerTextUnavailable =
-    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer = pendingUserInputs.length > 0;
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile;
   const showComposerAttachAction =
@@ -1928,7 +1865,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
-    offerSetup: false,
     label: activeThread?.title ?? null,
     presented: !hiddenThread,
     // A question's answer lives only in this composer, so only the thread draft outlives it.
@@ -1974,8 +1910,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
-  // Dictation and Voice input are separate systems that share one composer microphone.
-  const voiceInputOwnsMicrophone = speechInput.available && !dictation.active;
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   // A compact footer gives the dictation capsule the whole row beside the send button.
   const dictationTakesFooter = isComposerFooterCompact && speechInput.state.phase !== "idle";
@@ -2001,7 +1935,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
-    disabled: dictationDisabled || dictation.active,
+    disabled: dictationDisabled,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
@@ -2443,7 +2377,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !isSendBusy &&
     !freshSessionArmed &&
     !speechInput.freezesEditor &&
-    !dictation.active &&
     composerContextRecords.size === 0 &&
     !isComposerApprovalState &&
     !activePendingProgress &&
@@ -2805,19 +2738,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       removeComposerImageFromDraft,
       insertAttachmentReferences,
     });
-
-  useDictationHoldShortcut({
-    dictation,
-    enabled: !composerTextUnavailable && !voiceInputActive,
-    isDictateShortcut: (event) =>
-      !isCommandPaletteOpen() &&
-      (backgroundThread
-        ? event.target instanceof Node && composerFormRef.current?.contains(event.target) === true
-        : !isInSideChatPane(event.target)) &&
-      resolveShortcutCommand(event, keybindings, {
-        context: props.getShortcutContext(event.target),
-      }) === "composer.dictate",
-  });
 
   const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
   const isPathQueryActiveStable = useStableCallback(
@@ -3850,7 +3770,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ) : undefined
                     }
                     disabled={
-                      composerTextUnavailable || dictation.active || speechInput.freezesEditor
+                      projectSelectionRequired ||
+                      isChoiceOnlyPendingQuestion ||
+                      activePendingIsResponding ||
+                      speechInput.freezesEditor
                     }
                   />
                 </ComposerContextActionsContext>
@@ -3929,13 +3852,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  {voiceInputOwnsMicrophone ? null : (
-                    <ComposerDictationControl
-                      dictation={dictation}
-                      disabled={composerTextUnavailable}
-                      shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
-                    />
-                  )}
                   <ComposerFooterPrimaryActions
                     // Stop state belongs to one thread; the composer stays mounted across threads.
                     key={`${environmentId}:${activeThreadId ?? "new"}`}
@@ -3980,7 +3896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     keepFullHistory={props.keepFullHistory}
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                   >
-                    {voiceInputOwnsMicrophone ? (
+                    {speechInput.available ? (
                       <>
                         <ComposerSpeechRecordingPill
                           state={speechInput.state}

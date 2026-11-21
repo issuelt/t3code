@@ -2516,30 +2516,34 @@ export function isLiveRunForShell(
   return isActivityRunForShell(run) && !isSilentRunForShell(run, projection);
 }
 
-/** A link card stops asking once anyone writes in the thread after it. */
+/** A link card stops asking once the user writes in the thread after it. */
 export function linkCardStillAsks(
   item: Pick<OrchestrationV2TurnItem, "startedAt" | "updatedAt">,
-  latestUserMessageAt: DateTime.Utc | null,
+  latestUserAuthoredMessageAt: DateTime.Utc | null,
 ): boolean {
   return (
-    latestUserMessageAt === null ||
-    !DateTime.isGreaterThan(latestUserMessageAt, item.startedAt ?? item.updatedAt)
+    latestUserAuthoredMessageAt === null ||
+    !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt)
   );
 }
 
 /**
  * Secret and link cards only the user can answer. A secret card waits while its agent waits in
- * the run. A link card's agent asked without waiting, so it waits past its run until someone
- * writes in the thread again; agent-driven threads may never get a message from the user.
+ * the run. A link card's agent asked without waiting, so it waits past its run until the user
+ * writes in the thread again.
  */
 export function userOnlyCardWaits<
   Item extends Pick<
     OrchestrationV2TurnItem,
     "type" | "status" | "runId" | "startedAt" | "updatedAt"
   >,
->(item: Item, liveRunIds: ReadonlySet<RunId>, latestUserMessageAt: DateTime.Utc | null): boolean {
+>(
+  item: Item,
+  liveRunIds: ReadonlySet<RunId>,
+  latestUserAuthoredMessageAt: DateTime.Utc | null,
+): boolean {
   if (item.status !== "waiting") return false;
-  if (item.type === "link_request") return linkCardStillAsks(item, latestUserMessageAt);
+  if (item.type === "link_request") return linkCardStillAsks(item, latestUserAuthoredMessageAt);
   return item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId);
 }
 

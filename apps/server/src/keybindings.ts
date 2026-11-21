@@ -171,6 +171,16 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 const RawKeybindingsEntries = fromLenientJson(Schema.Array(Schema.Unknown));
 const RawKeybindingsEntriesPrettyJson = fromJsonStringPretty(Schema.Array(Schema.Unknown));
 const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
+// Fork builds bound hold-to-dictate as `composer.dictate`; upstream's voice input owns that now.
+const LEGACY_COMMANDS: Readonly<Record<string, string>> = {
+  "composer.dictate": "composer.dictation",
+};
+const withCurrentCommand = (entry: unknown): unknown => {
+  if (typeof entry !== "object" || entry === null) return entry;
+  const command = Reflect.get(entry, "command");
+  const current = typeof command === "string" ? LEGACY_COMMANDS[command] : undefined;
+  return current === undefined ? entry : { ...entry, command: current };
+};
 const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
 const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
 const encodeRawKeybindingsEntriesPrettyJson = Schema.encodeEffect(RawKeybindingsEntriesPrettyJson);
@@ -313,7 +323,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    return rawConfig.map((entry) => {
+    return rawConfig.map((raw) => {
+      const entry = withCurrentCommand(raw);
       const decodedRule = decodeKeybindingRuleExit(entry);
       if (
         decodedRule._tag === "Success" &&
@@ -348,7 +359,8 @@ const make = Effect.gen(function* () {
 
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
-    for (const [index, entry] of decodedEntries.value.entries()) {
+    for (const [index, raw] of decodedEntries.value.entries()) {
+      const entry = withCurrentCommand(raw);
       const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);

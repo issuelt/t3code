@@ -360,7 +360,7 @@ it.each([true, false])(
     expect(mocks.recordingOptions[0]?.speechSilenceFiltering).toBe(speechSilenceFiltering);
     // Cleanup is a separate opt-in and stays off by default.
     expect(mocks.cleanupCalls).toEqual([]);
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Dictated", expect.anything());
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
   },
 );
 
@@ -417,7 +417,7 @@ it.each([true, false])(
       new Set(["apple-speech"]),
     );
     expect(mocks.statusRequests).toEqual([]);
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Dictated", expect.anything());
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
   },
 );
 
@@ -431,7 +431,7 @@ it("retries a failed transcription on the same chosen environment", async () => 
   await act(() => mocks.voice.start());
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
-  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Second try", expect.anything());
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
 
 it.each([
@@ -926,7 +926,7 @@ it.each([
     expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual(mocks.projectWords["proj-1"]);
     expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
     expect(mocks.transcribeCalls).toEqual(["env-a"]);
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Dictated", expect.anything());
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
   },
 );
 

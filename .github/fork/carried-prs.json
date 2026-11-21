@@ -26,12 +26,6 @@
       "closedUpstream": true
     },
     {
-      "number": 19273,
-      "takenSha": "b8d5c37cf59f7989edaf14dea2822f28ae841fdb",
-      "reason": "Local-model composer dictation",
-      "closedUpstream": true
-    },
-    {
       "number": 21709,
       "takenSha": "a381ca2331281df2d77fcb0b5ce7fd4f75205116",
       "reason": "Pair again reconnects a computer whose 30-day login expired (diff only, branch merged newer upstream main)",

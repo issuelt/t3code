@@ -95,8 +95,7 @@ export class VoiceInputSession {
         const draft = this.target?.readDraft() ?? null;
         return draft?.text === this.startText ? draft : null;
       },
-      commitDraft: (text, selection, inserted) =>
-        this.target?.commitDraft(text, selection, inserted),
+      commitDraft: (text, selection) => this.target?.commitDraft(text, selection),
     });
   }
 

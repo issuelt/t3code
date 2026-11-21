@@ -105,8 +105,6 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.workspace",
   "composer.previousWorktree",
   "composer.branch",
-  /** Hold to dictate into the composer; releasing the shortcut transcribes. */
-  "composer.dictate",
   "chat.new",
   "chat.newLocal",
   "chat.newWithoutProject",

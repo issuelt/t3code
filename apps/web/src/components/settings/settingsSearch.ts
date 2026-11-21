@@ -1135,26 +1135,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("simulator support xcode android studio sdk avd runtime")],
   },
   {
-    id: "dictation-engine",
-    title: msg("Dictation"),
-    to: "/settings/devices",
-    searchTerms: [msg("speech to text voice microphone transcribe local model")],
-  },
-  {
-    id: "dictation-model",
-    title: msg("Dictation model"),
-    to: "/settings/devices",
-    searchTerms: [msg("download remove parakeet whisper moonshine speech model languages disk")],
-  },
-  {
-    id: "dictation-language",
-    title: msg("Dictation language"),
-    to: "/settings/devices",
-    // The row sits inside the Dictation section; land on the section heading.
-    targetId: "dictation",
-    searchTerms: [msg("speech transcription automatic detect english spoken")],
-  },
-  {
     id: "browser-profiles",
     title: msg("Browser profiles"),
     to: "/settings/browser",
@@ -1489,12 +1469,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       `pull request routing trusted environments shared credentials permissions read actions source control ${SOURCE_CONTROL_HOST_LABELS}`,
     ],
-  },
-  {
-    id: "dictation-environment",
-    title: msg("Dictation machine"),
-    to: "/settings/connections",
-    searchTerms: [msg("speech to text voice transcribe environment automatic")],
   },
   {
     id: "secret-providers",

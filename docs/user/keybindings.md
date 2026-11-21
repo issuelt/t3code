@@ -189,10 +189,6 @@ field gets its own undo back. Terminals always keep their native shortcut.
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
-`composer.dictate` is held rather than pressed: [dictation](./composer.md#dictation-on-web-and-desktop)
-records while the shortcut is down and inserts the text when you release it.
-It defaults to `alt+space` on macOS and `ctrl+shift+space` elsewhere.
-
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
