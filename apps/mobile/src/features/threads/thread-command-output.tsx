@@ -1,9 +1,6 @@
+import { T, useGT } from "gt-react-native";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
-import {
-  TERMINAL_PALETTES,
-  terminalOutputPlainText,
-  terminalOutputSpans,
-} from "@t3tools/shared/terminalOutput";
+import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
 import type React from "react";
 import { useMemo, useRef } from "react";
 import { ScrollView, View } from "react-native";
@@ -14,7 +11,6 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 
 const FOLLOW_SLACK = 8;
-const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
 export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean {
   return (
@@ -27,9 +23,9 @@ export function ThreadCommandOutput(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
-  readonly mode?: "full" | "tail";
   readonly themeAppearance: "light" | "dark";
 }) {
+  const gt = useGT();
   const { data, error } = useEnvironmentQuery(
     orchestrationEnvironment.v2.commandOutput({
       environmentId: props.environmentId,
@@ -40,41 +36,21 @@ export function ThreadCommandOutput(props: {
   const followRef = useRef(true);
   const text = data?.output.text ?? "";
   const spans = useMemo(
-    () =>
-      props.mode === "tail"
-        ? []
-        : terminalOutputSpans(text, TERMINAL_PALETTES[props.themeAppearance]),
-    [text, props.themeAppearance, props.mode],
+    () => terminalOutputSpans(text, TERMINAL_PALETTES[props.themeAppearance]),
+    [text, props.themeAppearance],
   );
   if (text.length === 0) {
     const message = error
-      ? `Couldn't load output: ${error}`
+      ? gt("Couldn't load output: {error}", { error })
       : data === null
-        ? "Loading output…"
+        ? gt("Loading output…")
         : data.running
           ? null
-          : "No output.";
+          : gt("No output.");
     return message === null ? null : (
       <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
         {message}
       </Text>
-    );
-  }
-  if (props.mode === "tail") {
-    const lines = terminalOutputPlainText(text).replace(/\n$/, "").split("\n").slice(-4);
-    return (
-      <View className="rounded-md border border-border bg-subtle px-2.5 py-1.5">
-        {OUTPUT_TAIL_SLOTS.map((slot) => (
-          <Text
-            key={slot}
-            selectable
-            numberOfLines={1}
-            className="font-mono text-2xs leading-normal text-foreground-muted"
-          >
-            {lines[lines.length - OUTPUT_TAIL_SLOTS.length + slot] || "\u00a0"}
-          </Text>
-        ))}
-      </View>
     );
   }
   return (
@@ -97,7 +73,9 @@ export function ThreadCommandOutput(props: {
         }}
       >
         {data?.output.truncated ? (
-          <Text className="pb-0.5 text-3xs text-foreground-subtle">Earlier output not shown</Text>
+          <Text className="pb-0.5 text-3xs text-foreground-subtle">
+            <T>Earlier output not shown</T>
+          </Text>
         ) : null}
         <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
           {spans.map((span, index) =>

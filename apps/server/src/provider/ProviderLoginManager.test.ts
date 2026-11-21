@@ -70,7 +70,7 @@ const FakePtyAdapterLayer = Layer.succeed(
           writes: [],
           killed: false,
           write(data) {
-            this.writes.push(data);
+            this.writes.push(String(data));
           },
           resize() {},
           kill() {

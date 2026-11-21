@@ -31,7 +31,7 @@ export function createWidgetTheme(
     accent: variables["--color-primary"],
     // Surface tokens can coincide; a foreground blend keeps the unfilled track visible.
     track: flattenThemeColor(
-      themeColorWithAlpha(variables["--color-foreground"], 0.16),
+      themeColorWithAlpha(variables["--color-foreground"], 0.07),
       variables["--color-card"],
     ),
     danger: variables["--color-danger-foreground"],

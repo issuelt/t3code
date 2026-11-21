@@ -12,7 +12,7 @@ import { isHomeThreadId } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
 
-import { labelAgentMessage } from "./agentMessageLabel.ts";
+import { withSenderNoteFor } from "./agentMessageLabel.ts";
 
 export const DEFAULT_HANDOFF_BYTE_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -129,13 +129,15 @@ export function handoffBudget(input: {
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
   const current =
     Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+  // Small windows would otherwise reserve all of themselves for work.
+  const workReserve = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   return Math.max(
     0,
     Math.min(
       input.byteCap,
       // Cap imported history only; adapters own attachment transport limits.
       HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      window - native - current - workReserve,
     ),
   );
 }
@@ -146,17 +148,7 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
-      // Recovery replays Home's history as user turns; agent reports keep their label there.
-      text =
-        item.senderThreadId !== undefined && isHomeThreadId(item.threadId)
-          ? labelAgentMessage({
-              text: item.text,
-              attachments: item.attachments,
-              senderThreadId: item.senderThreadId,
-              recipientThreadId: item.threadId,
-              recipientParentThreadId: null,
-            })
-          : item.text;
+      text = withSenderNoteFor(item, item.text, item.threadId);
       break;
     case "assistant_message":
       text = item.text;
@@ -175,7 +167,7 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
+      text = `File change: ${item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;

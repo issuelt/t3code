@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import {
   type EnvironmentId,
@@ -99,6 +100,24 @@ export function defaultNewThreadProjectRef(
       normalizeProjectPathForComparison(candidate.workspaceRoot) !== homeRoot,
   );
   return project ? scopeProjectRef(project.environmentId, project.id) : null;
+}
+
+export function threadHasStarted(
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "itemCount" | "runtime"> | null | undefined,
+): boolean {
+  return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
+}
+
+/**
+ * A draft is seeded from sticky state, project defaults, prompt links, or a carried selection.
+ * That seed is what an unstarted thread sends; once the thread has started, its own selection
+ * wins unless the user picked a model or traits for it.
+ */
+export function draftModelSelectionApplies(
+  draft: Pick<ComposerThreadDraftState, "modelSelectionExplicit"> | null | undefined,
+  threadStarted: boolean,
+): boolean {
+  return !threadStarted || draft?.modelSelectionExplicit === true;
 }
 
 export function resolveThreadActionProjectRef(

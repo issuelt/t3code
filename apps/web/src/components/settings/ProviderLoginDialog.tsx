@@ -1,6 +1,7 @@
 "use client";
 
 import { FitAddon } from "@xterm/addon-fit";
+import { T, useGT, Var } from "gt-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
@@ -63,6 +64,7 @@ export function ProviderLoginDialog({
   providerName,
   isAuthenticated,
 }: ProviderLoginDialogProps) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -214,10 +216,16 @@ export function ProviderLoginDialog({
     <Dialog open={open} onOpenChange={closeAndCancel}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Log in to {providerName}</DialogTitle>
+          <DialogTitle>
+            <T>
+              Log in to <Var>{providerName}</Var>
+            </T>
+          </DialogTitle>
           <DialogDescription>
-            Complete the sign-in below. Open the verification link in your browser, then follow the
-            prompts here.
+            <T>
+              Complete the sign-in below. Open the verification link in your browser, then follow
+              the prompts here.
+            </T>
           </DialogDescription>
         </DialogHeader>
 
@@ -258,7 +266,7 @@ export function ProviderLoginDialog({
                 size="icon-xs"
                 variant="ghost"
                 className="size-6 shrink-0"
-                aria-label="Copy verification URL"
+                aria-label={gt("Copy verification URL")}
                 onClick={() => copyToClipboard(state.url ?? "", undefined)}
               >
                 <CopyIcon className="size-3" />
@@ -268,7 +276,9 @@ export function ProviderLoginDialog({
 
           {state.code && !succeeded ? (
             <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-1.5">
-              <span className="text-xs text-muted-foreground">Enter this code:</span>
+              <span className="text-xs text-muted-foreground">
+                <T>Enter this code:</T>
+              </span>
               <code className="font-mono text-sm font-semibold tracking-widest text-foreground">
                 {state.code}
               </code>
@@ -277,7 +287,7 @@ export function ProviderLoginDialog({
                 size="icon-xs"
                 variant="ghost"
                 className="size-6 shrink-0"
-                aria-label="Copy device code"
+                aria-label={gt("Copy device code")}
                 onClick={() => copyToClipboard(state.code ?? "", undefined)}
               >
                 <CopyIcon className="size-3" />
@@ -294,7 +304,7 @@ export function ProviderLoginDialog({
 
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={() => closeAndCancel(false)}>
-            {succeeded ? "Close" : "Cancel"}
+            {succeeded ? gt("Close") : gt("Cancel")}
           </Button>
         </DialogFooter>
       </DialogPopup>

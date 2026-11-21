@@ -1,6 +1,8 @@
 import type { PullRequestCheck, ScopedThreadRef } from "@t3tools/contracts";
+import { msg, T, useMessages } from "gt-react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { toastManager } from "../ui/toast";
@@ -19,12 +21,13 @@ export function PullRequestCheckList({
   threadRef: ScopedThreadRef | null;
   dense?: boolean;
 }) {
+  const resolve = useMessages();
   const openLink = useOpenLink(threadRef);
   const open = (url: string | null) => {
     if (url === null) return;
     void openLink(url).catch((error: unknown) => {
       console.error(error);
-      toastManager.add({ type: "error", title: "Unable to open check details" });
+      toastManager.add({ type: "error", title: m(msg("Unable to open check details")) });
     });
   };
   const hasDetails = !dense && checks.some((check) => check.url !== null);
@@ -69,7 +72,7 @@ export function PullRequestCheckList({
               <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
             </Tooltip>
             <span className="justify-self-end whitespace-nowrap text-muted-foreground">
-              {pullRequestCheckStatusLabel(check)}
+              {pullRequestCheckStatusLabel(check, resolve)}
             </span>
             {hasDetails && check.url !== null ? (
               <button
@@ -77,7 +80,7 @@ export function PullRequestCheckList({
                 className="text-primary hover:underline"
                 onClick={() => open(check.url)}
               >
-                Details
+                <T>Details</T>
               </button>
             ) : null}
           </li>

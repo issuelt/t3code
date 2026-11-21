@@ -49,6 +49,9 @@ vi.mock("../state/entities", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({ appAtomRegistry: { get: () => new Map() } }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/issueTrackers", () => ({ issueTrackerEnvironment: { connections: {} } }));
+vi.mock("../state/pull-requests", () => ({ composerPullRequests: { preview: {} } }));
+vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => async () => null }));
 vi.mock("../state/use-thread-pr", () => ({
   withKnownPullRequestSummary: <T>(destination: T) => destination,
 }));

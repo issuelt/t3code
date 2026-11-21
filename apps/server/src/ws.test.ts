@@ -1,7 +1,10 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { WebSocket } from "@effect/platform-node/NodeWS";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Bind an isolated WebSocket negotiation fixture.
+import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
@@ -9,23 +12,25 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   EnvironmentId,
   EventId,
   GitManagerError,
+  VcsProcessSpawnError,
   MessageId,
   ProjectId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   SourceControlRepositoryError,
   WS_METHODS,
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
-  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
-  ORCHESTRATION_PROTOCOL_VERSION,
   type FleetInvokeInput,
   type FleetHostRequest,
   type AuthAccessStreamEvent,
@@ -38,6 +43,7 @@ import {
   type ServerConfigStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { SOCKET_FRAME_PARTS_QUERY_PARAM } from "@t3tools/shared/socketFrameParts";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
@@ -56,6 +62,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { Headers, HttpRouter, HttpServer } from "effect/http";
 import type * as NetAddress from "effect/net/NetAddress";
 import { RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import * as Context from "effect/Context";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
+import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
+import * as Ws from "./ws.ts";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Socket from "effect/socket/Socket";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -63,6 +74,7 @@ import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -76,6 +88,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -87,6 +100,7 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
@@ -94,6 +108,8 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as ContinueOnEnvironment from "./peer/ContinueOnEnvironment.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -103,13 +119,15 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
-import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
+import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -136,14 +154,14 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import { AutoFallbackCooldownTracker } from "./orchestration-v2/autoFallback/CooldownTracker.ts";
-import * as Dictation from "./dictation/Dictation.ts";
 import * as DesktopMcpRelay from "./mcp/DesktopMcpRelay.ts";
 import * as FleetBroker from "./home/FleetBroker.ts";
 import * as FleetService from "./home/FleetService.ts";
@@ -835,12 +853,14 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
+  ThreadViewers.layer,
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
+  Layer.mock(McpSignIn.McpSignIn)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -849,6 +869,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(ContinueOnEnvironment.ContinueOnEnvironment)({}),
+  Layer.mock(PeerThreadRelay.PeerThreadRelay)({}),
+  Layer.mock(PeerClientPairing.PeerClientPairing)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
@@ -865,6 +887,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(ThreadIssueService.ThreadIssueService)({}),
+  Layer.mock(IssueTrackerConnections.IssueTrackerConnections)({}),
   Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({}),
   Layer.mock(RelayClient.RelayClient)({}),
   Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
@@ -892,11 +917,12 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
+  Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
   // Fork-only services.
   Layer.mock(AutoFallbackCooldownTracker)({ decorateProviders: Effect.succeed }),
-  Layer.mock(Dictation.Dictation)({}),
   Layer.mock(FleetBroker.FleetBroker)({}),
   Layer.mock(DesktopMcpRelay.DesktopMcpRelay)({}),
   Layer.mock(FleetService.FleetService)({}),
@@ -908,6 +934,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
   AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+  WorkspacePreviewRevisions.layer,
   ServerSettings.layer.pipe(
     Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
   ),
@@ -919,6 +946,99 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+it.live.each([
+  { subject: "desktop-bootstrap", extensions: "", framed: false },
+  { subject: "desktop-bootstrap", extensions: "", framed: true },
+  { subject: "one-time-token", extensions: "permessage-deflate", framed: false },
+  { subject: "cloud-connect", extensions: "permessage-deflate", framed: false },
+])(
+  "negotiates compression for $subject sessions (framed=$framed)",
+  ({ subject, extensions, framed }) =>
+    Effect.gen(function* () {
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ServerBrowser.ServerBrowser)({
+          profileReporter: Effect.succeed(() => Effect.void),
+        }),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+          authenticateWebSocketUpgrade: () =>
+            Effect.succeed({
+              sessionId: AuthSessionId.make("compression-test"),
+              subject,
+              method: "bearer-access-token",
+              scopes: [],
+            }),
+        }),
+        Layer.mock(SessionStore.SessionStore)({
+          cookieName: "compression-test",
+          legacyCookieName: undefined,
+          markConnected: () => Effect.void,
+          markDisconnected: () => Effect.void,
+          awaitInvalidation: () => Effect.never,
+        }),
+        Layer.mock(AnalyticsService.AnalyticsService)({ recordOwners: () => Effect.void }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: process.cwd(),
+        }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                cause: "No VCS commands in the compression fixture",
+              }),
+            ),
+        }),
+        ProviderInstallationGate.layer,
+        FetchHttpClient.layer,
+      );
+      const context = yield* Layer.build(
+        HttpRouter.serve(Ws.layer, { disableListenLog: true }).pipe(
+          Layer.provideMerge(
+            NodeHttpServer.layer(NodeHttp.createServer, {
+              host: "127.0.0.1",
+              port: 0,
+              websocket: { perMessageDeflate: true },
+            }),
+          ),
+          Layer.provide(services),
+          Layer.provide(layerConfigSources),
+        ),
+      );
+      const server = Context.get(context, HttpServer.HttpServer);
+      const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+      const socket = yield* Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new WebSocket(
+              `${origin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}${framed ? `&${SOCKET_FRAME_PARTS_QUERY_PARAM}=1` : ""}`,
+              {
+                origin: "t3code://app",
+              },
+            ),
+        ),
+        (socket) => Effect.sync(() => socket.terminate()),
+      );
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            socket.once("open", resolve);
+            socket.once("error", reject);
+          }),
+      );
+      assert.equal(socket.extensions, extensions);
+    }).pipe(Effect.scoped),
 );
 
 it.effect.each([
@@ -1233,6 +1353,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({
                 listPairingLinks: () => Effect.succeed([]),
+                listConnectDevices: () => Effect.succeed([]),
                 // Another client revokes a session after the snapshot read it.
                 listClientSessions: () =>
                   PubSub.publish(sessionChanges, {
@@ -1275,6 +1396,18 @@ it.effect("access changes made while the snapshot loads reach the client after i
       revision: 2,
       type: "clientRemoved",
       payload: { sessionId: revokedElsewhere },
+    });
+    yield* server.write(0, { _tag: "Ack", requestId });
+    assert.equal((yield* Queue.take(responses)).type, "pairingLinkRemoved");
+    yield* server.write(0, { _tag: "Ack", requestId });
+
+    // Device trust has no incremental event, so a change re-sends the whole snapshot.
+    yield* PubSub.publish(pairingChanges, { type: "connectDevicesChanged" });
+    assert.deepEqual(yield* Queue.take(responses), {
+      version: 1,
+      revision: 4,
+      type: "snapshot",
+      payload: { pairingLinks: [], clientSessions: [], connectDevices: [] },
     });
     yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
   }).pipe(
@@ -2256,6 +2389,7 @@ const acpThreadId = (sessionId: string) =>
 const acpSessionTags = [
   WS_METHODS.serverListAcpRegistrySessions,
   WS_METHODS.serverImportAcpRegistrySession,
+  WS_METHODS.serverDeleteAcpRegistrySession,
 ] as const;
 const acpSessionRpcs = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -2273,7 +2407,7 @@ const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
 
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,
-  state: { readonly imported: boolean; readonly ran: boolean },
+  state: { readonly imported: boolean; readonly ran: boolean; readonly nativeId?: string },
 ) {
   const sink = yield* EventSink.EventSinkV2;
   const now = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
@@ -2311,6 +2445,32 @@ const seedAcpThread = Effect.fn(function* (
       payload: thread,
     },
   ];
+  if (state.nativeId !== undefined) {
+    events.push({
+      id: EventId.make(`${threadId}:provider`),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`${threadId}:provider`),
+        appThreadId: threadId,
+        ownerNodeId: null,
+        driver: acpDriver,
+        providerInstanceId: acpInstanceId,
+        providerSessionId: null,
+        nativeThreadRef: { driver: acpDriver, nativeId: state.nativeId, strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        pendingBackgroundTasks: [],
+      },
+    });
+  }
   if (state.ran) {
     events.push({
       id: EventId.make(`${threadId}:run`),
@@ -2343,10 +2503,17 @@ const seedAcpThread = Effect.fn(function* (
 it.effect("ACP session RPCs list a thread missing its history and repair it on import", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const pending = yield* seedAcpThread("pending", { imported: false, ran: false });
     const complete = yield* seedAcpThread("complete", { imported: true, ran: false });
     const ran = yield* seedAcpThread("ran", { imported: false, ran: true });
+    const owned = yield* seedAcpThread("existing-t3-thread", {
+      imported: false,
+      ran: true,
+      nativeId: "owned-session",
+    });
     const repaired: Array<ThreadId> = [];
+    const deleted: Array<string> = [];
     const session = (sessionId: string) => ({
       sessionId,
       cwd: "/workspace/acp",
@@ -2357,15 +2524,21 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     });
     const instance = {
       driverKind: acpDriver,
-      snapshot: { getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true } }) },
+      snapshot: {
+        getSnapshot: Effect.succeed({ nativeSessions: { canLoad: true, canDelete: true } }),
+      },
       acpSessionManagement: {
         listSessions: () =>
           Effect.succeed({
-            sessions: ["new", "pending", "complete", "ran"].map(session),
+            sessions: ["new", "pending", "complete", "ran", "owned-session"].map(session),
             nextCursor: null,
             canLoad: true,
             canResume: true,
             canDelete: true,
+          }),
+        deleteSession: ({ sessionId }: { readonly sessionId: string }) =>
+          Effect.sync(() => {
+            deleted.push(sessionId);
           }),
       },
     } as unknown as ProviderInstance;
@@ -2416,6 +2589,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         importNativeHistory: ({ threadId }) =>
           Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
+      Layer.succeed(SqlClient.SqlClient, sql),
     );
     const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
@@ -2455,6 +2629,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         ["pending", pending, true],
         ["complete", complete, undefined],
         ["ran", ran, undefined],
+        ["owned-session", owned, undefined],
       ],
     );
 
@@ -2465,6 +2640,20 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
     });
     assert.deepEqual(imported, { threadId: pending, imported: true });
     assert.deepEqual(repaired, [pending]);
+    const reopened = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "owned-session",
+    });
+    assert.deepEqual(reopened, { threadId: owned, imported: false });
+    assert.deepEqual(repaired, [pending]);
+    const deletion = yield* client[WS_METHODS.serverDeleteAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "owned-session",
+    }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(deletion));
+    assert.deepEqual(deleted, []);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

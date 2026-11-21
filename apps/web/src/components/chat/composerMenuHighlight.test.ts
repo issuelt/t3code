@@ -55,10 +55,15 @@ function keyboardEvent(key: string, modifiers: KeyboardEventInit = {}): Keyboard
   });
 }
 
+const skillTrigger = { kind: "skill", query: "te", rangeStart: 0, rangeEnd: 3 } as const;
+
 function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHandler>[0]> = {}) {
   const input: Parameters<typeof composerCommandKeyHandler>[0] = {
     promptSuggestion: null,
     dismissPromptSuggestion: vi.fn(),
+    getShortcutContext: () => ({}) as never,
+    setComposerDraftThreadContexts: vi.fn(),
+    setComposerDraftEnvironmentContexts: vi.fn(),
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     sendShortcut: "enter",
     routeKind: "draft",
@@ -78,7 +83,6 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
     composerPreviewAnnotations: [],
     composerReviewComments: [],
     composerEditorRef: { current: null },
-    composerMenuOpenRef: { current: true },
     composerMenuItemsRef: {
       current: [
         {
@@ -108,7 +112,7 @@ function menuHandler(overrides: Partial<Parameters<typeof composerCommandKeyHand
         input.composerMenuItemsRef.current.find((item) => item.id === id) ?? null;
     },
     onSelectComposerItem: vi.fn(),
-    resolveActiveComposerTrigger: () => ({ trigger: null }),
+    resolveActiveComposerTrigger: () => ({ trigger: skillTrigger }),
     readComposerSnapshot: () => ({ value: "/" }),
     applyPromptReplacement: () => false,
     submitComposer: vi.fn(),
@@ -171,10 +175,9 @@ describe("composer menu keyboard navigation", () => {
   });
 
   it("leaves Control+N/P alone outside the menu and without selectable results", () => {
+    const outside = menuHandler({ resolveActiveComposerTrigger: () => ({ trigger: null }) });
+    expect(outside.handle(keyboardEvent("n", { ctrlKey: true }))).toBe(false);
     const { input, handle } = menuHandler();
-    input.composerMenuOpenRef.current = false;
-    expect(handle(keyboardEvent("n", { ctrlKey: true }))).toBe(false);
-    input.composerMenuOpenRef.current = true;
     input.composerMenuItemsRef.current = [];
     expect(handle(keyboardEvent("p", { ctrlKey: true }))).toBe(false);
     const literal = menuHandler({ isLiteralPendingAnswer: true });

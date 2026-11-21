@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { detailFromError, translatableDetail } from "../errors/translatable.ts";
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Clock from "effect/Clock";
@@ -12,7 +14,6 @@ import * as HttpClient from "effect/http/HttpClient";
 import {
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
-  fetchRemoteAuthDescriptor,
 } from "../authorization/remote.ts";
 import {
   deriveWsBaseUrl,
@@ -33,7 +34,7 @@ import {
   SshConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import { mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "./errors.ts";
+import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -82,6 +83,11 @@ export class ConnectionOnboarding extends Context.Service<
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    /** Whether `host` answers this device as `environmentId`. Nothing is sent but the question. */
+    readonly reaches: (input: {
+      readonly host: string;
+      readonly environmentId: EnvironmentId;
+    }) => Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
@@ -92,7 +98,9 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
       catch: (cause) =>
         new ConnectionBlockedError({
           reason: "configuration",
-          detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
+          ...(cause instanceof Error
+            ? detailFromError(cause)
+            : translatableDetail(msg("The pairing details are invalid."))),
         }),
     });
   },
@@ -105,7 +113,12 @@ function bearerConnectionId(environmentId: EnvironmentId, httpBaseUrl: string): 
 function differentMachineError(label: string) {
   return new ConnectionBlockedError({
     reason: "configuration",
-    detail: `That address reaches ${label}, a different machine. Add it as its own environment instead.`,
+    ...translatableDetail(
+      msg(
+        "That address reaches {host}, a different machine. Add it as its own environment instead.",
+        { host: label },
+      ),
+    ),
   });
 }
 
@@ -149,72 +162,44 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
-  const auth = yield* fetchRemoteAuthDescriptor({ httpBaseUrl: target.httpBaseUrl }).pipe(
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
-  const dpop =
-    auth.dpopRenewal === true ? yield* pairingDpopProof(target.httpBaseUrl) : Option.none();
-  const credential: ConnectionCredential = Option.isSome(dpop)
-    ? yield* redeemPairingWithDpop(target.httpBaseUrl, target.credential, dpop.value)
-    : new BearerConnectionCredential({
-        token: (yield* bootstrapRemoteBearerSession({
-          httpBaseUrl: target.httpBaseUrl,
-          credential: target.credential,
-          clientMetadata: presentation.metadata,
-        }).pipe(Effect.mapError(mapRemoteEnvironmentError))).access_token,
-      });
-
-  return new BearerConnectionRegistration({ ...route, credential });
-});
-
-/**
- * The device's T3 Connect DPoP key and a proof for the pairing exchange. None
- * where the device cannot sign, such as a web origin without WebCrypto, so
- * pairing falls back to a bearer before it spends the one-time code.
- */
-const pairingDpopProof = Effect.fn("clientRuntime.connection.onboarding.pairingDpopProof")(
-  function* (httpBaseUrl: string) {
-    const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
-    return yield* Effect.all({
-      thumbprint: signer.thumbprint,
-      proof: signer.createProof({
-        method: "POST",
-        url: environmentEndpointUrl(httpBaseUrl, "/oauth/token"),
+  // A key-bound session renews itself, but only on a host that can renew it. The proof is made
+  // before the one-time code is sent, so a device that cannot sign keeps the code for bearer.
+  const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+  const dpopProof =
+    descriptor.capabilities.accessTokenRenewal === true && Option.isSome(signer)
+      ? yield* signer.value
+          .createProof({
+            method: "POST",
+            url: environmentEndpointUrl(target.httpBaseUrl, "/oauth/token"),
+          })
+          .pipe(Effect.option)
+      : Option.none<string>();
+  if (Option.isSome(dpopProof)) {
+    const access = yield* exchangeRemoteDpopAccessToken({
+      httpBaseUrl: target.httpBaseUrl,
+      credential: target.credential,
+      clientMetadata: presentation.metadata,
+      dpopProof: dpopProof.value,
+    }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+    return new BearerConnectionRegistration({
+      ...route,
+      credential: new DpopConnectionCredential({
+        accessToken: access.access_token,
+        expiresAtEpochMs: (yield* Clock.currentTimeMillis) + access.expires_in * 1_000,
       }),
-    }).pipe(
-      Effect.asSome,
-      Effect.catch((error) =>
-        Effect.logWarning("This device cannot hold a DPoP key; pairing with a bearer.", {
-          error,
-        }).pipe(Effect.as(Option.none())),
-      ),
-    );
-  },
-);
-
-/** Binds the paired session to the device's DPoP key, the one T3 Connect uses, so it can renew. */
-const redeemPairingWithDpop = Effect.fn(
-  "clientRuntime.connection.onboarding.redeemPairingWithDpop",
-)(function* (
-  httpBaseUrl: string,
-  pairingCredential: string,
-  key: { readonly thumbprint: string; readonly proof: string },
-) {
-  const presentation = yield* ClientCapabilities.ClientPresentation;
-  const access = yield* exchangeRemoteDpopAccessToken({
-    httpBaseUrl,
-    credential: pairingCredential,
-    dpopProof: key.proof,
-    clientMetadata: presentation.metadata,
-  }).pipe(Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")));
-  if (access.token_type !== "DPoP") {
-    return new BearerConnectionCredential({ token: access.access_token });
+    });
   }
-  const issuedAt = yield* Clock.currentTimeMillis;
-  return new DpopConnectionCredential({
-    accessToken: access.access_token,
-    expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
-    dpopThumbprint: key.thumbprint,
+  const access = yield* bootstrapRemoteBearerSession({
+    httpBaseUrl: target.httpBaseUrl,
+    credential: target.credential,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+
+  return new BearerConnectionRegistration({
+    ...route,
+    credential: new BearerConnectionCredential({
+      token: access.access_token,
+    }),
   });
 });
 
@@ -233,6 +218,27 @@ const registerPairingConnection = Effect.fn(
     .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   return registration.target.environmentId;
 });
+
+const REACHABILITY_TIMEOUT_MS = 6_000;
+
+const reachesEnvironment = Effect.fn("clientRuntime.connection.onboarding.reachesEnvironment")(
+  function* (input: { readonly host: string; readonly environmentId: EnvironmentId }) {
+    const httpBaseUrl = yield* Effect.try({
+      try: () => normalizeHttpBaseUrl(input.host),
+      catch: () =>
+        new ConnectionBlockedError({
+          reason: "configuration",
+          ...translatableDetail(msg("The environment URL is invalid.")),
+        }),
+    });
+    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl,
+      timeoutMs: REACHABILITY_TIMEOUT_MS,
+    });
+    return descriptor.environmentId === input.environmentId;
+  },
+  Effect.orElseSucceed(() => false),
+);
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 
@@ -278,7 +284,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
   ) {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
-      detail: "Only saved bearer environments can be edited.",
+      ...translatableDetail(msg("Only saved bearer environments can be edited.")),
     });
   }
 
@@ -286,7 +292,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
   if (Option.isNone(credential)) {
     return yield* new ConnectionBlockedError({
       reason: "authentication",
-      detail: "The saved bearer credential is unavailable.",
+      ...translatableDetail(msg("The saved bearer credential is unavailable.")),
     });
   }
 
@@ -294,7 +300,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
   if (label === "") {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
-      detail: "Environment label cannot be empty.",
+      ...translatableDetail(msg("Environment label cannot be empty.")),
     });
   }
   const httpBaseUrl = yield* Effect.try({
@@ -302,7 +308,9 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     catch: (cause) =>
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: cause instanceof Error ? cause.message : "The environment URL is invalid.",
+        ...(cause instanceof Error
+          ? detailFromError(cause)
+          : translatableDetail(msg("The environment URL is invalid."))),
       }),
   });
   const connectionId = entry.target.connectionId;
@@ -358,7 +366,9 @@ const registerSshConnection = Effect.fn(
     return yield* differentMachineError(registration.target.label);
   }
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  yield* registry.register(registration);
+  yield* registry.register(registration, {
+    knownAddressOnly: input.expectedEnvironmentId === undefined,
+  });
   return registration.target.environmentId;
 });
 
@@ -369,7 +379,6 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
-  const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -380,7 +389,6 @@ export const make = Effect.gen(function* () {
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.provideService(ManagedRelay.ManagedRelayDpopSigner, signer),
     ),
     registerSsh: Effect.fnUntraced(
       function* (input) {
@@ -395,6 +403,12 @@ export const make = Effect.gen(function* () {
       },
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
+    ),
+    reaches: Effect.fnUntraced(
+      function* (input) {
+        return yield* reachesEnvironment(input);
+      },
+      Effect.provideService(HttpClient.HttpClient, httpClient),
     ),
   });
 });

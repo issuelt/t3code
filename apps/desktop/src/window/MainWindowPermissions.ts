@@ -3,7 +3,7 @@ import * as Electron from "electron";
 /**
  * Grants every request, like a session without a handler, except macOS
  * microphone capture from the main window, which asks the OS for consent
- * first so dictation gets the system prompt instead of silence.
+ * first so voice input gets the system prompt instead of silence.
  */
 export function installMainWindowPermissions(
   webContents: Electron.WebContents,

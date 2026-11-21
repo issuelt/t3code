@@ -1,10 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs a local TLS certificate.
-import * as NodeHttps from "node:https";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Node requires certificate bytes when constructing the test server.
-import * as NodeFS from "node:fs";
-import * as NodeTls from "node:tls";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentHttpApi,
@@ -22,7 +16,6 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -39,60 +32,17 @@ import * as ServerHttp from "../http.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as PeerHttp from "./http.ts";
+import * as PeerClientPairing from "./PeerClientPairing.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
-NodeTls.setDefaultCACertificates([
-  ...NodeTls.getCACertificates("default"),
-  NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url), "utf8"),
-]);
-
-const fixture = (name: string) =>
-  NodeFS.readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
-export const otherHostCertificate = fixture("other-host-cert.pem").toString("utf8");
-
-/** An IPv4 HTTPS server whose certificate names peer.invalid, so 127.0.0.1 mismatches it. */
-export const serveOtherHostCertificate = Effect.acquireRelease(
-  Effect.callback<{ readonly server: NodeHttps.Server; readonly seen: { requests: number } }>(
-    (resume) => {
-      const seen = { requests: 0 };
-      const server = NodeHttps.createServer(
-        { key: fixture("localhost-key.pem"), cert: otherHostCertificate },
-        (_request, response) => {
-          seen.requests += 1;
-          response.end();
-        },
-      );
-      server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, seen })));
-    },
-  ),
-  ({ server }) =>
-    Effect.callback<void>((resume) => {
-      server.closeAllConnections();
-      server.close(() => resume(Effect.void));
-    }),
-).pipe(
-  Effect.map(({ server, seen }) => {
-    const address = server.address();
-    if (address === null || typeof address === "string") throw new Error("expected a TCP port");
-    return { url: `https://127.0.0.1:${address.port}`, seen };
-  }),
-);
-
-export const layerHttpsTest = NodeHttpServer.layer(
-  () =>
-    NodeHttps.createServer({
-      key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
-      cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
-    }),
-  { port: 0, host: "127.0.0.1" },
-);
-
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
-  .add(EnvironmentHttpApi.groups.mcpOAuth) {}
+  .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .add(EnvironmentHttpApi.groups.peerLink) {}
 
 export const descriptorOf = (
   environmentId: string,
@@ -111,6 +61,19 @@ export const descriptorOf = (
   },
 });
 
+/** An environment's own sessions and pairing links, on a database and secret store of its own. */
+export const layerEnvironmentAuth = (prefix: string) =>
+  EnvironmentAuth.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+    Layer.provide(Sqlite.layerMemory),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.fresh,
+  );
+
 /**
  * The environment a link points at, as it runs: its descriptor, MCP OAuth,
  * and `/mcp` with `tools` behind the real client authenticator, on a real
@@ -120,15 +83,13 @@ export const descriptorOf = (
 export const servePeer = <E, R, E2 = never, R2 = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
-  protocol: "http" | "https" = "https",
-  /** More routes it serves beside `/mcp`, such as an upload a tool there issues. */
-  routes: Layer.Layer<never, E2, R2> = Layer.empty as Layer.Layer<never, E2, R2>,
+  /** More of its HTTP routes, whose handlers get the same auth and settings. */
+  routes: Layer.Layer<never, E2, R2> = Layer.empty,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
-    const redirectMcp = yield* Ref.make<string | null>(null);
     const asleep = yield* Ref.make(false);
     const unanswered = yield* Queue.unbounded<void>();
     const wake = yield* Deferred.make<void>();
@@ -136,17 +97,7 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
     });
-    const authContext = yield* EnvironmentAuth.layer.pipe(
-      Layer.provide(ManagedPolicy.layerTest()),
-      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
-      Layer.provide(Sqlite.layerMemory),
-      Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" })),
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.fresh,
-      Layer.build,
-    );
+    const authContext = yield* Layer.build(layerEnvironmentAuth("t3-peer-link-peer-"));
     const layerRecordBearers = HttpRouter.middleware(
       (httpEffect) =>
         Effect.gen(function* () {
@@ -159,19 +110,11 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
               return yield* Effect.die("the peer was closed while asleep");
             }
           }
-          const redirect = yield* Ref.get(redirectMcp);
-          if (request.url === "/mcp" && redirect !== null)
-            return HttpServerResponse.empty({ status: 307, headers: { location: redirect } });
           const authorization = request.headers.authorization;
           if (authorization !== undefined) {
             yield* Ref.update(bearers, (seen) => [...seen, authorization]);
           }
-          return yield* httpEffect.pipe(
-            Effect.provideService(
-              HttpServerRequest.HttpServerRequest,
-              request.modify({ headers: { ...request.headers, "x-forwarded-proto": protocol } }),
-            ),
-          );
+          return yield* httpEffect;
         }),
       { global: true },
     );
@@ -194,6 +137,7 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
             ),
           ),
         ),
+        Layer.provide(PeerHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
@@ -214,6 +158,7 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
     // Fresh, so the peer never shares a toolkit or MCP server with the
     // environment that links to it in the same test.
     yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.provide(Layer.succeedContext(authContext)),
       Layer.fresh,
       Layer.build,
     );
@@ -221,7 +166,7 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
     yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
     const address = (yield* HttpServer.HttpServer).address;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
-    const url = `${protocol}://127.0.0.1:${address.port}`;
+    const url = `http://127.0.0.1:${address.port}`;
     const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
     return {
       url,
@@ -230,7 +175,6 @@ export const servePeer = <E, R, E2 = never, R2 = never>(
       settings: Context.get(authContext, ServerSettings.ServerSettingsService),
       descriptor,
       bearers,
-      redirectMcp,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
       probes,
       /** While set, its descriptor never answers, as a machine that is asleep. */
@@ -252,7 +196,7 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 
 /**
  * The environment that links: its own database and secret store, reaching
- * peers over HTTPS. Provide it to anything built on its links.
+ * peers over plain HTTP. Provide it to anything built on its links.
  */
 export const layerLinkingEnvironment = <E = never>(
   descriptor: ExecutionEnvironmentDescriptor,

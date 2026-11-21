@@ -10,6 +10,7 @@ import {
   seedUserInputDraftAnswers,
   type ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { T, useGT } from "gt-react";
 import { useState, type ReactNode } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
@@ -33,6 +34,7 @@ export function DecisionQuestionCard({
   userInput: ThreadPendingUserInput;
   actions?: ReactNode;
 }) {
+  const gt = useGT();
   const canRespond = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToUserInput, { reportFailure: false });
   const dismiss = useAtomCommand(threadEnvironment.dismissUserInput, { reportFailure: false });
@@ -58,7 +60,7 @@ export function DecisionQuestionCard({
           ...target,
           input: { threadId: thread.threadId, requestId: userInput.requestId, answers },
         }),
-      "Failed to send the answer.",
+      gt("Failed to send the answer."),
     );
   };
   const dismissQuestion = () =>
@@ -68,7 +70,7 @@ export function DecisionQuestionCard({
           ...target,
           input: { threadId: thread.threadId, requestId: userInput.requestId },
         }),
-      "Failed to dismiss the question.",
+      gt("Failed to dismiss the question."),
     );
   return (
     <RequestCard
@@ -78,16 +80,16 @@ export function DecisionQuestionCard({
       actions={
         <>
           <Button size="sm" disabled={disabled || answers === null} onClick={submit}>
-            Submit answer
+            <T>Submit answer</T>
           </Button>
           {userInput.dismissible ? (
             <InlineButton
               tone="muted"
               disabled={disabled}
-              title="Dismiss question without answering"
+              title={gt("Dismiss question without answering")}
               onClick={dismissQuestion}
             >
-              Dismiss
+              <T>Dismiss</T>
             </InlineButton>
           ) : null}
           {actions}
@@ -134,8 +136,10 @@ export function DecisionQuestionCard({
                 className="mt-1.5"
                 size="sm"
                 rows={2}
-                aria-label={`Answer to ${question.header}`}
-                placeholder={question.options.length > 0 ? "Or write an answer" : "Write an answer"}
+                aria-label={gt("Answer to {header}", { header: question.header })}
+                placeholder={
+                  question.options.length > 0 ? gt("Or write an answer") : gt("Write an answer")
+                }
                 value={draft?.customAnswer ?? ""}
                 onChange={(event) => {
                   const text = event.target.value;

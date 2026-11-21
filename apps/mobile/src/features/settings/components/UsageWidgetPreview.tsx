@@ -1,4 +1,5 @@
 import { useIsFocused } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, useColorScheme, useWindowDimensions, View } from "react-native";
 
@@ -11,6 +12,7 @@ export function UsageWidgetPreview(props: {
   readonly snapshot: AndroidSubscriptionUsageSnapshot;
   readonly target: string;
 }) {
+  const gt = useGT();
   const { configuration, groups, checkedAt, emptyMessage } = props.snapshot;
   const { height } = useWindowDimensions();
   const systemScheme = useColorScheme() === "dark" ? "dark" : "light";
@@ -48,11 +50,11 @@ export function UsageWidgetPreview(props: {
     <View className="w-full self-center px-5 pb-3 pt-2" style={{ maxWidth: 720 }}>
       <View className="flex-row items-center justify-between gap-3">
         <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground-muted">
-          {`Preview · ${props.target}`}
+          {gt("Preview · {target}", { target: props.target })}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={expanded ? "Hide preview" : "Show preview"}
+          accessibilityLabel={expanded ? gt("Hide preview") : gt("Show preview")}
           accessibilityState={{ expanded }}
           onPress={() => {
             setCurrentTime(Date.now());
@@ -61,7 +63,7 @@ export function UsageWidgetPreview(props: {
           className="min-h-11 justify-center rounded-full px-3"
         >
           <Text className="text-sm font-t3-medium text-primary-text">
-            {expanded ? "Hide" : "Show"}
+            {expanded ? gt("Hide") : gt("Show")}
           </Text>
         </Pressable>
       </View>
@@ -72,7 +74,7 @@ export function UsageWidgetPreview(props: {
         >
           <ScrollView
             key={props.target}
-            accessibilityLabel="Widget preview"
+            accessibilityLabel={gt("Widget preview")}
             nestedScrollEnabled
             contentContainerStyle={{ padding: compact ? 12 : 16, gap: compact ? 6 : 10 }}
           >
@@ -127,7 +129,8 @@ export function UsageWidgetPreview(props: {
                           }}
                         >
                           {stale
-                            ? `${window.label} · Open T3 to refresh`
+                            ? // oxlint-disable-next-line t3code/no-untranslated-copy -- mirrors the widget, which cannot translate
+                              `${window.label} · Open T3 to refresh`
                             : `${window.label} · ${percent}% ${used ? "used" : "left"}`}
                         </Text>
                         {!stale && configuration.showBars ? (
@@ -164,6 +167,7 @@ export function UsageWidgetPreview(props: {
             )}
             {configuration.showUpdatedAt && checkedAt > 0 ? (
               <Text style={{ color: colors.onSurfaceVariant, fontSize: 10 }}>
+                {/* oxlint-disable-next-line t3code/no-untranslated-copy -- mirrors the widget, which cannot translate */}
                 {`As of ${new Date(checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`}
               </Text>
             ) : null}

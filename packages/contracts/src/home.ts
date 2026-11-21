@@ -20,6 +20,7 @@ import {
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  clampedPositiveInt,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
@@ -190,7 +191,7 @@ const environmentIdField = OrchestratorMcpEnvironmentTarget;
 export const FleetProjectListInput = Schema.Struct({
   environmentId: environmentIdField,
   cursor: Schema.optional(NonNegativeInt),
-  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+  limit: Schema.optional(clampedPositiveInt(100)),
 });
 export type FleetProjectListInput = typeof FleetProjectListInput.Type;
 

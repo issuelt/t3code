@@ -1,19 +1,16 @@
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
-import { RemoteEnvironmentAuthorization } from "@t3tools/client-runtime/authorization";
 import {
-  AVAILABLE_CONNECTION_STATE,
-  BearerConnectionTarget,
-  EnvironmentRegistry,
   EnvironmentSupervisor,
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
   type PreparedConnection,
-  type PreparedHttpAuthorization,
 } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { layerRemoteHttpClient, type RpcSession } from "@t3tools/client-runtime/rpc";
@@ -21,7 +18,10 @@ import { HttpClient } from "effect/http";
 
 import * as MobileStorage from "../../persistence/mobile-storage";
 
-import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
+import {
+  linkEnvironmentToCloudWithPreference,
+  updateLinkedEnvironmentLiveActivityPreference,
+} from "./linkEnvironment";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -70,85 +70,6 @@ const savedConnection = {
   bearerToken: "local-bearer",
 };
 
-const directDpopConnection = {
-  ...savedConnection,
-  environmentId: EnvironmentId.make("env-direct"),
-  bearerToken: null,
-};
-
-const DIRECT_DPOP_CREDENTIAL_ID = "dpop:env-direct";
-const directDpopAuthorization = {
-  _tag: "Dpop",
-  accessToken: "direct-access-token",
-  expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
-  credentialId: DIRECT_DPOP_CREDENTIAL_ID,
-} satisfies PreparedHttpAuthorization;
-
-const preparedAuthorizations = new Map<string, PreparedHttpAuthorization>([
-  [savedConnection.environmentId, { _tag: "Bearer", token: "local-bearer" }],
-  [directDpopConnection.environmentId, directDpopAuthorization],
-]);
-
-function preparedConnection(environmentId: EnvironmentId): PreparedConnection {
-  const target = new BearerConnectionTarget({
-    environmentId,
-    label: savedConnection.environmentLabel,
-    connectionId: `bearer:${environmentId}`,
-  });
-  return {
-    environmentId,
-    label: target.label,
-    httpBaseUrl: savedConnection.httpBaseUrl,
-    socketUrl: savedConnection.wsBaseUrl,
-    httpAuthorization: preparedAuthorizations.get(environmentId) ?? null,
-    target,
-  };
-}
-
-const layerTestRegistry = Layer.succeed(
-  EnvironmentRegistry.EnvironmentRegistry,
-  EnvironmentRegistry.EnvironmentRegistry.of({
-    run: <A, E, R>(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
-      Effect.gen(function* () {
-        const prepared = preparedConnection(environmentId);
-        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-          target: prepared.target,
-          state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-          session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
-          prepared: yield* SubscriptionRef.make(Option.some(prepared)),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        });
-        return yield* Effect.provideService(
-          effect,
-          EnvironmentSupervisor.EnvironmentSupervisor,
-          supervisor,
-        );
-      }),
-  } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
-);
-
-const layerTestRemoteAuthorization = Layer.succeed(
-  RemoteEnvironmentAuthorization,
-  RemoteEnvironmentAuthorization.of({
-    rememberCheckedDescriptor: () => Effect.void,
-    authorizeBearer: () => Effect.die("unexpected bearer preparation"),
-    authorizeDirect: () => Effect.die("unexpected direct preparation"),
-    authorizeDpop: () => Effect.die("unexpected socket preparation"),
-    authorizeDpopHttp: (input) =>
-      input.direct?.credentialId === DIRECT_DPOP_CREDENTIAL_ID
-        ? Effect.succeed({
-            environmentId: input.expectedEnvironmentId,
-            label: input.direct.label,
-            httpBaseUrl: input.direct.httpBaseUrl,
-            httpAuthorization: directDpopAuthorization,
-          })
-        : Effect.die("unexpected DPoP authorization"),
-    renewDpopBeforeExpiry: () => Effect.die("unexpected socket renewal"),
-  }),
-);
-
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
     Effect.succeed(`dpop:${input.method}:${input.url}`),
@@ -165,8 +86,6 @@ function layerCloudClient() {
   const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     layerHttpClient,
-    layerTestRegistry,
-    layerTestRemoteAuthorization,
     Layer.succeed(
       MobileStorage.MobileStorage,
       MobileStorage.MobileStorage.of({
@@ -190,13 +109,49 @@ const withCloudServices = <A, E>(
   effect: Effect.Effect<
     A,
     E,
-    | EnvironmentRegistry.EnvironmentRegistry
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
     | MobileStorage.MobileStorage
   >,
 ) => effect.pipe(Effect.provide(layerCloudClient()));
+
+const linkedSupervisor = Effect.gen(function* () {
+  const target = new PrimaryConnectionTarget({
+    environmentId: savedConnection.environmentId,
+    label: savedConnection.environmentLabel,
+    httpBaseUrl: savedConnection.httpBaseUrl,
+    wsBaseUrl: savedConnection.wsBaseUrl,
+  });
+  return EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target,
+    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+    prepared: yield* SubscriptionRef.make(
+      Option.some<PreparedConnection>({
+        environmentId: savedConnection.environmentId,
+        label: savedConnection.environmentLabel,
+        httpBaseUrl: savedConnection.httpBaseUrl,
+        socketUrl: savedConnection.wsBaseUrl,
+        httpAuthorization: { _tag: "Bearer", token: "local-bearer" },
+        target,
+      }),
+    ),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  });
+});
+
+const linkPreparedEnvironment = (liveActivitiesEnabled: boolean) =>
+  Effect.flatMap(linkedSupervisor, (supervisor) =>
+    withCloudServices(
+      linkEnvironmentToCloudWithPreference({
+        clerkToken: "clerk-token",
+        liveActivitiesEnabled,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor)),
+    ),
+  );
 
 function validLinkProof() {
   return "signed-environment-link-jwt";
@@ -207,18 +162,25 @@ function validLinkResponse(environmentId = "env-1") {
     ok: true,
     environmentId,
     endpoint: {
-      httpBaseUrl: "https://managed.example.test/",
-      wsBaseUrl: "wss://managed.example.test/ws",
-      providerKind: "cloudflare_tunnel",
+      httpBaseUrl: "https://desktop.example.test/",
+      wsBaseUrl: "wss://desktop.example.test/ws",
+      providerKind: "manual",
     },
-    endpointRuntime: {
-      providerKind: "cloudflare_tunnel",
-      connectorToken: "connector-token",
-    },
+    endpointRuntime: null,
     relayIssuer: "https://relay.example.test",
     cloudUserId: "user_123",
     environmentCredential: "environment-credential",
     cloudMintPublicKey: "cloud-mint-public-key",
+  };
+}
+
+function linkStateResponse() {
+  return {
+    linked: false,
+    cloudUserId: null,
+    relayUrl: null,
+    relayIssuer: null,
+    publishAgentActivity: true,
   };
 }
 
@@ -239,11 +201,41 @@ describe("mobile cloud link environment client", () => {
     createProofMock.mockClear();
   });
 
+  it.effect("skips Live Activity updates when the environment has no prepared connection", () =>
+    Effect.gen(function* () {
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: new PrimaryConnectionTarget({
+          environmentId: savedConnection.environmentId,
+          label: savedConnection.environmentLabel,
+          httpBaseUrl: savedConnection.httpBaseUrl,
+          wsBaseUrl: savedConnection.wsBaseUrl,
+        }),
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const result = yield* updateLinkedEnvironmentLiveActivityPreference(true).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unexpected HTTP request")),
+        ),
+      );
+      expect(result).toBe("disconnected");
+    }),
+  );
+
   it.effect(
     "rejects relay link credentials for a different environment before persisting relay config",
     () =>
       Effect.gen(function* () {
         const fetchMock = vi.fn((url: string | URL) => {
+          if (String(url).endsWith("/api/connect/preferences")) {
+            return Promise.resolve(Response.json(linkStateResponse()));
+          }
           if (String(url).endsWith("/v1/client/environment-link-challenges")) {
             return Promise.resolve(Response.json(validLinkChallengeResponse()));
           }
@@ -254,24 +246,21 @@ describe("mobile cloud link environment client", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
 
-        const error = yield* withCloudServices(
-          linkEnvironmentToCloudWithPreference({
-            clerkToken: "clerk-token",
-            connection: savedConnection,
-            liveActivitiesEnabled: true,
-          }),
-        ).pipe(Effect.flip);
+        const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "CloudEnvironmentLinkError",
           message: "Relay returned credentials for a different environment.",
         });
-        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(fetchMock).toHaveBeenCalledTimes(4);
       }),
   );
 
   it.effect("rejects relay link credentials for a different managed endpoint provider", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn((url: string | URL) => {
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(linkStateResponse()));
+        }
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
           return Promise.resolve(Response.json(validLinkChallengeResponse()));
         }
@@ -283,25 +272,19 @@ describe("mobile cloud link environment client", () => {
             ...validLinkResponse(),
             endpoint: {
               ...validLinkResponse().endpoint,
-              providerKind: "manual",
+              providerKind: "cloudflare_tunnel",
             },
           }),
         );
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
+      const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "CloudEnvironmentLinkError",
         message: "Relay returned credentials for a different endpoint provider.",
       });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     }),
   );
 
@@ -321,90 +304,39 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
         }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(linkStateResponse()));
+        }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
         );
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: false,
-        }),
-      );
+      yield* linkPreparedEnvironment(false);
 
-      expect(bodies[1]).toMatchObject({
+      expect(bodies[0]).toEqual({ publishAgentActivity: true });
+      expect(bodies[2]).toMatchObject({
         endpoint: {
           httpBaseUrl: "https://desktop.example.test/",
           wsBaseUrl: "wss://desktop.example.test/ws",
-          providerKind: "cloudflare_tunnel",
+          providerKind: "manual",
         },
         origin: {
           localHttpHost: "127.0.0.1",
           localHttpPort: 443,
         },
       });
-      expect(bodies[2]).toMatchObject({
+      expect(bodies[3]).toMatchObject({
         deviceId: "device-1",
         notificationsEnabled: true,
         liveActivitiesEnabled: false,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled: false,
       });
-      expect(bodies[3]).toMatchObject({
+      expect(bodies[4]).toMatchObject({
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
-    }),
-  );
-  it.effect("links a directly paired DPoP environment with its own proof", () =>
-    Effect.gen(function* () {
-      const environmentRequests: Array<{ readonly url: string; readonly headers: Headers }> = [];
-      const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
-        const requestUrl = String(url);
-        if (requestUrl.endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (requestUrl.endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse("env-direct")));
-        }
-        environmentRequests.push({ url: requestUrl, headers: new Headers(init?.headers) });
-        if (requestUrl.endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: directDpopConnection,
-          liveActivitiesEnabled: true,
-        }),
-      );
-
-      expect(
-        environmentRequests.map((request) => ({
-          url: request.url,
-          authorization: request.headers.get("authorization"),
-          dpop: request.headers.get("dpop"),
-        })),
-      ).toEqual([
-        {
-          url: "https://desktop.example.test/api/connect/link-proof",
-          authorization: "DPoP direct-access-token",
-          dpop: "dpop:POST:https://desktop.example.test/api/connect/link-proof",
-        },
-        {
-          url: "https://desktop.example.test/api/connect/relay-config",
-          authorization: "DPoP direct-access-token",
-          dpop: "dpop:POST:https://desktop.example.test/api/connect/relay-config",
-        },
-      ]);
     }),
   );
 });

@@ -1,5 +1,6 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
+import { useMessages } from "gt-react";
 import { useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -75,6 +76,7 @@ export function PullRequestListGroups({
   // opening the page from blocking on the whole list.
   const shownGroups = useDeferredValue(groups, firstPaintGroups(groups));
   const counts = new Map(groups.map((group) => [group.key, group.entries.length]));
+  const resolve = useMessages();
   return (
     <PullRequestSpeedModeProvider>
       <div className={cn("space-y-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
@@ -83,7 +85,7 @@ export function PullRequestListGroups({
             {group.label ? (
               <ListGroupHeader
                 icon={GROUP_ICONS[group.key] ?? LayersIcon}
-                label={group.label}
+                label={resolve(group.label)}
                 count={counts.get(group.key) ?? group.entries.length}
               />
             ) : null}

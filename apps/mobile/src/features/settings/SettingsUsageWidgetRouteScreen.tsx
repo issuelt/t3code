@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useIsFocused, useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 import { AsyncResult } from "effect/reactivity";
@@ -11,7 +11,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu as ControlPillMenu } from "../../components/ui/Menu";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   buildAndroidSubscriptionUsageSnapshot,
   collectSubscriptionWidgetQuotas,
@@ -26,23 +27,24 @@ import {
 } from "../../widgets/subscriptionWidgetPreferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { UsageWidgetPreview } from "./components/UsageWidgetPreview";
 
 const PERIODS = [
-  { id: "all", title: "All quotas" },
-  { id: "session", title: "Session" },
-  { id: "weekly", title: "Weekly" },
-  { id: "monthly", title: "Monthly" },
-  { id: "tightest", title: "Lowest remaining" },
+  { id: "all", title: msg("All quotas") },
+  { id: "session", title: msg("Session") },
+  { id: "weekly", title: msg("Weekly") },
+  { id: "monthly", title: msg("Monthly") },
+  { id: "tightest", title: msg("Lowest remaining") },
 ] as const;
 
 const RESET_DISPLAYS = [
-  { id: "reset", title: "Next reset only" },
-  { id: "both", title: "Reset + time left" },
-  { id: "remaining", title: "Time left only" },
+  { id: "reset", title: msg("Next reset only") },
+  { id: "both", title: msg("Reset + time left") },
+  { id: "remaining", title: msg("Time left only") },
 ] as const;
 
 function WidgetMenu<Value extends string>(props: {
@@ -89,12 +91,19 @@ function WidgetMenu<Value extends string>(props: {
 }
 
 export function SettingsUsageWidgetRouteScreen() {
+  const gt = useGT();
+  const messages = useMessages();
+  const periods = PERIODS.map((period) => ({ ...period, title: messages(period.title) }));
+  const resetDisplays = RESET_DISPLAYS.map((display) => ({
+    ...display,
+    title: messages(display.title),
+  }));
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute<RouteProp<{ Widget: { widgetId?: string } | undefined }, "Widget">>();
   const focused = useIsFocused();
   const result = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const ready = AsyncResult.isSuccess(result) && !result.waiting;
   const preferences = resolveWidgetPreferences(
@@ -152,10 +161,10 @@ export function SettingsUsageWidgetRouteScreen() {
         else widgets[target] = { ...(widgets[target] ?? latest.defaults), ...patch };
         return { subscriptionWidgets: { ...latest, widgets } };
       },
-    }).catch(() => Alert.alert("Could not save widget settings", "Please try again."));
+    }).catch(() => Alert.alert(gt("Could not save widget settings"), gt("Please try again.")));
   };
   return (
-    <SettingsScreen title="Usage widget">
+    <SettingsScreen title={gt("Usage widget")}>
       <UsageWidgetPreview
         snapshot={preview}
         target={
@@ -174,18 +183,20 @@ export function SettingsUsageWidgetRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text className="text-sm text-foreground-muted">
-          Choose what appears on your home screen. Each widget can have its own settings. Changes
-          apply immediately.
+          <T>
+            Choose what appears on your home screen. Each widget can have its own settings. Changes
+            apply immediately.
+          </T>
         </Text>
-        <SettingsSection title="Widget">
+        <SettingsSection title={gt("Widget")}>
           <WidgetMenu
-            label="Configure"
+            label={gt("Configure")}
             value={target}
             options={[
-              { id: "defaults", title: "Default settings" },
+              { id: "defaults", title: gt("Default settings") },
               ...widgetIds.map((id, index) => ({
                 id: String(id),
-                title: `Home screen widget ${index + 1}`,
+                title: gt("Home screen widget {number}", { number: index + 1 }),
               })),
             ]}
             disabled={!ready}
@@ -194,7 +205,7 @@ export function SettingsUsageWidgetRouteScreen() {
           {!isDefault ? (
             <SettingsSwitchRow
               icon="arrow.clockwise"
-              label="Use default settings"
+              label={gt("Use default settings")}
               value={!preferences.widgets[target]}
               disabled={disabled}
               onValueChange={(enabled) => save(enabled ? null : configuration)}
@@ -202,28 +213,28 @@ export function SettingsUsageWidgetRouteScreen() {
           ) : null}
           <SettingsActionRow
             icon="plus"
-            label="Add to home screen"
+            label={gt("Add to home screen")}
             disabled={!native || !ready}
             onPress={() => {
               if (!native?.pinWidget())
                 Alert.alert(
-                  "Add the widget from your launcher",
-                  "Open your home screen's widget gallery and choose Subscription usage.",
+                  gt("Add the widget from your launcher"),
+                  gt("Open your home screen's widget gallery and choose Subscription usage."),
                 );
             }}
           />
           <SettingsActionRow
             icon="chart.bar.xaxis"
-            label="Open usage limits"
+            label={gt("Open usage limits")}
             onPress={() => navigation.navigate("SettingsUsage")}
           />
         </SettingsSection>
         {!exists ? (
           <Text className="text-sm text-danger-foreground">
-            This widget was removed. Choose Default settings or another home screen widget.
+            <T>This widget was removed. Choose Default settings or another home screen widget.</T>
           </Text>
         ) : null}
-        <SettingsSection title="Providers">
+        <SettingsSection title={gt("Providers")}>
           {(
             [
               { id: "codex", label: "Codex" },
@@ -246,11 +257,11 @@ export function SettingsUsageWidgetRouteScreen() {
             />
           ))}
         </SettingsSection>
-        <SettingsSection title="Accounts">
+        <SettingsSection title={gt("Accounts")}>
           <SettingsSwitchRow
             icon="person.2"
-            label="All accounts"
-            subtitle="Include new accounts automatically."
+            label={gt("All accounts")}
+            subtitle={gt("Include new accounts automatically.")}
             disabled={disabled}
             value={configuration.accountIds === null}
             onValueChange={(enabled) => save({ accountIds: enabled ? null : availableAccounts })}
@@ -279,21 +290,23 @@ export function SettingsUsageWidgetRouteScreen() {
           ))}
           {accounts.length === 0 ? (
             <Text className="p-4 text-sm text-foreground-muted">
-              Connect an environment and refresh Usage → Limits to choose accounts.
+              <T>Connect an environment and refresh Usage → Limits to choose accounts.</T>
             </Text>
           ) : null}
           {configuration.accountIds?.some((id) => !availableAccounts.includes(id)) ? (
             <Text className="p-4 text-sm text-foreground-muted">
-              Some selected accounts are unavailable. They will return when their environment
-              reconnects and reports limits.
+              <T>
+                Some selected accounts are unavailable. They will return when their environment
+                reconnects and reports limits.
+              </T>
             </Text>
           ) : null}
         </SettingsSection>
-        <SettingsSection title="Environments">
+        <SettingsSection title={gt("Environments")}>
           <SettingsSwitchRow
             icon="server.rack"
-            label="All environments"
-            subtitle="Include new environments automatically."
+            label={gt("All environments")}
+            subtitle={gt("Include new environments automatically.")}
             disabled={disabled}
             value={configuration.environmentIds === null}
             onValueChange={(enabled) =>
@@ -321,39 +334,39 @@ export function SettingsUsageWidgetRouteScreen() {
             />
           ))}
         </SettingsSection>
-        <SettingsSection title="Quotas">
+        <SettingsSection title={gt("Quotas")}>
           <WidgetMenu
-            label="Account view"
+            label={gt("Account view")}
             value={configuration.grouping}
             options={[
-              { id: "accounts", title: "Separate accounts" },
-              { id: "pooled", title: "Combined by provider" },
+              { id: "accounts", title: gt("Separate accounts") },
+              { id: "pooled", title: gt("Combined by provider") },
             ]}
             disabled={disabled}
             onChange={(grouping) => save({ grouping })}
           />
           <WidgetMenu
-            label="Codex quotas"
+            label={gt("Codex quotas")}
             value={configuration.codexPeriod}
-            options={PERIODS}
+            options={periods}
             disabled={disabled}
             onChange={(codexPeriod) => save({ codexPeriod })}
           />
           <WidgetMenu
-            label="Claude quotas"
+            label={gt("Claude quotas")}
             value={configuration.claudePeriod}
-            options={PERIODS}
+            options={periods}
             disabled={disabled}
             onChange={(claudePeriod) => save({ claudePeriod })}
           />
           <WidgetMenu
-            label="Quotas per account"
+            label={gt("Quotas per account")}
             value={String(configuration.windowsPerAccount)}
             options={[
-              { id: "0", title: "All · scroll to see more" },
-              { id: "1", title: "1" },
-              { id: "2", title: "2" },
-              { id: "3", title: "3" },
+              { id: "0", title: gt("All · scroll to see more") },
+              { id: "1", title: gt("1") },
+              { id: "2", title: gt("2") },
+              { id: "3", title: gt("3") },
             ]}
             disabled={disabled}
             onChange={(value) =>
@@ -363,60 +376,60 @@ export function SettingsUsageWidgetRouteScreen() {
             }
           />
           <WidgetMenu
-            label="Sort accounts"
+            label={gt("Sort accounts")}
             value={configuration.sort}
             options={[
-              { id: "provider", title: "Provider" },
-              { id: "name", title: "Name" },
-              { id: "remaining", title: "Lowest remaining" },
-              { id: "reset", title: "Next reset" },
+              { id: "provider", title: gt("Provider") },
+              { id: "name", title: gt("Name") },
+              { id: "remaining", title: gt("Lowest remaining") },
+              { id: "reset", title: gt("Next reset") },
             ]}
             disabled={disabled}
             onChange={(sort) => save({ sort })}
           />
         </SettingsSection>
-        <SettingsSection title="Appearance">
+        <SettingsSection title={gt("Appearance")}>
           <WidgetMenu
-            label="Density"
+            label={gt("Density")}
             value={configuration.density}
             options={[
-              { id: "comfortable", title: "Comfortable" },
-              { id: "compact", title: "Compact" },
+              { id: "comfortable", title: gt("Comfortable") },
+              { id: "compact", title: gt("Compact") },
             ]}
             disabled={disabled}
             onChange={(density) => save({ density })}
           />
           <WidgetMenu
-            label="Percentage"
+            label={gt("Percentage")}
             value={configuration.percentage}
             options={[
-              { id: "remaining", title: "Remaining" },
-              { id: "used", title: "Used" },
+              { id: "remaining", title: gt("Remaining") },
+              { id: "used", title: gt("Used") },
             ]}
             disabled={disabled}
             onChange={(percentage) => save({ percentage })}
           />
           <WidgetMenu
-            label="Theme"
+            label={gt("Theme")}
             value={configuration.theme}
             options={[
-              { id: "system", title: "System" },
-              { id: "light", title: "Light" },
-              { id: "dark", title: "Dark" },
+              { id: "system", title: gt("System") },
+              { id: "light", title: gt("Light") },
+              { id: "dark", title: gt("Dark") },
             ]}
             disabled={disabled}
             onChange={(theme) => save({ theme })}
           />
           <SettingsSwitchRow
             icon="chart.bar.xaxis"
-            label="Progress bars"
+            label={gt("Progress bars")}
             disabled={disabled}
             value={configuration.showBars}
             onValueChange={(showBars) => save({ showBars })}
           />
           <WidgetMenu
-            label="Environment names"
-            subtitle="Auto hides names with one connected environment."
+            label={gt("Environment names")}
+            subtitle={gt("Auto hides names with one connected environment.")}
             disabled={disabled}
             value={
               configuration.showEnvironment === "auto"
@@ -426,9 +439,9 @@ export function SettingsUsageWidgetRouteScreen() {
                   : "hide"
             }
             options={[
-              { id: "auto", title: "Auto" },
-              { id: "show", title: "Always show" },
-              { id: "hide", title: "Always hide" },
+              { id: "auto", title: gt("Auto") },
+              { id: "show", title: gt("Always show") },
+              { id: "hide", title: gt("Always hide") },
             ]}
             onChange={(value) =>
               save({ showEnvironment: value === "auto" ? "auto" : value === "show" })
@@ -436,24 +449,24 @@ export function SettingsUsageWidgetRouteScreen() {
           />
           <SettingsSwitchRow
             icon="clock"
-            label="Last updated"
+            label={gt("Last updated")}
             disabled={disabled}
             value={configuration.showUpdatedAt}
             onValueChange={(showUpdatedAt) => save({ showUpdatedAt })}
           />
         </SettingsSection>
-        <SettingsSection title="Reset display">
+        <SettingsSection title={gt("Reset display")}>
           <SettingsSwitchRow
             icon="clock"
-            label="Show reset details"
+            label={gt("Show reset details")}
             disabled={disabled}
             value={configuration.showResetTimes}
             onValueChange={(showResetTimes) => save({ showResetTimes })}
           />
           <WidgetMenu
-            label="Default display"
+            label={gt("Default display")}
             value={configuration.resetDisplay}
-            options={RESET_DISPLAYS}
+            options={resetDisplays}
             disabled={disabled || !configuration.showResetTimes}
             onChange={(resetDisplay) => save({ resetDisplay })}
           />
@@ -463,7 +476,7 @@ export function SettingsUsageWidgetRouteScreen() {
               label={quota.label}
               subtitle={quota.account}
               value={configuration.quotaResetDisplays[quota.id] ?? "default"}
-              options={[{ id: "default", title: "Use default" }, ...RESET_DISPLAYS]}
+              options={[{ id: "default", title: gt("Use default") }, ...resetDisplays]}
               disabled={disabled || !configuration.showResetTimes}
               onChange={(value) => {
                 const quotaResetDisplays = { ...configuration.quotaResetDisplays };
@@ -477,14 +490,16 @@ export function SettingsUsageWidgetRouteScreen() {
         <SettingsSection>
           <SettingsActionRow
             icon="arrow.clockwise"
-            label={isDefault ? "Reset default settings" : "Reset to default settings"}
+            label={isDefault ? gt("Reset default settings") : gt("Reset to default settings")}
             disabled={disabled}
             onPress={() => save(null)}
           />
         </SettingsSection>
         <Text className="text-sm text-foreground-muted">
-          Scroll the widget to see additional accounts and quotas. Open T3 to refresh readings;
-          readings expire after 15 minutes or when a quota resets.
+          <T>
+            Scroll the widget to see additional accounts and quotas. Open T3 to refresh readings;
+            readings expire after 15 minutes or when a quota resets.
+          </T>
         </Text>
       </ScrollView>
     </SettingsScreen>

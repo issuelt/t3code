@@ -64,13 +64,12 @@ export class BearerConnectionCredential extends Schema.TaggedClass<BearerConnect
   },
 ) {}
 
-/** A session bound to this device's DPoP key, renewed through the environment's token grant. */
+/** A token bound to this device's DPoP key, which the host renews while the device uses it. */
 export class DpopConnectionCredential extends Schema.TaggedClass<DpopConnectionCredential>()(
   "DpopConnectionCredential",
   {
     accessToken: Schema.String,
     expiresAtEpochMs: Schema.Number,
-    dpopThumbprint: Schema.String,
   },
 ) {}
 
@@ -152,11 +151,3 @@ export function connectionRegistrationCatalogEntry(
       };
   }
 }
-
-export const sameConnectionCredential = (
-  left: ConnectionCredential,
-  right: ConnectionCredential,
-) =>
-  left._tag === "BearerConnectionCredential"
-    ? right._tag === "BearerConnectionCredential" && left.token === right.token
-    : right._tag === "DpopConnectionCredential" && left.accessToken === right.accessToken;

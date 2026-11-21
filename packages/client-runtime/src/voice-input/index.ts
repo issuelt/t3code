@@ -5,6 +5,7 @@ export {
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
+  type VoiceInputErrorCode,
   type VoiceInputPhase,
   type VoiceInputState,
   type VoiceRecorder,
@@ -21,6 +22,8 @@ export {
   transcribeCloudPcm,
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
+  getSpeechModelDownloadOutcome,
+  installEnvironmentSpeechModel,
   linkEnvironmentSpeechModels,
   postProcessEnvironmentTranscript,
   removeEnvironmentSpeechModel,
@@ -37,6 +40,5 @@ export {
   type VoiceStreamingSession,
   type VoiceTranscriber,
   type VoiceTranscriptionErrorCode,
-  type VoiceTranscript,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";

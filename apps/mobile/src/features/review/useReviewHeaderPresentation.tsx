@@ -28,7 +28,7 @@ export function useReviewHeaderPresentation(props: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
-  const { selectedThread } = useThreadSelection();
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(props.environmentId);
   const isActiveHomeThread =
     routeEnvironmentRuntime?.serverConfig?.settings.home.threadId === props.threadId;
@@ -50,6 +50,7 @@ export function useReviewHeaderPresentation(props: {
     threadId: props.threadId,
     currentBranch: selectedThread?.branch ?? null,
     hideGitControls: isActiveHomeThread,
+    tracksRepositories: (selectedThreadProject?.trackedFolders?.length ?? 0) > 0,
     gitStatus: gitStatusQuery.data,
     gitOperationLabel: gitState.gitOperationLabel,
     onPull: gitActions.onPullSelectedThreadBranch,

@@ -28,6 +28,7 @@ export function createHomeShortcutsAtom(input: {
       return [{ environment, thread }];
     });
     return homes.map(({ environment, thread }) => ({
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Home is the feature's name, like a product name.
       label: homes.length > 1 ? `Home · ${environment.environmentLabel}` : "Home",
       connectionState: environment.connectionState,
       thread,

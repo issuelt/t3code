@@ -4,6 +4,8 @@ import type {
   ThreadPullRequestWatchChecks,
 } from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ThreadCard = {
   readonly kind: "pull-request-checks";
@@ -31,11 +33,22 @@ export function resolveThreadCards(
   );
 }
 
-export function summarizeWatchChecks(counts: ThreadPullRequestWatchCheckCounts): string {
+export function summarizeWatchChecks(
+  counts: ThreadPullRequestWatchCheckCounts,
+  resolve: MFunctionType = mFallback,
+): string {
   const total = countedTotal(counts);
-  if (counts.failed > 0) return `${counts.failed} of ${total} failing`;
-  if (counts.awaiting > 0) return `${counts.awaiting} awaiting action`;
-  if (counts.running > 0) return `${counts.running + counts.queued} of ${total} running`;
-  if (counts.queued > 0) return `${counts.queued} of ${total} queued`;
-  return counts.passed === total ? "All checks passed" : `${counts.passed} of ${total} passing`;
+  if (counts.failed > 0)
+    return resolve(msg("{count} of {total} failing", { count: counts.failed, total }));
+  if (counts.awaiting > 0)
+    return resolve(msg("{count} awaiting action", { count: counts.awaiting }));
+  if (counts.running > 0)
+    return resolve(
+      msg("{count} of {total} running", { count: counts.running + counts.queued, total }),
+    );
+  if (counts.queued > 0)
+    return resolve(msg("{count} of {total} queued", { count: counts.queued, total }));
+  return counts.passed === total
+    ? resolve(msg("All checks passed"))
+    : resolve(msg("{count} of {total} passing", { count: counts.passed, total }));
 }

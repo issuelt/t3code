@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type {
   KeybindingCommand,
   ProjectId,
@@ -19,7 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   decodeProjectScriptKeybindingRule,
-  PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING,
+  projectScriptKeybindingSaveWarning,
   keybindingValueForCommand,
 } from "../../lib/projectScriptKeybindings";
 import {
@@ -80,7 +83,7 @@ export function useProjectScriptEditing(input: {
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
+            message: m(msg("This connection cannot change keyboard shortcuts.")),
           }),
         ),
       );
@@ -120,7 +123,7 @@ export function useProjectScriptEditing(input: {
 
     if (!changesKeybinding) return updateResult;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+      toastManager.add(projectScriptKeybindingSaveWarning());
       return updateResult;
     }
 
@@ -158,7 +161,7 @@ export function useProjectScriptEditing(input: {
     for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
       const result = await removeKeybinding({ environmentId, input: rule });
       if (result._tag === "Failure") {
-        toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+        toastManager.add(projectScriptKeybindingSaveWarning());
         return updateResult;
       }
     }
@@ -170,7 +173,7 @@ export function useProjectScriptEditing(input: {
             ? { ...keybindingRule, replace: previous }
             : keybindingRule,
       });
-      if (result._tag === "Failure") toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+      if (result._tag === "Failure") toastManager.add(projectScriptKeybindingSaveWarning());
     }
     return updateResult;
   };
@@ -208,7 +211,7 @@ export function useProjectScriptEditing(input: {
     }
     const existingScript = scripts.find((script) => script.id === scriptId);
     if (!existingScript) {
-      return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
+      return AsyncResult.failure(Cause.fail(new Error(m(msg("Script not found.")))));
     }
 
     const updatedScript = buildProjectScript(existingScript.id, input);
@@ -246,15 +249,20 @@ export function useProjectScriptEditing(input: {
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: `Deleted action "${deletedName ?? "Unknown"}"`,
+        title: m(
+          msg('Deleted action "{name}"', {
+            name:
+              deletedName ?? m(msg("Unknown", { $context: "fallback name of a deleted action" })),
+          }),
+        ),
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not delete action",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: m(msg("Could not delete action")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
         }),
       );
     }

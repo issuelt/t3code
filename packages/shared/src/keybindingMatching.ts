@@ -48,6 +48,32 @@ export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Space: " ",
 };
 
+// macOS US layout Option+letter glyphs (Option+P types "π"). Dead keys (E, I, N, U) are absent.
+const US_MAC_OPTION_GLYPH_LETTERS: ReadonlyMap<string, string> = new Map([
+  ["å", "a"],
+  ["∫", "b"],
+  ["ç", "c"],
+  ["∂", "d"],
+  ["ƒ", "f"],
+  ["©", "g"],
+  ["˙", "h"],
+  ["∆", "j"],
+  ["˚", "k"],
+  ["¬", "l"],
+  ["µ", "m"],
+  ["ø", "o"],
+  ["π", "p"],
+  ["œ", "q"],
+  ["®", "r"],
+  ["ß", "s"],
+  ["†", "t"],
+  ["√", "v"],
+  ["∑", "w"],
+  ["≈", "x"],
+  ["¥", "y"],
+  ["Ω", "z"],
+]);
+
 export function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
@@ -63,6 +89,9 @@ export function shortcutKeyFromEvent(
 ): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
+  // Only the US layout's glyph at its own key: other layouts and AltGr keep their character.
+  const usOptionLetter = event.altKey ? US_MAC_OPTION_GLYPH_LETTERS.get(event.key) : undefined;
+  if (usOptionLetter && event.code === `Key${usOptionLetter.toUpperCase()}`) return usOptionLetter;
   // An unshifted "+" is a dedicated zoom key (German, Spanish, Nordic); Czech types it on Digit1.
   const isZoomPlus = layoutKey === "+" && !event.shiftKey && !event.altKey;
   if (isZoomPlus && !event.code?.startsWith("Digit")) return layoutKey;

@@ -9,6 +9,7 @@ import type {
 import { summarizeWatchChecks, type ThreadCard } from "@t3tools/client-runtime/thread-cards";
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { countPullRequestChecks } from "@t3tools/shared/threadPullRequests";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -93,6 +94,8 @@ function PullRequestChecksCard({
   checks: ThreadPullRequestWatchChecks;
   total: number;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [showAll, setShowAll] = useState(false);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const { attention, running, completed } = groupPullRequestChecks(checks.runs);
@@ -121,7 +124,7 @@ function PullRequestChecksCard({
   );
   return (
     <section
-      aria-label={`Checks for #${link.number}`}
+      aria-label={gt("Checks for #{number}", { number: link.number })}
       data-testid="sidebar-thread-checks-card"
       className="rounded-md border border-sidebar-border/70 px-2 py-1"
     >
@@ -136,12 +139,12 @@ function PullRequestChecksCard({
           }}
           header={header}
           stored={stored}
-          storedSummary={summarizeWatchChecks(checks.counts)}
+          storedSummary={summarizeWatchChecks(checks.counts, messages)}
           unlisted={unlisted}
         />
       ) : (
         <>
-          {header(summarizeWatchChecks(checks.counts))}
+          {header(summarizeWatchChecks(checks.counts, messages))}
           {stored.length > 0 ? (
             <PullRequestCheckList dense checks={stored} threadRef={threadRef} />
           ) : null}
@@ -167,6 +170,7 @@ function ChecksCardHeader({
   onToggle: () => void;
   onStopWatching: () => void;
 }) {
+  const gt = useGT();
   return (
     <div className="flex h-5 min-w-0 items-center gap-1.5 text-xs text-secondary-label">
       <span className="font-mono tabular-nums">#{number}</span>
@@ -176,7 +180,7 @@ function ChecksCardHeader({
           variant="ghost-muted"
           size="icon-micro"
           aria-expanded={showAll}
-          aria-label={showAll ? "Show fewer checks" : "Show all checks"}
+          aria-label={showAll ? gt("Show fewer checks") : gt("Show all checks")}
           onClick={onToggle}
         >
           {showAll ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
@@ -189,7 +193,7 @@ function ChecksCardHeader({
               variant="ghost-muted"
               size="icon-micro"
               className="group/watch"
-              aria-label={`Stop watching #${number}`}
+              aria-label={gt("Stop watching #{number}", { number })}
               onClick={onStopWatching}
             />
           }
@@ -204,7 +208,13 @@ function ChecksCardHeader({
 }
 
 function UnlistedChecks({ count }: { count: number }) {
-  return <p className="text-xs text-muted-foreground">{count} more on the pull request</p>;
+  return (
+    <p className="text-xs text-muted-foreground">
+      <T>
+        <Var>{count}</Var> more on the pull request
+      </T>
+    </p>
+  );
 }
 
 function AllChecks({
@@ -222,6 +232,7 @@ function AllChecks({
   storedSummary: string;
   unlisted: number;
 }) {
+  const messages = useMessages();
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId: threadRef.environmentId, input: reference }),
   );
@@ -231,7 +242,9 @@ function AllChecks({
         {header(storedSummary)}
         <PullRequestCheckList dense checks={stored} threadRef={threadRef} />
         {detailQuery.isPending ? (
-          <p className="text-xs text-muted-foreground">Loading checks…</p>
+          <p className="text-xs text-muted-foreground">
+            <T>Loading checks…</T>
+          </p>
         ) : (
           <UnlistedChecks count={unlisted} />
         )}
@@ -242,7 +255,7 @@ function AllChecks({
   const { attention, running, completed } = groupPullRequestChecks(loaded);
   return (
     <>
-      {header(summarizeWatchChecks(countPullRequestChecks(loaded)))}
+      {header(summarizeWatchChecks(countPullRequestChecks(loaded), messages))}
       <PullRequestCheckList
         dense
         checks={[...attention, ...running, ...completed]}

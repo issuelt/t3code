@@ -1,4 +1,5 @@
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
+import { T } from "gt-react";
 import type { ThreadPendingApproval } from "@t3tools/client-runtime/state/thread-requests";
 import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
 import type { ReactNode } from "react";
@@ -60,7 +61,7 @@ export function PendingApprovalCard({
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
       {approval.responseCapability !== "live" ? (
         <p className="mt-2 text-warning">
-          Provider process is gone. Interrupt or restart the thread to respond.
+          <T>Provider process is gone. Interrupt or restart the thread to respond.</T>
         </p>
       ) : null}
       {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}

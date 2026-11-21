@@ -84,6 +84,7 @@ export function SubscriptionUsage(
             modifiers={[fillMaxWidth()]}
           >
             <Text color={colors.onSurfaceVariant} style={{ fontSize: 12 }}>
+              {/* oxlint-disable-next-line t3code/no-untranslated-copy -- the widget runtime has no app module scope or GT catalog */}
               {snapshot?.emptyMessage ?? "Open T3 to connect and configure usage."}
             </Text>
           </Button>
@@ -139,7 +140,8 @@ export function SubscriptionUsage(
                       style={{ fontSize: compact ? 10 : 12 }}
                     >
                       {stale
-                        ? `${window.label} · Open T3 to refresh`
+                        ? // oxlint-disable-next-line t3code/no-untranslated-copy -- the widget runtime has no app module scope or GT catalog
+                          `${window.label} · Open T3 to refresh`
                         : `${window.label} · ${percent}% ${used ? "used" : "left"}`}
                     </Text>
                     {!stale && configuration?.showBars !== false ? (
@@ -165,6 +167,7 @@ export function SubscriptionUsage(
         ))}
         {configuration?.showUpdatedAt !== false && checkedAt > 0 ? (
           <Text color={colors.onSurfaceVariant} maxLines={2} style={{ fontSize: 10 }}>
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- the widget runtime has no app module scope or GT catalog */}
             {`As of ${new Date(checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`}
           </Text>
         ) : null}
