@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  ThreadId,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -27,6 +28,7 @@ const returnedAt = "2026-10-30T23:03:21.000Z";
 
 function sendInput(
   overrides: {
+    readonly threadId?: ThreadId;
     readonly usedTokens?: number;
     readonly promptCacheTtlMs?: number;
     readonly now?: string;
@@ -85,6 +87,7 @@ function sendInput(
     ...v2Projection,
     thread: {
       ...v2Projection.thread,
+      ...(overrides.threadId === undefined ? {} : { id: overrides.threadId }),
       providerInstanceId: source,
       modelSelection: sourceSelection,
       activeProviderThreadId: ProviderThreadId.make("provider-thread-current"),
@@ -256,6 +259,18 @@ describe("compactBeforeSendTokens", () => {
     { name: "while the thread is working", threadIdle: false, expected: false },
     { name: "with no conversation but /compact", onlyCompactMessages: true, expected: false },
     { name: "for a typed /compact", text: "/compact keep the plan", expected: false },
+    {
+      name: "on the active Home thread",
+      threadId: ThreadId.make("home:1"),
+      settings: { home: { threadId: ThreadId.make("home:1"), watchAll: false, watches: [] } },
+      expected: false,
+    },
+    {
+      name: "on a former Home thread",
+      threadId: ThreadId.make("home:1"),
+      settings: { home: { threadId: ThreadId.make("home:2"), watchAll: false, watches: [] } },
+      expected: true,
+    },
   ] as const)("$name", ({ name: _name, expected, ...overrides }) => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,

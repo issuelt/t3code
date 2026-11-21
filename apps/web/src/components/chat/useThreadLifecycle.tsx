@@ -670,8 +670,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         }),
       );
     };
+  const isActiveHomeThread =
+    activeThreadId !== null && serverConfig?.settings.home.threadId === activeThreadId;
   const shortcuts = {
     "thread.settle": () => {
+      if (isActiveHomeThread) return false;
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadSettled) {
@@ -689,6 +692,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       ) {
         return false;
       }
+      if (isActiveHomeThread) return false;
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       void (
@@ -700,6 +704,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       );
     },
     "thread.regenerateTitle": () => {
+      if (isActiveHomeThread) return false;
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadShell.titleRegeneration != null) return;

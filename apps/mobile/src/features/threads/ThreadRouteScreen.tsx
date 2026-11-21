@@ -92,6 +92,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
+import { homeEnvironment } from "../../state/home";
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
@@ -484,6 +485,13 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const routeConnectionState =
+    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
+  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const isActiveHomeThread =
+    selectedThread !== null &&
+    routeEnvironmentRuntime?.serverConfig?.settings.home.threadId === selectedThread.id;
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -498,6 +506,7 @@ function ThreadRouteContent(
         : chosenInspectorMode === null || chosenInspectorMode === "route"
           ? "route"
           : chosenInspectorMode;
+    if (mode === "git" && isActiveHomeThread) return null;
     return mode === "files" && selectedThreadCwd === null ? null : mode;
   })();
   const revealPreview = useEffectEvent(() => showInspector());
@@ -505,10 +514,6 @@ function ThreadRouteContent(
   useEffect(() => {
     if (previewTarget) revealPreview();
   }, [previewTarget]);
-  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
-  const routeConnectionState =
-    routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
-  const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
   const selectedThreadWithDraftSettings = selectedThread
     ? {
         ...selectedThread,
@@ -538,8 +543,9 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
+  const startFreshHome = useAtomCommand(homeEnvironment.startFresh, { reportFailure: false });
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    selectedThread !== null && selectedThreadCwd !== null && !isActiveHomeThread
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -651,7 +657,9 @@ function ThreadRouteContent(
                 ]
               : []),
             { key: "files", render: renderFilesInspector, prewarm: true },
-            { key: "git", render: renderGitInspector, prewarm: true },
+            ...(isActiveHomeThread
+              ? []
+              : [{ key: "git", render: renderGitInspector, prewarm: true }]),
             ...(props.renderInspector ? [{ key: "route", render: props.renderInspector }] : []),
           ],
         };
@@ -809,6 +817,8 @@ function ThreadRouteContent(
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
     canOperateTerminal,
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
+    hideGitControls: isActiveHomeThread,
+    hideProjectScripts: isActiveHomeThread,
     projectScripts: selectedThreadProject
       ? resolveProjectScripts(
           routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
@@ -962,6 +972,46 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
+  const handleStartFreshHome = async () => {
+    if (!selectedThread || !canOperateThread) return;
+    const result = await startFreshHome({
+      environmentId: selectedThread.environmentId,
+      input: { expectedThreadId: selectedThread.id },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Dialog.alert(
+          "Could not start a fresh Home",
+          error instanceof Error ? error.message : "Try again.",
+        );
+      }
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(result.value.threadId),
+      }),
+    );
+  };
+  const homeHeaderMenu = isActiveHomeThread
+    ? {
+        title: "Home actions",
+        icon: "ellipsis.circle" as const,
+        separateBackground: false,
+        items: [
+          {
+            id: "home-start-fresh",
+            title: "Start fresh",
+            icon: "arrow.clockwise" as const,
+            subtitle: "New Home thread; current stays in history",
+            disabled: !canOperateThread,
+            onPress: () => void handleStartFreshHome(),
+          },
+        ],
+      }
+    : null;
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
@@ -979,6 +1029,7 @@ function ThreadRouteContent(
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
                 gitControls={threadGitControlProps}
+                homeMenu={homeHeaderMenu}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}

@@ -12,13 +12,14 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type {
-  EnvironmentId,
-  ModelSelection,
-  OrchestrationV2ModelSwitch,
-  OrchestrationV2ProjectedTurnItem,
-  ProviderInstanceId,
-  ServerProvider,
+import {
+  isHomeRollContextHandoffId,
+  type EnvironmentId,
+  type ModelSelection,
+  type OrchestrationV2ModelSwitch,
+  type OrchestrationV2ProjectedTurnItem,
+  type ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -79,6 +80,26 @@ export function ThreadModelSwitchDivider(props: {
 }
 
 export function ThreadHandoffRow(props: {
+  environmentId: EnvironmentId;
+  projectedItem: OrchestrationV2ProjectedTurnItem;
+  iconColor: ColorValue;
+  surfaceColor: string;
+}) {
+  const { item } = props.projectedItem;
+  if (item.type !== "handoff") return null;
+  if (isHomeRollContextHandoffId(item.contextHandoffId)) {
+    return (
+      <ThreadContextDivider
+        label="New session"
+        icon="arrow.clockwise"
+        iconColor={props.iconColor}
+      />
+    );
+  }
+  return <ThreadResolvedHandoffRow {...props} />;
+}
+
+function ThreadResolvedHandoffRow(props: {
   environmentId: EnvironmentId;
   projectedItem: OrchestrationV2ProjectedTurnItem;
   iconColor: ColorValue;

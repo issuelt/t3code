@@ -12,6 +12,7 @@ import {
   HOME_THREAD_ID_PREFIX,
   type HomeEnableInput,
   type HomeSettings,
+  type HomeStartFreshInput,
   type HomeThreadResult,
   HomeUnavailableError,
   type HomeWatch,
@@ -51,7 +52,9 @@ export class HomeService extends Context.Service<
     /** Turns Home off. Its thread stays in history; its watches are dropped. */
     readonly disable: Effect.Effect<void, HomeUnavailableError>;
     /** Points Home at a new thread with the same model and settles the old one. */
-    readonly startFresh: Effect.Effect<HomeThreadResult, HomeUnavailableError>;
+    readonly startFresh: (
+      input?: HomeStartFreshInput,
+    ) => Effect.Effect<HomeThreadResult, HomeUnavailableError>;
     readonly isHome: (threadId: ThreadId) => Effect.Effect<boolean>;
     /**
      * Changes Home's watches for the Home thread `homeThreadId`. Fails when
@@ -267,28 +270,33 @@ const make = Effect.gen(function* () {
       }),
     ),
 
-    startFresh: withLock(
-      Effect.gen(function* () {
-        yield* requireAvailable;
-        const home = yield* readHome;
-        const current = home.threadId === null ? null : yield* liveShell(home.threadId);
-        if (current === null) return yield* fail("Turn Home on first.");
-        const threadId = yield* launchHome(current.modelSelection);
-        // The grant moves first; stopping the old run comes after.
-        yield* writeHome({ ...home, threadId });
-        yield* stopFormerHome(current.id);
-        // The old Home stays in history, out of the active list. Settling can
-        // fail while its interrupted run is still ending; it is then left active.
-        const id = yield* random.uuidV4().pipe(Effect.orDie);
-        yield* threads
-          .dispatch({
-            type: "thread.settle",
-            commandId: CommandId.make(`home-settle:${id}`),
-            threadId: current.id,
-          })
-          .pipe(Effect.ignore);
-        return { threadId };
-      }),
+    startFresh: Effect.fn("HomeService.startFresh")((input?: HomeStartFreshInput) =>
+      withLock(
+        Effect.gen(function* () {
+          yield* requireAvailable;
+          const home = yield* readHome;
+          if (input?.expectedThreadId !== undefined && home.threadId !== input.expectedThreadId) {
+            return yield* fail("This thread is no longer Home.");
+          }
+          const current = home.threadId === null ? null : yield* liveShell(home.threadId);
+          if (current === null) return yield* fail("Turn Home on first.");
+          const threadId = yield* launchHome(current.modelSelection);
+          // The grant moves first; stopping the old run comes after.
+          yield* writeHome({ ...home, threadId });
+          yield* stopFormerHome(current.id);
+          // The old Home stays in history, out of the active list. Settling can
+          // fail while its interrupted run is still ending; it is then left active.
+          const id = yield* random.uuidV4().pipe(Effect.orDie);
+          yield* threads
+            .dispatch({
+              type: "thread.settle",
+              commandId: CommandId.make(`home-settle:${id}`),
+              threadId: current.id,
+            })
+            .pipe(Effect.ignore);
+          return { threadId };
+        }),
+      ),
     ),
 
     isHome: Effect.fn("HomeService.isHome")((threadId) =>

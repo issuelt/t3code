@@ -256,7 +256,7 @@ export function compactBeforeSendTokens(input: {
   readonly settings: Pick<
     ServerSettings,
     "providerInstances" | "compactIdleThreads" | "idleCompaction"
-  >;
+  > & { readonly home?: ServerSettings["home"] };
   readonly text: string;
   readonly threadIdle: boolean;
   readonly now: string;
@@ -266,6 +266,8 @@ export function compactBeforeSendTokens(input: {
   if (
     provider === undefined ||
     !input.threadIdle ||
+    // Active Home rolls into a fresh session instead of compacting on return.
+    input.settings.home?.threadId === projection.thread.id ||
     COMPACT_COMMAND_PATTERN.test(input.text) ||
     resolveIdleCompaction(input.settings, provider.instanceId) === "off" ||
     !provider.slashCommands.some((command) => command.name === "compact") ||

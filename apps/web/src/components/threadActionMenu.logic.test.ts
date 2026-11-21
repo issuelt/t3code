@@ -74,4 +74,32 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("shows only Home-appropriate controls on an active Home thread", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isHome: true,
+      canFind: true,
+      branch: "main",
+      canShareWithGuest: true,
+      canTurnIntoProject: true,
+      canContinueElsewhere: true,
+    });
+    expect(items.map((item) => item.id)).toEqual(["find", "mark-unread", "copy", "start-fresh"]);
+    expect(items.find((item) => item.id === "copy")?.children?.map((child) => child.id)).toEqual([
+      "copy-path",
+      "copy-thread",
+      "copy-thread-id",
+    ]);
+
+    const readOnly = buildThreadActionMenuItems({
+      ...baseState,
+      isHome: true,
+      canOperate: false,
+      canFind: true,
+    });
+    expect(readOnly.filter((item) => item.disabled).map((item) => item.id)).toEqual([
+      "start-fresh",
+    ]);
+  });
 });

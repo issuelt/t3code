@@ -27,6 +27,7 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread"
   | "copy-thread-id"
+  | "start-fresh"
   | "archive"
   | "delete";
 
@@ -98,6 +99,8 @@ export interface ThreadActionMenuState {
   readonly canTurnIntoProject?: boolean;
   /** A server with linked machines, which can start this thread's work on one of them. */
   readonly canContinueElsewhere?: boolean;
+  /** Active Home thread: hides normal thread lifecycle/git actions and offers Start fresh. */
+  readonly isHome?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -119,152 +122,176 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
-  const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
-    ...(state.canFind
-      ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
-      : []),
-    ...(state.branch
-      ? [
-          {
-            id: "new-thread-on-branch" as const,
-            label: `New thread on ${state.branch}`,
-            icon: "message-square-plus",
-          },
-        ]
-      : []),
-    ...(state.supports.pinning
-      ? [
-          state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
-        ]
-      : []),
-    ...(state.supports.settlement
-      ? [
-          state.isSettled
-            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
-            : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
-        ]
-      : []),
-    ...(state.supports.snooze
-      ? [
-          state.isSnoozed
-            ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
-            : {
-                id: "snooze" as const,
-                label: "Snooze",
-                icon: "clock",
-                disabled: !state.canSnoozeNow,
+  const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = state.isHome
+    ? [
+        ...(state.canFind
+          ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+          : []),
+        { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+        {
+          id: "copy",
+          label: "Copy",
+          icon: "copy",
+          separatorBefore: true,
+          children: [
+            { id: "copy-path", label: "Path", icon: "folder" },
+            { id: "copy-thread", label: "Thread", icon: "message-square" },
+            { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+          ],
+        },
+        {
+          id: "start-fresh",
+          label: "Start fresh",
+          icon: "refresh-cw",
+          separatorBefore: true,
+        },
+      ]
+    : [
+        ...(state.canFind
+          ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+          : []),
+        ...(state.branch
+          ? [
+              {
+                id: "new-thread-on-branch" as const,
+                label: `New thread on ${state.branch}`,
+                icon: "message-square-plus",
+              },
+            ]
+          : []),
+        ...(state.supports.pinning
+          ? [
+              state.isPinned
+                ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
+                : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+            ]
+          : []),
+        ...(state.supports.settlement
+          ? [
+              state.isSettled
+                ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
+                : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
+            ]
+          : []),
+        ...(state.supports.snooze
+          ? [
+              state.isSnoozed
+                ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
+                : {
+                    id: "snooze" as const,
+                    label: "Snooze",
+                    icon: "clock",
+                    disabled: !state.canSnoozeNow,
+                    children: [
+                      ...state.snoozePresets.map((preset) => ({
+                        id: `snooze:${preset.id}` as const,
+                        label: preset.label,
+                        detail: preset.whenLabel,
+                      })),
+                      {
+                        id: "snooze:custom" as const,
+                        label: "Custom…",
+                        separatorBefore: state.snoozePresets.length > 0,
+                      },
+                    ],
+                  },
+            ]
+          : []),
+        { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
+        ...(state.supports.titleRegeneration
+          ? [
+              {
+                id: "regenerate-title" as const,
+                label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
+                icon: "refresh-cw",
+                disabled: state.isRegeneratingTitle,
+              },
+            ]
+          : []),
+        { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+        ...(state.canShareWithGuest
+          ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
+          : []),
+        ...(state.projectFilter
+          ? [
+              {
+                id: "filter-by-project" as const,
+                label: state.projectFilter.isActive
+                  ? "Show all projects"
+                  : `Filter by ${state.projectFilter.label}`,
+                icon: "folder-tree",
+              },
+            ]
+          : []),
+        ...(state.canTurnIntoProject
+          ? [
+              {
+                id: "turn-into-project" as const,
+                label: "Turn into project",
+                icon: "folder-plus",
+                disabled: state.isRunning,
+              },
+            ]
+          : []),
+        ...(state.canContinueElsewhere
+          ? [
+              {
+                id: "continue-elsewhere" as const,
+                label: "Continue on another machine",
+                icon: "monitor-up",
+              },
+            ]
+          : []),
+        ...(state.supports.autoSettleOptOut
+          ? [
+              {
+                id: "auto-settle" as const,
+                label: "Auto-settle behavior",
+                icon: "timer",
                 children: [
-                  ...state.snoozePresets.map((preset) => ({
-                    id: `snooze:${preset.id}` as const,
-                    label: preset.label,
-                    detail: preset.whenLabel,
-                  })),
                   {
-                    id: "snooze:custom" as const,
-                    label: "Custom…",
-                    separatorBefore: state.snoozePresets.length > 0,
+                    id: "auto-settle:enabled" as const,
+                    label: "Follow settings",
+                    checked: state.autoSettleEnabled,
+                  },
+                  {
+                    id: "auto-settle:disabled" as const,
+                    label: "Never",
+                    checked: !state.autoSettleEnabled,
                   },
                 ],
               },
-        ]
-      : []),
-    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
-    ...(state.supports.titleRegeneration
-      ? [
-          {
-            id: "regenerate-title" as const,
-            label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
-            icon: "refresh-cw",
-            disabled: state.isRegeneratingTitle,
-          },
-        ]
-      : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
-    ...(state.canShareWithGuest
-      ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
-      : []),
-    ...(state.projectFilter
-      ? [
-          {
-            id: "filter-by-project" as const,
-            label: state.projectFilter.isActive
-              ? "Show all projects"
-              : `Filter by ${state.projectFilter.label}`,
-            icon: "folder-tree",
-          },
-        ]
-      : []),
-    ...(state.canTurnIntoProject
-      ? [
-          {
-            id: "turn-into-project" as const,
-            label: "Turn into project",
-            icon: "folder-plus",
-            disabled: state.isRunning,
-          },
-        ]
-      : []),
-    ...(state.canContinueElsewhere
-      ? [
-          {
-            id: "continue-elsewhere" as const,
-            label: "Continue on another machine",
-            icon: "monitor-up",
-          },
-        ]
-      : []),
-    ...(state.supports.autoSettleOptOut
-      ? [
-          {
-            id: "auto-settle" as const,
-            label: "Auto-settle behavior",
-            icon: "timer",
-            children: [
-              {
-                id: "auto-settle:enabled" as const,
-                label: "Follow settings",
-                checked: state.autoSettleEnabled,
-              },
-              {
-                id: "auto-settle:disabled" as const,
-                label: "Never",
-                checked: !state.autoSettleEnabled,
-              },
-            ],
-          },
-        ]
-      : []),
-    {
-      id: "copy",
-      label: "Copy",
-      icon: "copy",
-      separatorBefore: true,
-      children: [
-        { id: "copy-path", label: "Path", icon: "folder" },
-        ...(state.branch
-          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+            ]
           : []),
-        { id: "copy-thread", label: "Thread", icon: "message-square" },
-        { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
-      ],
-    },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
-    {
-      id: "archive",
-      label: "Archive thread",
-      icon: "archive",
-      disabled: state.isRunning,
-      separatorBefore: true,
-    },
-    {
-      id: "delete",
-      label: "Delete",
-      destructive: true,
-      icon: "trash",
-    },
-  ];
+        {
+          id: "copy",
+          label: "Copy",
+          icon: "copy",
+          separatorBefore: true,
+          children: [
+            { id: "copy-path", label: "Path", icon: "folder" },
+            ...(state.branch
+              ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+              : []),
+            { id: "copy-thread", label: "Thread", icon: "message-square" },
+            { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+          ],
+        },
+        { id: "project-settings", label: "Project settings", icon: "settings" },
+        {
+          id: "archive",
+          label: "Archive thread",
+          icon: "archive",
+          disabled: state.isRunning,
+          separatorBefore: true,
+        },
+        {
+          id: "delete",
+          label: "Delete",
+          destructive: true,
+          icon: "trash",
+        },
+      ];
   return state.canOperate
     ? items
     : items.map((item) =>

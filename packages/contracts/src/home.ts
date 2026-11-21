@@ -110,6 +110,12 @@ export const isHomeLaunchedThreadId = (threadId: string): boolean =>
 /** Watch reports T3 Code sends into Home's thread have message ids that start with this. */
 export const HOME_REPORT_MESSAGE_ID_PREFIX = "home-report:";
 
+/** Context handoffs created by a routine Home session rollover start with this prefix. */
+const HOME_ROLL_CONTEXT_HANDOFF_PREFIX = "context-handoff:home-roll:";
+
+export const isHomeRollContextHandoffId = (contextHandoffId: string): boolean =>
+  contextHandoffId.startsWith(HOME_ROLL_CONTEXT_HANDOFF_PREFIX);
+
 /**
  * A message an agent or T3 Code sent into Home: a report, never the user's words. It is
  * delivered into Home's turn and is never a queued composer message. Idle compaction is
@@ -155,6 +161,12 @@ export const isAgentDeliveredMessage = (
 
 export const HomeEnableInput = Schema.Struct({ modelSelection: ModelSelection });
 export type HomeEnableInput = typeof HomeEnableInput.Type;
+
+export const HomeStartFreshInput = Schema.Struct({
+  /** When set, refuse the fresh start if another client already replaced this Home thread. */
+  expectedThreadId: Schema.optional(ThreadId),
+});
+export type HomeStartFreshInput = typeof HomeStartFreshInput.Type;
 
 export const HomeThreadResult = Schema.Struct({ threadId: ThreadId });
 export type HomeThreadResult = typeof HomeThreadResult.Type;

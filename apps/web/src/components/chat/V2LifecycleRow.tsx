@@ -22,6 +22,7 @@ import {
 } from "@t3tools/client-runtime/handoff";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
+  isHomeRollContextHandoffId,
   ProviderDriverKind,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
@@ -87,6 +88,9 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "handoff") {
+    if (isHomeRollContextHandoffId(item.contextHandoffId)) {
+      return <FreshSessionRow />;
+    }
     return (
       <EnvironmentHandoffRow
         environmentId={props.environmentId}

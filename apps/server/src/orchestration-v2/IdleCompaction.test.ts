@@ -191,7 +191,8 @@ describe("idleCompactionWindow", () => {
     expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
     const home = records(cache);
     home.thread = { ...home.thread, id: ThreadId.make("home:idle") };
-    expect(idleCompactionWindow(home, NOW_MS)).toBeNull();
+    expect(idleCompactionWindow(home, NOW_MS, home.thread.id)).toBeNull();
+    expect(idleCompactionWindow(home, NOW_MS, ThreadId.make("home:other"))).not.toBeNull();
   });
 });
 

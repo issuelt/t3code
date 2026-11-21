@@ -10,8 +10,11 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const SCRATCH_ROOT = "/home/user/.t3/scratch";
+const HOME_ROOT = "/home/user/.t3/home";
 
 const state = vi.hoisted(() => ({
+  threadId: "thread",
+  homeThreadId: null as string | null,
   workspaceRoot: "",
   folder: "",
   pullRequests: [] as unknown[],
@@ -50,6 +53,8 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
               EnvironmentId.make("environment"),
               {
                 scratchWorkspaceRoot: SCRATCH_ROOT,
+                homeWorkspaceRoot: HOME_ROOT,
+                settings: { home: { threadId: state.homeThreadId, watchAll: false, watches: [] } },
                 environment: { capabilities: { pullRequests: true } },
               },
             ],
@@ -106,11 +111,15 @@ const linkedPullRequest: ThreadPullRequestLink = {
 };
 
 function setup(input: {
+  threadId?: string;
+  homeThreadId?: string | null;
   workspaceRoot: string;
   folder: string;
   pullRequests?: ThreadPullRequestLink[];
   configLoaded?: boolean;
 }) {
+  state.threadId = input.threadId ?? "thread";
+  state.homeThreadId = input.homeThreadId ?? null;
   state.configLoaded = input.configLoaded ?? true;
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
@@ -125,9 +134,19 @@ function setup(input: {
   };
 }
 
-function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
+function Panel({
+  fixture,
+  activeProjectScripts,
+}: {
+  fixture: ReturnType<typeof setup>;
+  activeProjectScripts?: [];
+}) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
+  const activeRef: ScopedThreadRef = {
+    environmentId: threadRef.environmentId,
+    threadId: ThreadId.make(state.threadId),
+  };
   return (
     <ChatCanvasContext
       value={{
@@ -145,14 +164,14 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
       <ThreadDetailsPanel
         anchor={fixture.anchor}
         handle={fixture.handle}
-        environmentId={threadRef.environmentId}
-        threadId={threadRef.threadId}
+        environmentId={activeRef.environmentId}
+        threadId={activeRef.threadId}
         projectId={ProjectId.make("project")}
-        composerDraftTarget={threadRef}
+        composerDraftTarget={activeRef}
         worktreePath={state.folder}
         isServerThread
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
-        activeProjectScripts={undefined}
+        activeProjectScripts={activeProjectScripts}
         preferredScriptId={null}
         keybindings={[]}
         availableEditors={[]}
@@ -213,5 +232,24 @@ it("offers no Initialize Git before the server config says where No project live
   await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
+});
+
+it("hides git controls, pull requests, and project scripts on a Home thread", async () => {
+  using fixture = setup({
+    threadId: "home:1",
+    homeThreadId: "home:1",
+    workspaceRoot: HOME_ROOT,
+    folder: HOME_ROOT,
+    pullRequests: [linkedPullRequest],
+  });
+  await using _screen = await render(<Panel fixture={fixture} activeProjectScripts={[]} />);
+  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByText("#27513")).not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Add project script" }))
     .not.toBeInTheDocument();
 });

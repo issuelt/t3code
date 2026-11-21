@@ -28,6 +28,7 @@ export interface TurnItemPositionStoreV2Shape {
   readonly normalize: (
     item: OrchestrationV2TurnItem,
     runOrdinal?: number,
+    placement?: "append" | "run_start",
   ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemPositionStoreError>;
 }
 
@@ -122,7 +123,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
       allocate,
       // Per-event normalization shares the enclosing orchestration span.
       normalize: Effect.fnUntraced(
-        function* (item, runOrdinal) {
+        function* (item, runOrdinal, placement) {
           const withOrdinal = (ordinal: number) =>
             item.ordinal === ordinal ? item : { ...item, ordinal };
           const stored = yield* storedOrdinal(item.threadId, item.id);
@@ -133,6 +134,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 turnItemId: item.id,
                 runId: item.runId,
                 ...(runOrdinal === undefined ? {} : { runOrdinal }),
+                ...(placement === undefined ? {} : { placement }),
               }),
             );
           }

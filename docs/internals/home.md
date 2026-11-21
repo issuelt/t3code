@@ -28,18 +28,22 @@ across every project and connected environment. User guide:
 
 ## Sessions roll instead of compacting
 
-Home is one thread that lives for weeks, so it never compacts. When its next turn starts with its
-native context half full or past Claude's auto-compact threshold, whichever is lower, as the
-provider measured on its last request, `ProviderTurnStartService`
-skips the resume and takes the fresh-session recovery path: a new native session seeded with the
-thread's newest items (`orchestration-v2/homeSessionRoll.ts`). The roll waits while the old session
-still runs background work, and steering an active turn is unaffected. Idle time is not a trigger:
-users answer Home minutes apart, so a prompt-cache timeout rolled Home on nearly every message.
-Idle compaction and Claude's compact-on-resume prompt both skip Home.
+Home is one thread that lives for weeks, so routine idle and pre-send compaction skip it in favor
+of rolling into a fresh session. When its next turn starts after at least an hour idle, or with its
+native context half full or past Claude's auto-compact threshold (whichever is lower),
+`ProviderTurnStartService` skips the resume and takes the fresh-session recovery path: a new native
+session seeded with the thread's newest items (`orchestration-v2/homeSessionRoll.ts`). The roll
+waits while the old session still runs background work, defers for commands that operate on the
+current native session (`/compact`, `/goal`), and leaves steering an active turn unaffected. The
+1-hour idle boundary matches Claude's subscription prompt cache TTL and ensures providers without
+context-usage telemetry still roll. Server idle compaction, the client "Compact on return" chip,
+Claude's compact-on-resume prompt, and Claude Code's own `idleCompaction` setting all skip Home
+(manual `/compact` remains available against the current session).
 
 Each roll writes its handoff and transfer under ids derived from the provider thread, so the next
-roll replaces them. Allocating fresh ids would add about 120 KB to the stored projection and 1.7 KB
-to every client snapshot per roll, for a thread that rolls for weeks.
+roll replaces them, and records a lightweight `handoff` turn item without `summary` (rendered as a
+"New session" divider). Allocating fresh handoff ids or copying the 64 KB seed text onto every
+divider would bloat the stored projection and client snapshots on a thread that rolls for weeks.
 
 The seed is the only memory the new session has, so Home's handoffs get the full 64 KB history cap
 instead of the 16 KB default (`handoffByteCapForThread`), and the seed's header tells Home to read

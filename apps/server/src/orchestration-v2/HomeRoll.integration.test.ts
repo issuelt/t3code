@@ -13,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -41,6 +42,10 @@ const selection = {
 // Every turn reports a half-full window, so each turn after the first rolls Home.
 function makeHalfFullAdapter(
   freshSessions: Ref.Ref<number>,
+  rollGate?: {
+    readonly entered: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  },
 ): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: selection.instanceId,
@@ -71,6 +76,10 @@ function makeHalfFullAdapter(
           events: Stream.fromQueue(events),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (threadInput.forceNewNativeThread === true && rollGate !== undefined) {
+                yield* Deferred.succeed(rollGate.entered, undefined);
+                yield* Deferred.await(rollGate.release);
+              }
               const createdAt = yield* DateTime.now;
               const native = yield* Ref.updateAndGet(freshSessions, (count) => count + 1);
               return {
@@ -203,10 +212,13 @@ it.live("keeps one handoff record and no empty timeline slot across many Home ro
         SELECT turn_item_id FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
       `;
       const itemIds = new Set(projection.turnItems.map((item) => String(item.id)));
+      const rollMarkers = projection.turnItems.filter((item) => item.type === "handoff");
       return {
         handoffs: projection.contextHandoffs.length,
         transfers: projection.contextTransfers.length,
         emptyPositions: positions.filter((row) => !itemIds.has(row.turn_item_id)).length,
+        rollMarkers: rollMarkers.length,
+        rollMarkersWithSummary: rollMarkers.filter((item) => item.summary !== undefined).length,
       };
     }).pipe(
       Effect.provide(
@@ -214,7 +226,7 @@ it.live("keeps one handoff record and no empty timeline slot across many Home ro
           ProviderReplayHarness.layerWithRegistry(
             { name: "home-roll" },
             ProviderAdapterRegistry.layerSingle(makeHalfFullAdapter(freshSessions)),
-            { databaseLayer: SqlitePersistence.layerMemory },
+            { databaseLayer: SqlitePersistence.layerMemory, homeThreadId: threadId },
           ),
           SqlitePersistence.layerMemory,
         ),
@@ -222,6 +234,128 @@ it.live("keeps one handoff record and no empty timeline slot across many Home ro
     );
 
     assert.equal(yield* Ref.get(freshSessions), rolls + 1);
-    assert.deepEqual(result, { handoffs: 1, transfers: 1, emptyPositions: 0 });
+    assert.deepEqual(result, {
+      handoffs: 1,
+      transfers: 1,
+      emptyPositions: 0,
+      rollMarkers: rolls,
+      rollMarkersWithSummary: 0,
+    });
   }),
+);
+
+it.live(
+  "leaves no handoff, transfer, or empty timeline position when interrupted mid-rollover",
+  () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("home-roll-stop");
+      const threadId = ThreadId.make("home:roll-stop");
+      const freshSessions = yield* Ref.make(0);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const result = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const sql = yield* SqlClient.SqlClient;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:home-roll-stop:create"),
+          threadId,
+          projectId: ProjectId.make("project:home-roll-stop"),
+          title: "Home",
+          modelSelection: selection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const firstDone = yield* eventSink
+          .stream({ threadId, afterSequence: yield* eventSink.latestSequence({ threadId }) })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:home-roll-stop:0"),
+          threadId,
+          messageId: MessageId.make("message:home-roll-stop:0"),
+          text: "First turn",
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Fiber.join(firstDone);
+        yield* worker.drain();
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:home-roll-stop:1"),
+          threadId,
+          messageId: MessageId.make("message:home-roll-stop:1"),
+          text: "Second turn (will roll and be stopped)",
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Deferred.await(entered);
+        const rollingRunId = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "starting",
+        )!.id;
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("command:home-roll-stop:interrupt"),
+          threadId,
+          runId: rollingRunId,
+          reason: "user_stop",
+        });
+        yield* Deferred.succeed(release, undefined);
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const positions = yield* sql<{ readonly turn_item_id: string }>`
+          SELECT turn_item_id FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
+        `;
+        const itemIds = new Set(projection.turnItems.map((item) => String(item.id)));
+        return {
+          handoffs: projection.contextHandoffs.length,
+          transfers: projection.contextTransfers.length,
+          rollMarkers: projection.turnItems.filter((item) => item.type === "handoff").length,
+          emptyPositions: positions.filter((row) => !itemIds.has(row.turn_item_id)).length,
+        };
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "home-roll-stop" },
+              ProviderAdapterRegistry.layerSingle(
+                makeHalfFullAdapter(freshSessions, { entered, release }),
+              ),
+              { databaseLayer: SqlitePersistence.layerMemory, homeThreadId: threadId },
+            ),
+            SqlitePersistence.layerMemory,
+          ),
+        ),
+      );
+
+      assert.deepEqual(result, {
+        handoffs: 0,
+        transfers: 0,
+        rollMarkers: 0,
+        emptyPositions: 0,
+      });
+    }),
 );

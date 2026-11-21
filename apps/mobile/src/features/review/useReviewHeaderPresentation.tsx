@@ -1,4 +1,5 @@
 import { useEnvironmentQuery } from "../../state/query";
+import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -28,10 +29,13 @@ export function useReviewHeaderPresentation(props: {
   readonly onRefresh: () => Promise<void>;
 }): ReviewHeaderPresentation {
   const { selectedThread } = useThreadSelection();
+  const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(props.environmentId);
+  const isActiveHomeThread =
+    routeEnvironmentRuntime?.serverConfig?.settings.home.threadId === props.threadId;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && props.selectedThreadCwd !== null
+    selectedThread !== null && props.selectedThreadCwd !== null && !isActiveHomeThread
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: props.selectedThreadCwd },
@@ -45,6 +49,7 @@ export function useReviewHeaderPresentation(props: {
     environmentId: props.environmentId,
     threadId: props.threadId,
     currentBranch: selectedThread?.branch ?? null,
+    hideGitControls: isActiveHomeThread,
     gitStatus: gitStatusQuery.data,
     gitOperationLabel: gitState.gitOperationLabel,
     onPull: gitActions.onPullSelectedThreadBranch,

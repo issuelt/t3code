@@ -3257,7 +3257,7 @@ export const layerWsRpc = (
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.homeEnable]: (input) => home.enable(input),
         [WS_METHODS.homeDisable]: (_input) => home.disable,
-        [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
+        [WS_METHODS.homeStartFresh]: (input) => home.startFresh(input),
         [WS_METHODS.fleetInvoke]: (input) =>
           "mcp" in input ? desktopMcp.invoke(input, currentSession) : fleet.execute(input),
         [WS_METHODS.fleetConnect]: (input) => Stream.unwrap(fleetBroker.connect(input)),
