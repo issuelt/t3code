@@ -244,7 +244,8 @@ const UserDecisionTool = Tool.make("t3_user_decision", {
   .annotate(Tool.Title, "Leave the user a decision")
   .annotate(Tool.Destructive, false)
   // Deferred, agents only ever see its name and write the decision into their reply instead.
-  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true })
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:

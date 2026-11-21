@@ -128,7 +128,8 @@ const setup = (threadManagement?: ThreadManagement.ThreadManagementService["Serv
             return Effect.succeed({
               id: input.projectId,
               workspaceRoot: input.workspaceRoot,
-            } as ContractProject);
+              scripts: [],
+            } as unknown as ContractProject);
           },
           getById: (projectId) =>
             Effect.succeedSome({

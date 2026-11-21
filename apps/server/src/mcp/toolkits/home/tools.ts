@@ -1,6 +1,6 @@
 import { EnvironmentId, HomeWatch, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -48,6 +48,8 @@ const ThreadWatchTool = Tool.make("t3_thread_watch", {
     threadId: Schema.optional(ThreadId),
   }),
   success: Schema.Struct({ watchAll: Schema.Boolean, watches: Schema.Array(HomeWatch) }),
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const HomeToolkit = Toolkit.make(EnvironmentListTool, ThreadWatchTool);
