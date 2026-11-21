@@ -950,60 +950,63 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
-).pipe(
-  Layer.provide(
-    PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
-  ),
-  Layer.provide(
-    McpHttpServer.layerDesktopRelay(
-      Layer.mergeAll(
-        McpHttpServer.layerOrchestratorToolkit,
-        McpHttpServer.layerProjectRegistration,
-        McpHttpServer.layerThreadToolkit,
+)
+  .pipe(
+    Layer.provide(
+      PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
+    ),
+    Layer.provide(
+      McpHttpServer.layerDesktopRelay(
+        Layer.mergeAll(
+          McpHttpServer.layerOrchestratorToolkit,
+          McpHttpServer.layerProjectRegistration,
+          McpHttpServer.layerThreadToolkit,
+        ),
+      ).pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
+    ),
+    // Continue on another machine, from the thread menu.
+    Layer.provide(ContinueOnEnvironment.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    // delegate_task to a linked environment, from /mcp and the follower above.
+    Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    // Work files sent to and received from linked environments.
+    Layer.provide(WorkFilesTransfer.layer),
+    // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
+    Layer.provide(PeerLinkRequests.layer),
+    // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
+    Layer.provide(layerPullRequestService),
+    Layer.provide(layerThreadIssueService),
+    Layer.provide(layerIssueService),
+  )
+  .pipe(
+    // The same activity instance RunExecutionService reports to, by layer memoization.
+    Layer.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
       ),
-    ).pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
-  ),
-  // Continue on another machine, from the thread menu.
-  Layer.provide(ContinueOnEnvironment.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-  // delegate_task to a linked environment, from /mcp and the follower above.
-  Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-  // Work files sent to and received from linked environments.
-  Layer.provide(WorkFilesTransfer.layer),
-  // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
-  Layer.provide(PeerLinkRequests.layer),
-  // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
-  Layer.provide(layerPullRequestService),
-  Layer.provide(layerThreadIssueService),
-  Layer.provide(layerIssueService),
-  // The same activity instance RunExecutionService reports to, by layer memoization.
-  Layer.provide(
-    ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
     ),
-  ),
-  Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
-  Layer.provide(
-    Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
-      Layer.provideMerge(PeerMcpClient.layer),
-      Layer.provideMerge(PeerLinks.layer),
+    Layer.provide(PreviewBrowser.layer),
+    // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
+    Layer.provide(
+      Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
+        Layer.provideMerge(PeerMcpClient.layer),
+        Layer.provideMerge(PeerLinks.layer),
+      ),
     ),
-  ),
-  Layer.provide(
-    SpeechService.layer.pipe(
-      Layer.provide(layerServerSettings),
-      Layer.provide(SpeechModelStore.layer),
+    Layer.provide(
+      SpeechService.layer.pipe(
+        Layer.provide(layerServerSettings),
+        Layer.provide(SpeechModelStore.layer),
+      ),
     ),
-  ),
-  Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
-  Layer.provide(layerServerSettings),
-  Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(HomeLayer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
-  Layer.provide(layerCommandReadiness),
-  Layer.provide(ServerHttp.layerBrowserApiCors),
-  Layer.provide(ServerHttp.layerHttpCompression),
-);
+    Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+    Layer.provide(layerServerSettings),
+    Layer.provide(PreviewAutomationBroker.layer),
+    Layer.provide(HomeLayer),
+    Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+    Layer.provide(layerCommandReadiness),
+    Layer.provide(ServerHttp.layerBrowserApiCors),
+    Layer.provide(ServerHttp.layerHttpCompression),
+  );
 
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {

@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { T, useGT } from "gt-react";
 import type { FleetChief, FleetJobGroup } from "@t3tools/client-runtime/state/fleetBoard";
 import {
   isOpenOrPendingPullRequest,
@@ -73,7 +74,9 @@ function FleetReportLine({
     return (
       <>
         <span aria-hidden>·</span>
-        <span className="shrink-0">Needs a newer server</span>
+        <span className="shrink-0">
+          <T>Needs a newer server</T>
+        </span>
       </>
     );
   }
@@ -156,7 +159,7 @@ function FleetChiefRow({
           <>
             {environmentConnected ? null : (
               <Badge variant="outline" size="sm">
-                Offline
+                <T>Offline</T>
               </Badge>
             )}
             {status ? (
@@ -184,6 +187,7 @@ function FleetChiefRow({
 }
 
 export function FleetPage() {
+  const gt = useGT();
   const navigate = useNavigate();
   const board = useAtomValue(fleetBoardAtom);
   const providerEntries = useAtomValue(providerEntriesByEnvironmentAtom);
@@ -201,9 +205,11 @@ export function FleetPage() {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <WorkspacePageHeader electron={isElectron} className="relative bg-background">
-          <WorkspaceBreadcrumb ariaLabel="Fleet breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={gt("Fleet breadcrumb")}>
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Fleet</h1>
+              <h1 className="truncate">
+                <T>Fleet</T>
+              </h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>
@@ -212,10 +218,14 @@ export function FleetPage() {
             {board.length === 0 ? (
               <Empty className="flex-1">
                 <EmptyHeader>
-                  <EmptyTitle>No chiefs of staff</EmptyTitle>
+                  <EmptyTitle>
+                    <T>No chiefs of staff</T>
+                  </EmptyTitle>
                   <EmptyDescription>
-                    Threads Home launches show here, grouped by job. A thread leaves when it is
-                    settled, by you or by auto-settle, or archived.
+                    <T>
+                      Threads Home launches show here, grouped by job. A thread leaves when it is
+                      settled, by you or by auto-settle, or archived.
+                    </T>
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -225,7 +235,7 @@ export function FleetPage() {
                   <section key={group.job ?? ""} className="space-y-0.5">
                     <ListGroupHeader
                       icon={group.job === null ? InboxIcon : BriefcaseIcon}
-                      label={group.job ?? "No job"}
+                      label={group.job ?? gt("No job")}
                       count={group.chiefs.length}
                     />
                     {group.chiefs.map((chief) => {

@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react";
 import { memo } from "react";
 import {
   DndContext,
@@ -101,6 +102,8 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
     id: scopedThreadKey(threadRef),
     disabled: !props.sortable,
   });
+  const gt = useGT();
+  const messages = useMessages();
   const label = environmentLabel === null ? "Home" : `Home · ${environmentLabel}`;
   const thread = useQuietThreadShell(threadRef);
   const localLastVisitedAt = useUiStateStore(
@@ -116,13 +119,14 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
           }),
         });
   const topStatus = topStatusKind === null ? null : SIDEBAR_TOP_STATUS[topStatusKind];
+  const topStatusLabel = topStatus ? messages(topStatus.label) : null;
   return (
     <SidebarTopRow
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       dragListeners={listeners}
       isDragging={isDragging}
-      label={topStatus ? `${label}, ${topStatus.label}` : label}
+      label={topStatusLabel ? gt("{label}, {status}", { label, status: topStatusLabel }) : label}
       isActive={isActive}
       testId="sidebar-home-row"
       icon={<HouseIcon aria-hidden className="size-4 shrink-0" />}
@@ -139,7 +143,7 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
             {topStatusKind === "waiting" ? null : (
               <topStatus.Icon aria-hidden className="size-4 shrink-0" />
             )}
-            <span role="status">{topStatus.label}</span>
+            <span role="status">{topStatusLabel}</span>
           </span>
         ) : null
       }

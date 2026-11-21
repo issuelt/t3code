@@ -84,7 +84,6 @@ export function AddEnvironmentDialog({
   initialHost = null,
   error,
   savedEnvironments,
-  initialHost = "",
   onOpenChange,
   onErrorChange,
 }: {
@@ -149,7 +148,7 @@ export function AddEnvironmentDialog({
     setLastInitialHost(initialHost);
     if (open && pairingAgain) setSavedBackendHost(pairAgainHost);
     else if (open && initialHost !== null && (opened || initialHost !== lastInitialHost)) {
-      setSavedBackendHost(initialHost);
+      setSavedBackendHost(initialHost ?? "");
       // A code typed for the earlier address must not go to this one.
       setSavedBackendPairingCode("");
     }
@@ -188,7 +187,7 @@ export function AddEnvironmentDialog({
     if (!nextOpen) {
       savedBackendSessionRef.current += 1;
       setSavedBackendMode("remote");
-      setSavedBackendHost(initialHost);
+      setSavedBackendHost(initialHost ?? "");
       setSavedBackendPairingCode("");
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");

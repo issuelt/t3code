@@ -165,6 +165,7 @@ const { title: _compactBrandTitle, ...compactBrandHeaderOptions } = getCompactBr
 // Resolved in the rendered Navigator's screenOptions so each header title follows the UI language;
 // route options stay plain objects because registerPresentedRoutes reads them at load.
 const ROUTE_TITLES: Readonly<Record<string, string>> = {
+  SettingsUsageWidget: msg("Usage widget"),
   Settings: msg("Settings"),
   SettingsEnvironments: msg("Environments"),
   SettingsEnvironmentDetail: msg("Environment"),
@@ -430,7 +431,7 @@ const SETTINGS_SCREENS = {
   SettingsUsageWidget: createNativeStackScreen({
     screen: SettingsUsageWidgetRouteScreen,
     linking: "settings/usage-widget",
-    options: settingsPage("Usage widget"),
+    options: settingsPage(),
   }),
   SettingsAuth: createNativeStackScreen({
     screen: SettingsAuthRouteScreen,

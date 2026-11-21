@@ -17,7 +17,6 @@ import {
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
-  OrchestratorMcpFailure,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -34,7 +33,6 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as TestClock from "effect/testing/TestClock";
-import * as Duration from "effect/Duration";
 import { HomeToolkit } from "../mcp/toolkits/home/tools.ts";
 import * as HomeHandlers from "../mcp/toolkits/home/handlers.ts";
 import * as DesktopMcpRelay from "../mcp/DesktopMcpRelay.ts";
@@ -68,13 +66,7 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
-import {
-  descriptorOf,
-  layerHttpsTest,
-  layerLinkingEnvironment,
-  linkTo,
-  servePeer,
-} from "./PeerLinks.testkit.ts";
+import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
 const box = descriptorOf("environment-box", "Box");
@@ -599,7 +591,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
         `delegated-tasks.stop ${boxThread}`,
       ]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("keeps a forwarded wait short and its retries scoped to the caller", () =>
@@ -644,7 +636,7 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       expect(other).not.toBe(first);
       expect(first).not.toContain("same-key");
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("launches in a linked environment with the caller's modes, retry-safe", () =>
@@ -697,7 +689,7 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
       expect(yield* Ref.get(b.bearers)).toEqual([]);
       expect((yield* Ref.get(seen)).launches).toHaveLength(2);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("brings a repository to a linked environment, only through full access", () =>
@@ -751,7 +743,7 @@ it.effect("brings a repository to a linked environment, only through full access
       expect((yield* Ref.get(seen)).clones).toHaveLength(1);
       expect((yield* Ref.get(seen)).projects).toHaveLength(1);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("runs any tool that takes a linked environment there", () =>
@@ -795,7 +787,7 @@ it.effect("runs any tool that takes a linked environment there", () =>
         runtimeMode: "full-access",
       });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses what a linked environment cannot take before anything leaves", () =>
@@ -867,7 +859,7 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       }
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("an external client reaches a linked environment and respects its own access", () =>
@@ -910,7 +902,7 @@ it.effect("an external client reaches a linked environment and respects its own 
       expect(sent.isError).toBe(false);
       expect((yield* Ref.get(seen)).sends).toHaveLength(1);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 const decodeRegistration = Schema.decodeUnknownEffect(Schema.Struct({ client_id: Schema.String }));
@@ -934,7 +926,7 @@ it.live(
           port: 0,
           host: "127.0.0.1",
         }).pipe(Layer.build);
-        const laptopServer = yield* servePeer(laptop, laptopTools(linking), "http").pipe(
+        const laptopServer = yield* servePeer(laptop, laptopTools(linking)).pipe(
           Effect.provideContext(http),
         );
         const request = (path: string, init?: RequestInit) =>
@@ -1058,7 +1050,7 @@ it.live(
         expect(sent.isError).toBe(false);
         expect((yield* Ref.get(seen)).sends).toHaveLength(1);
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 const desktopFixture = Effect.gen(function* () {
@@ -1382,7 +1374,7 @@ it.effect(
         );
         expect(yield* Ref.get(a.calls)).toBe(0);
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses a launch there above the link's access, naming the link", () =>

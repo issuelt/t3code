@@ -71,6 +71,8 @@ import * as EventSink from "./EventSink.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as FleetBroker from "../home/FleetBroker.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
@@ -1116,10 +1118,11 @@ function makeLocalCommandHarness(input: {
               }),
         },
       ],
-      attempts:
-        input.home === undefined
-          ? projection.attempts
-          : [
+      // Home's previous turn completed on the native conversation it rolls away from.
+      ...(input.home === undefined
+        ? {}
+        : {
+            attempts: [
               {
                 ...projection.attempts[0]!,
                 id: previousAttemptId,
@@ -1128,10 +1131,11 @@ function makeLocalCommandHarness(input: {
                 providerThreadId: previousProviderThreadId,
                 providerTurnId: previousTurnId,
                 nativeThreadId: "existing-native-conversation",
-                status: "completed",
+                status: "completed" as const,
               },
               ...projection.attempts,
             ],
+          }),
     };
   }
   if (input.home?.staleRollHandoff) {
@@ -1571,6 +1575,12 @@ function layerStartEffectWorker(
   control: Partial<ProviderTurnControlService.ProviderTurnControlServiceV2["Service"]> = {},
 ) {
   const executor = EffectWorker.layerExecutor.pipe(
+    Layer.provide(Layer.mock(FleetBroker.FleetBroker)({})),
+    Layer.provide(
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("test")),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         harness.layer,

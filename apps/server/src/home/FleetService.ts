@@ -202,6 +202,7 @@ const make = Effect.gen(function* () {
 
     "projects.create": Effect.fn("FleetService.projects.create")((input) =>
       createProject(input).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
         Effect.provideService(ProjectService.ProjectService, projects),
         Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, folders),
         Effect.provideService(SecureRandom.SecureRandom, random),
@@ -210,6 +211,7 @@ const make = Effect.gen(function* () {
 
     "projects.update": Effect.fn("FleetService.projects.update")((input) =>
       updateProject(input).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
         Effect.provideService(ProjectService.ProjectService, projects),
         Effect.provideService(SecureRandom.SecureRandom, random),
       ),
@@ -250,7 +252,27 @@ const make = Effect.gen(function* () {
             )
           : yield* threads
               .listProjectThreads({ projectId: input.projectId, includeSubagents })
-              .pipe(Effect.mapError(threadManagementFailure));
+              .pipe(
+                // Shells are the costly part; the project list names only the threads to build.
+                Effect.flatMap((entries) =>
+                  entries.length === 0
+                    ? Effect.succeed([])
+                    : threads
+                        .getShellSnapshot({
+                          location: "active",
+                          threadIds: entries.map(({ id }) => id),
+                        })
+                        .pipe(
+                          Effect.map((snapshot) => {
+                            const byId = new Map(
+                              snapshot.threads.map((shell) => [shell.id, shell]),
+                            );
+                            return entries.flatMap(({ id }) => byId.get(id) ?? []);
+                          }),
+                        ),
+                ),
+                Effect.mapError(threadManagementFailure),
+              );
       const nowMs = yield* Clock.currentTimeMillis;
       const statuses = input.statuses === undefined ? null : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();

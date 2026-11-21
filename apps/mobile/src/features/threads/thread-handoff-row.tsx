@@ -92,7 +92,7 @@ export function ThreadHandoffRow(props: {
   if (isHomeRollContextHandoffId(item.contextHandoffId)) {
     return (
       <ThreadContextDivider
-        label="New session"
+        label={gt("New session")}
         icon="arrow.clockwise"
         iconColor={props.iconColor}
       />
@@ -107,6 +107,7 @@ function ThreadResolvedHandoffRow(props: {
   iconColor: ColorValue;
   surfaceColor: string;
 }) {
+  const gt = useGT();
   const { item } = props.projectedItem;
   const endpointsAtom = useMemo(
     () => handoffEndpointsAtom(props.environmentId, props.projectedItem),

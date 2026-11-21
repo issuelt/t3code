@@ -296,11 +296,12 @@ function DiscardAgentMessageButton({
   const projection = useThreadProjection(threadRef)?.projection;
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
   if (!projection || !getDiscardableAgentRunIds(projection).has(runId)) return null;
   return (
     <InlineButton
       tone="destructive"
-      aria-label="Discard queued agent message"
+      aria-label={gt("Discard queued agent message")}
       disabled={busy}
       onClick={async (event) => {
         event.stopPropagation();
@@ -313,14 +314,14 @@ function DiscardAgentMessageButton({
         if (AsyncResult.isFailure(result)) {
           toastManager.add({
             type: "error",
-            title: "Could not discard the message",
-            description: "It is still queued and will reach the agent. Try again.",
+            title: gt("Could not discard the message"),
+            description: gt("It is still queued and will reach the agent. Try again."),
           });
         }
       }}
       onKeyDown={stopRowToggle}
     >
-      Discard
+      <T>Discard</T>
     </InlineButton>
   );
 }
@@ -334,6 +335,7 @@ function AgentMessageWorkRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
+  const gt = useGT();
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
@@ -390,7 +392,9 @@ function AgentMessageWorkRow({
       role="button"
       tabIndex={0}
       aria-label={
-        reportLines === null ? `Message from ${title}` : `Watch report: ${reportLines.join(", ")}`
+        reportLines === null
+          ? gt("Message from {title}", { title })
+          : gt("Watch report: {events}", { events: reportLines.join(", ") })
       }
       aria-expanded={expanded}
       onClick={toggle}

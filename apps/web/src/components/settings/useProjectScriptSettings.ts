@@ -24,7 +24,7 @@ import { useRef, useState } from "react";
 import {
   decodeProjectScriptKeybindingRule,
   keybindingValueForCommand,
-  PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING,
+  projectScriptKeybindingSaveWarning,
 } from "../../lib/projectScriptKeybindings";
 import {
   buildProjectScript,
@@ -183,7 +183,7 @@ export function useProjectScriptSettings(
             ? await removeKeybinding({ environmentId, input: previous })
             : null;
         if (bindingResult?._tag === "Failure") {
-          toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+          toastManager.add(projectScriptKeybindingSaveWarning());
         }
       }
     }

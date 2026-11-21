@@ -1,4 +1,5 @@
 import type { VoiceInputPhase } from "@t3tools/client-runtime/voice-input";
+import { useGT } from "gt-react";
 import { XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 
@@ -72,6 +73,7 @@ export function ComposerDictationActivity(props: {
   readonly level: DictationLevel;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
   const recording = props.phase === "recording";
   // Capture starts while the session is still being set up, so the bars react from the first word.
   const listening = recording || props.phase === "preparing";
@@ -83,7 +85,7 @@ export function ComposerDictationActivity(props: {
         size="icon-sm"
         onPointerDown={keepComposerFocus}
         onClick={props.onCancel}
-        aria-label="Cancel dictation"
+        aria-label={gt("Cancel dictation")}
       >
         <XIcon />
       </Button>

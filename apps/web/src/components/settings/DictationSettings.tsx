@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -31,7 +32,7 @@ import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 type DictationModel = DictationState["models"][number];
@@ -43,40 +44,57 @@ function percent(state: Extract<DictationInstallState, { _tag: "installing" }>):
 }
 
 /** Status of the selected model on one environment, and whether Retry applies. */
-function activeModelStatus(state: DictationState): {
+function activeModelStatus(
+  state: DictationState,
+  gt: ReturnType<typeof useGT>,
+): {
   readonly label: string;
   readonly failed: boolean;
 } {
   const model = state.models.find((candidate) => candidate.id === state.settings.localModel);
-  if (!model) return { label: "Unknown model", failed: true };
+  if (!model) return { label: gt("Unknown model"), failed: true };
   if (model.install._tag === "failed")
-    return { label: `Failed: ${model.install.message}`, failed: true };
+    return { label: gt("Failed: {message}", { message: model.install.message }), failed: true };
   if (state.runtime._tag === "failed")
-    return { label: `Failed: ${state.runtime.message}`, failed: true };
+    return { label: gt("Failed: {message}", { message: state.runtime.message }), failed: true };
   if (state.runtime._tag === "installing") {
-    return { label: `Downloading runtime ${percent(state.runtime)}`, failed: false };
+    return {
+      label: gt("Downloading runtime {progress}", { progress: percent(state.runtime) }),
+      failed: false,
+    };
   }
   if (model.install._tag === "installing") {
-    return { label: `Downloading ${percent(model.install)}`, failed: false };
+    return {
+      label: gt("Downloading {progress}", { progress: percent(model.install) }),
+      failed: false,
+    };
   }
   if (model.install._tag === "not-installed") {
     return {
       label:
-        state.settings.engine === "off" ? "Downloads when dictation is on" : "Waiting to download",
+        state.settings.engine === "off"
+          ? gt("Downloads when dictation is on")
+          : gt("Waiting to download"),
       failed: false,
     };
   }
-  if (state.loadedModel === model.id) return { label: "Loaded", failed: false };
-  return { label: state.ready ? "Ready" : "Downloaded", failed: false };
+  if (state.loadedModel === model.id)
+    return { label: gt("Loaded", { $context: "speech model status" }), failed: false };
+  return {
+    label: state.ready
+      ? gt("Ready", { $context: "speech model status" })
+      : gt("Downloaded", { $context: "speech model status" }),
+    failed: false,
+  };
 }
 
 /** Short readiness label for an environment in the device picker. */
-function readinessLabel(state: DictationState | null): string {
-  if (state === null) return "Unavailable";
-  if (!state.supported) return "Not supported";
-  if (state.ready) return "Ready";
-  if (state.settings.engine === "off") return "Off";
-  return activeModelStatus(state).label;
+function readinessLabel(state: DictationState | null, gt: ReturnType<typeof useGT>): string {
+  if (state === null) return gt("Unavailable");
+  if (!state.supported) return gt("Not supported");
+  if (state.ready) return gt("Ready", { $context: "speech model status" });
+  if (state.settings.engine === "off") return gt("Off", { $context: "dictation is turned off" });
+  return activeModelStatus(state, gt).label;
 }
 
 const modelDetail = (model: DictationModel) =>
@@ -88,6 +106,8 @@ const modelDetail = (model: DictationModel) =>
  * Settings need settings:write; retry and remove need orchestration:operate.
  */
 export function DictationSettingsSection() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig !== null
@@ -110,24 +130,26 @@ export function DictationSettingsSection() {
   const languageOptions = activeModel?.languageOptions ?? [];
 
   return (
-    <SettingsSection id="dictation" title="Dictation">
+    <SettingsSection id="dictation" title={gt("Dictation")}>
       <SettingsRow
         {...searchableSetting("dictation-engine")}
         serverScoped
         settingKeys={["dictation"]}
         description={
           outdated
-            ? "Update T3 Code on this machine to use dictation."
+            ? gt("Update T3 Code on this machine to use dictation.")
             : unsupported
-              ? "This environment's platform has no supported speech model."
-              : "Transcribe dictation on this environment with a local speech model. Audio is not sent to any other service."
+              ? gt("This environment's platform has no supported speech model.")
+              : gt(
+                  "Transcribe dictation on this environment with a local speech model. Audio is not sent to any other service.",
+                )
         }
         control={
           <Switch
             mixed={engineMixed}
             checked={!engineMixed && settings.engine === "local"}
             disabled={locked}
-            aria-label="Dictation"
+            aria-label={gt("Dictation")}
             onCheckedChange={(checked) =>
               updateSettings({ dictation: { engine: checked ? "local" : "off" } })
             }
@@ -167,7 +189,7 @@ export function DictationSettingsSection() {
                   });
                 }}
               >
-                <SelectTrigger size="xs" className="w-40" aria-label="Dictation model">
+                <SelectTrigger size="xs" className="w-40" aria-label={gt("Dictation model")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -192,7 +214,7 @@ export function DictationSettingsSection() {
             control={
               <Select
                 items={[
-                  { value: "auto", label: "Automatic" },
+                  { value: "auto", label: gt("Automatic") },
                   ...languageOptions.map((option) => ({
                     value: option.code,
                     label: option.label,
@@ -204,11 +226,13 @@ export function DictationSettingsSection() {
                   if (language !== null) updateSettings({ dictation: { language } });
                 }}
               >
-                <SelectTrigger size="xs" className="w-40" aria-label="Dictation language">
+                <SelectTrigger size="xs" className="w-40" aria-label={gt("Dictation language")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="auto">Automatic</SelectItem>
+                  <SelectItem value="auto">
+                    <T>Automatic</T>
+                  </SelectItem>
                   {languageOptions.map((option) => (
                     <SelectItem key={option.code} value={option.code}>
                       {option.label}
@@ -241,8 +265,9 @@ function DictationModelStatus(props: {
   const { state } = useDictationState(props.environmentId);
   const canRetry = useAtomValue(dictationEnvironment.install.permissionAtom(props.environmentId));
   const install = useAtomCommand(dictationEnvironment.install, { reportFailure: false });
+  const gt = useGT();
   if (!state?.supported) return null;
-  const status = activeModelStatus(state);
+  const status = activeModelStatus(state, gt);
   return (
     <span className="flex items-center gap-2 text-xs">
       <span
@@ -261,12 +286,12 @@ function DictationModelStatus(props: {
               input: { model: state.settings.localModel },
             }).then((result) => {
               if (result._tag === "Failure") {
-                toastManager.add({ type: "error", title: "Could not retry the download" });
+                toastManager.add({ type: "error", title: gt("Could not retry the download") });
               }
             })
           }
         >
-          Retry
+          <T>Retry</T>
         </Button>
       ) : null}
     </span>
@@ -287,6 +312,7 @@ function InactiveDictationModels(props: {
   const canRemove = useAtomValue(dictationEnvironment.remove.permissionAtom(props.environmentId));
   const remove = useAtomCommand(dictationEnvironment.remove, { reportFailure: false });
   const [removing, setRemoving] = useState<DictationModel["id"] | null>(null);
+  const gt = useGT();
   if (!state?.supported) return null;
   const inactive = state.models.filter(
     (model) =>
@@ -298,7 +324,11 @@ function InactiveDictationModels(props: {
 
   return (
     <SettingsRow
-      title={props.label ? `Other downloaded models on ${props.label}` : "Other downloaded models"}
+      title={
+        props.label
+          ? gt("Other downloaded models on {environment}", { environment: props.label })
+          : gt("Other downloaded models")
+      }
     >
       <ul className="pt-1 pb-2">
         {inactive.map((model) => (
@@ -325,12 +355,15 @@ function InactiveDictationModels(props: {
                 }).then((result) => {
                   setRemoving(null);
                   if (result._tag === "Failure") {
-                    toastManager.add({ type: "error", title: `Could not remove ${model.label}` });
+                    toastManager.add({
+                      type: "error",
+                      title: gt("Could not remove {model}", { model: model.label }),
+                    });
                   }
                 });
               }}
             >
-              Remove
+              <T>Remove</T>
             </Button>
           </li>
         ))}
@@ -351,6 +384,8 @@ export function DictationRoutingSettings({
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   const chosen = useClientSettings((settings) => settings.dictationEnvironmentId);
   const hydrated = useClientSettingsHydrated();
   const updateSettings = updateClientSettings;
@@ -359,7 +394,7 @@ export function DictationRoutingSettings({
   if (environments.length < 2) return null;
 
   const options = [
-    { value: AUTOMATIC, label: "Automatic" },
+    { value: AUTOMATIC, label: gt("Automatic") },
     ...environments
       .filter(
         (environment) =>
@@ -372,7 +407,7 @@ export function DictationRoutingSettings({
     <FoldedSettingsSection
       id={id}
       title={title}
-      summary={options.find((option) => option.value === chosen)?.label ?? "Automatic"}
+      summary={options.find((option) => option.value === chosen)?.label ?? gt("Automatic")}
       control={
         <Select
           items={options}
@@ -387,7 +422,7 @@ export function DictationRoutingSettings({
             });
           }}
         >
-          <SelectTrigger size="xs" className="w-36" aria-label="Dictation environment">
+          <SelectTrigger size="xs" className="w-36" aria-label={gt("Dictation environment")}>
             <SelectValue />
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -401,9 +436,11 @@ export function DictationRoutingSettings({
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        The machine that turns this device's dictation into text. Automatic uses the machine that
-        owns the thread when its dictation is ready, otherwise another ready machine. Download
-        models in Devices. This applies only to this device.
+        <T>
+          The machine that turns this device's dictation into text. Automatic uses the machine that
+          owns the thread when its dictation is ready, otherwise another ready machine. Download
+          models in Devices. This applies only to this device.
+        </T>
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -421,5 +458,6 @@ export function DictationRoutingSettings({
 
 function DictationReadiness(props: { readonly environmentId: EnvironmentId }) {
   const { state } = useDictationState(props.environmentId);
-  return <span className="text-xs text-muted-foreground">{readinessLabel(state)}</span>;
+  const gt = useGT();
+  return <span className="text-xs text-muted-foreground">{readinessLabel(state, gt)}</span>;
 }

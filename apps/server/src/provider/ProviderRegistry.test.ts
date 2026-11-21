@@ -2818,7 +2818,10 @@ it.layer(
               ProviderRegistry.layer.pipe(
                 Layer.provide(
                   Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
-                    rebuild: (ids) => Effect.sync(() => void rebuilt.push(ids)),
+                    rebuild: (instances) =>
+                      Effect.sync(
+                        () => void rebuilt.push(instances.map((instance) => instance.instanceId)),
+                      ),
                   }),
                 ),
                 Layer.provideMerge(

@@ -12,11 +12,12 @@ import { m } from "../i18n/messages";
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = msg("Invalid keybinding.");
 
 /** Shortcut failures after the action settings commit must not invite retrying the saved edit. */
-export const PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING = {
-  type: "warning",
-  title: "Action changes saved",
-  description: "The shortcut could not be updated. Adjust it in Settings > Keybindings.",
-} as const;
+export const projectScriptKeybindingSaveWarning = () =>
+  ({
+    type: "warning",
+    title: m(msg("Action changes saved")),
+    description: m(msg("The shortcut could not be updated. Adjust it in Settings > Keybindings.")),
+  }) as const;
 
 const decodeKeybindingRule = Schema.decodeUnknownOption(KeybindingRuleSchema);
 

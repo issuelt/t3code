@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   collectLimitAccounts,
@@ -8,6 +9,7 @@ import {
   type LimitAccount,
 } from "@t3tools/shared/usageLimits";
 
+import { m } from "../i18n/messages";
 import type {
   AndroidSubscriptionUsageSnapshot,
   SubscriptionUsageSnapshot,
@@ -36,7 +38,8 @@ export function subscriptionWidgetAccountId(account: LimitAccount) {
 
 export function subscriptionWidgetAccountName(account: LimitAccount) {
   return (
-    account.displayName ?? `Account ${limitAccountDisplayId(account).slice(0, 8).toUpperCase()}`
+    account.displayName ??
+    m(msg("Account {id}", { id: limitAccountDisplayId(account).slice(0, 8).toUpperCase() }))
   );
 }
 
@@ -98,7 +101,7 @@ function collectWidgetGroups(
           ? pool.driver
           : `${pool.driver}:${limitAccountDisplayId(account)}`,
       name: configuration.grouping === "pooled" ? providerName : `${providerName} · ${accountName}`,
-      detail: windows.length === 0 ? `No ${period} limit reported` : detail,
+      detail: windows.length === 0 ? m(msg("No {period} limit reported", { period })) : detail,
       windows: windows.slice(0, limit).map((window) => {
         const preferenceId = JSON.stringify([
           configuration.grouping === "pooled" ? pool.driver : subscriptionWidgetAccountId(account),
@@ -181,8 +184,8 @@ export function buildAndroidSubscriptionUsageSnapshot(
       configuration.providers.length === 0 ||
       configuration.accountIds?.length === 0 ||
       configuration.environmentIds?.length === 0
-        ? "No accounts selected. Configure in T3."
-        : "No limits available for the selected accounts. Open T3 to refresh.",
+        ? m(msg("No accounts selected. Configure in T3."))
+        : m(msg("No limits available for the selected accounts. Open T3 to refresh.")),
   };
 }
 
@@ -212,13 +215,17 @@ export function androidWidgetRefreshDeadlines(snapshot: SubscriptionUsageSnapsho
 
 function formatReset(window: LimitPoolWindow) {
   return window.resets[0]
-    ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      })}`
-    : "Reset time unavailable";
+    ? m(
+        msg("Next reset {time}", {
+          time: new Date(window.resets[0].at).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+        }),
+      )
+    : m(msg("Reset time unavailable"));
 }
 
 function windowExpiry(window: LimitPoolWindow) {

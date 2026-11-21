@@ -1612,7 +1612,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:continue-thread-elsewhere",
       searchTerms: ["continue", "machine", "move", "transfer", "remote", "linked", "handoff"],
-      title: "Continue on another machine",
+      title: gt("Continue on another machine"),
       icon: <MonitorUpIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openContinueOnMachineDialog(threadRef);
@@ -1630,8 +1630,8 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:home-start-fresh",
       searchTerms: ["start fresh", "home", "new home", "reset home"],
-      title: "Start fresh",
-      description: "New Home thread; the current one stays in history",
+      title: gt("Start fresh"),
+      description: gt("New Home thread; the current one stays in history"),
       icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         const result = await startFreshHome({
@@ -1869,7 +1869,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:decisions",
     searchTerms: ["decisions", "approvals", "questions", "waiting", "inbox", "pending"],
-    title: "Open decisions",
+    title: gt("Open decisions"),
     icon: <MessageCircleQuestionIcon className={ITEM_ICON_CLASS} />,
     shortcutCommand: "decisions.open",
     run: async () => {
@@ -1882,7 +1882,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:home",
       searchTerms: ["home", "fleet", "all projects"],
-      title: "Open Home",
+      title: gt("Open Home"),
       icon: <HouseIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "home.open",
       run: async () => {
@@ -1899,7 +1899,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:fleet",
       searchTerms: ["fleet", "chief of staff", "chiefs of staff", "jobs", "board"],
-      title: "Open fleet board",
+      title: gt("Open fleet board"),
       icon: <ShipIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "fleet.open",
       run: async () => {

@@ -41,7 +41,6 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const gt = useGT();
-  const m = useMessages();
   const target = route.params;
   const ref = scopeThreadRef(target.environmentId, target.threadId);
   const thread = useAtomValue(environmentThreadShells.threadShellAtom(ref));
@@ -105,6 +104,7 @@ function BackgroundWorkRow(props: {
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { task, item } = props;
+  const gt = useGT();
   const m = useMessages();
   const [expanded, setExpanded] = useState(task.awaited === true);
   const [showCommand, setShowCommand] = useState(false);
@@ -182,7 +182,7 @@ function BackgroundWorkRow(props: {
           <View className="flex-row flex-wrap">
             {task.kind !== "subagent" && command ? (
               <Button
-                label={showCommand ? "Hide command" : "Show command"}
+                label={showCommand ? gt("Hide command") : gt("Show command")}
                 tone="text"
                 size="compact"
                 onPress={() => setShowCommand(!showCommand)}
@@ -190,7 +190,7 @@ function BackgroundWorkRow(props: {
             ) : null}
             {hasOutput ? (
               <Button
-                label={fullOutput ? "Last lines" : "Full output"}
+                label={fullOutput ? gt("Last lines") : gt("Full output")}
                 tone="text"
                 size="compact"
                 onPress={() => setFullOutput(!fullOutput)}
@@ -198,7 +198,7 @@ function BackgroundWorkRow(props: {
             ) : null}
             {childThreadId ? (
               <Button
-                label="Open thread"
+                label={gt("Open thread")}
                 tone="text"
                 size="compact"
                 onPress={() => props.onOpen(childThreadId)}

@@ -5,7 +5,6 @@ import { WebSocket } from "@effect/platform-node/NodeWS";
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
@@ -32,8 +31,6 @@ import {
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
-  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
-  ORCHESTRATION_PROTOCOL_VERSION,
   type FleetInvokeInput,
   type FleetHostRequest,
   type AuthAccessStreamEvent,
@@ -122,7 +119,6 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
-import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
@@ -158,7 +154,6 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";

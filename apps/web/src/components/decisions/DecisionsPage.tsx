@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { openDecisionKey, type OpenDecision } from "@t3tools/client-runtime/state/thread-requests";
 import { useNavigate } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { MessageCircleQuestionIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -49,6 +50,7 @@ function Decision({
   environmentLabel: string | null;
 }) {
   const navigate = useNavigate();
+  const gt = useGT();
   const heading = <DecisionHeading decision={decision} environmentLabel={environmentLabel} />;
   const openThread = (
     <InlineButton
@@ -60,14 +62,14 @@ function Decision({
         })
       }
     >
-      Open thread
+      <T>Open thread</T>
     </InlineButton>
   );
   if (decision.kind === "approval")
     return (
       <PendingApprovalCard
         thread={decision.thread}
-        label={`Approval from ${decision.title}`}
+        label={gt("Approval from {title}", { title: decision.title })}
         heading={heading}
         approval={decision.approval}
         actions={openThread}
@@ -77,7 +79,7 @@ function Decision({
     return (
       <DecisionQuestionCard
         thread={decision.thread}
-        label={`Question from ${decision.title}`}
+        label={gt("Question from {title}", { title: decision.title })}
         heading={heading}
         userInput={decision.userInput}
         actions={openThread}
@@ -85,27 +87,32 @@ function Decision({
     );
   return (
     <RequestCard
-      label={`Request from ${decision.title}`}
+      label={gt("Request from {title}", { title: decision.title })}
       heading={heading}
       error={null}
       actions={openThread}
     >
       {decision.request.label === null ? null : <p>{decision.request.label}</p>}
-      <p className="text-muted-foreground">Only you can answer this. Open the thread to respond.</p>
+      <p className="text-muted-foreground">
+        <T>Only you can answer this. Open the thread to respond.</T>
+      </p>
     </RequestCard>
   );
 }
 
 export function DecisionsPage() {
+  const gt = useGT();
   const decisions = useAtomValue(openDecisions.decisionsAtom);
   const { environmentLabelById } = useEnvironmentLookups();
   const showEnvironment =
     new Set(decisions.map((decision) => decision.thread.environmentId)).size > 1;
   return (
-    <AppRouteModal label="Decisions">
+    <AppRouteModal label={gt("Decisions")}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">Decisions</h1>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
+            <T>Decisions</T>
+          </h1>
           <AppRouteModalClose />
         </header>
         <ScrollArea className="min-h-0 flex-1">
@@ -116,9 +123,11 @@ export function DecisionsPage() {
                   <EmptyMedia variant="icon">
                     <MessageCircleQuestionIcon />
                   </EmptyMedia>
-                  <EmptyTitle>Nothing waiting on you</EmptyTitle>
+                  <EmptyTitle>
+                    <T>Nothing waiting on you</T>
+                  </EmptyTitle>
                   <EmptyDescription>
-                    Approvals, questions, and decisions from your agents appear here.
+                    <T>Approvals, questions, and decisions from your agents appear here.</T>
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>

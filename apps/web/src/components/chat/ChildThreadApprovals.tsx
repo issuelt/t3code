@@ -1,10 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { childThreadApprovalsAtom } from "../../state/threads";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 
 export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef | null }) {
   const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
+  const gt = useGT();
   if (approvals.length === 0) return null;
   return (
     <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">
@@ -16,8 +18,8 @@ export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef
             entry.approval.requestId,
           ])}
           thread={entry.thread}
-          label={`Approval from ${entry.title}`}
-          heading={`Approval needed from ${entry.title}`}
+          label={gt("Approval from {title}", { title: entry.title })}
+          heading={gt("Approval needed from {title}", { title: entry.title })}
           approval={entry.approval}
         />
       ))}

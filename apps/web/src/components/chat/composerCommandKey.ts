@@ -256,8 +256,7 @@ export function composerCommandKeyHandler(input: {
       return applyListEdit(event, listOutdentForTab);
     }
     const { trigger } = resolveActiveComposerTrigger();
-    const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+    const menuIsActive = !isLiteralPendingAnswer && trigger !== null;
     const menuControlKey = composerMenuControlKey(event);
     if (menuControlKey !== null && (!menuIsActive || composerMenuItemsRef.current.length === 0)) {
       return false;

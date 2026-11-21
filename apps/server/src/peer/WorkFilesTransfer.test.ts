@@ -1,3 +1,4 @@
+import { NodeHttpServer } from "@effect/platform-node";
 // @effect-diagnostics nodeBuiltinImport:off - Fixtures drive git directly on real folders.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -31,13 +32,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
-import {
-  descriptorOf,
-  layerHttpsTest,
-  layerLinkingEnvironment,
-  linkTo,
-  servePeer,
-} from "./PeerLinks.testkit.ts";
+import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as WorkFilesTransfer from "./WorkFilesTransfer.ts";
 
 // The laptop sends a thread's files to the box over a real link: the box's
@@ -119,7 +114,6 @@ const serveBox = (target: string) =>
         Layer.provide(shared),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       ),
-      "https",
       WorkFilesTransfer.layerReceiveRoute.pipe(Layer.provide(shared)),
     );
     const config = Context.get(transfer, ServerConfig.ServerConfig);
@@ -179,7 +173,7 @@ it.live("sends a checkout's work to the same commit on the box, leaving no archi
     expect(NodeFS.existsSync(NodePath.join(target, "old.ts"))).toBe(false);
     expect(NodeFS.readFileSync(NodePath.join(target, ".env.local"), "utf8")).toBe("TOKEN=1");
     expect(leftovers(receiveDir)).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live(
@@ -232,7 +226,7 @@ it.live("a refusal there changes nothing and still removes the archive and stagi
     expect(refused.message).toContain("app.ts (it has local changes there)");
     expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("edited on the box");
     expect(leftovers(receiveDir)).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live("a receive folder the box cannot write to refuses the files and keeps it running", () =>
@@ -252,7 +246,7 @@ it.live("a receive folder the box cannot write to refuses the files and keeps it
     // The box still answers, and a writable folder takes the same work.
     NodeFS.chmodSync(receiveDir, 0o700);
     expect(yield* send).toEqual({ files: 1, deletions: 0 });
-  }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live("refuses before sending anything when the box is on another commit", () =>
@@ -269,7 +263,7 @@ it.live("refuses before sending anything when the box is on another commit", () 
     expect(refused.message).toContain(git(source, "rev-parse", "HEAD"));
     expect(refused.message).toContain(git(target, "rev-parse", "HEAD"));
     expect(leftovers(receiveDir)).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live.each([
@@ -288,7 +282,7 @@ it.live.each([
     expect(refused.code).toBe("capability_denied");
     if (access !== "read-only") expect(refused.message).toContain(named);
     expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
-  }).pipe(Effect.scoped, Effect.provide(layerHttpsTest)),
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live("the upload route takes nothing without a link session and its own token", () =>
@@ -318,5 +312,8 @@ it.live("the upload route takes nothing without a link session and its own token
     );
     expect(supervised.status).toBe(403);
     expect(yield* supervised.text).toContain("approval-required");
-  }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerHttpsTest, FetchHttpClient.layer))),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.merge(NodeHttpServer.layerTest, FetchHttpClient.layer)),
+  ),
 );

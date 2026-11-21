@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT } from "gt-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -32,6 +33,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { m } from "~/i18n/messages";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { afterContinuedThreadWait, continuedThreadFollowThrough } from "./continueOnMachine.logic";
 import { continueOnMachineThreadAtom } from "./continueOnMachineDialogState";
@@ -70,16 +72,25 @@ type Stage =
   | { readonly kind: "running"; readonly link: PeerLinkSummary; readonly mode: WorkFilesMode };
 
 const failureMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "An unexpected error occurred.";
+  error instanceof Error ? error.message : m(msg("An unexpected error occurred."));
 
 /** What the files are, in one sentence, with what stays behind. */
-function workFilesDescription(summary: WorkFilesSummary): string {
-  const files = `${summary.fileCount.toLocaleString()} ${summary.fileCount === 1 ? "file" : "files"}`;
-  const deletions =
-    summary.deletionCount === 0
-      ? ""
-      : ` and ${summary.deletionCount.toLocaleString()} ${summary.deletionCount === 1 ? "deletion" : "deletions"}`;
-  return `${files}${deletions} (${formatBytes(summary.totalBytes)}) from ${summary.directory}. Every changed and new file goes, secrets included. Ignored files, node_modules, and build output stay on this machine.`;
+function workFilesDescription(summary: WorkFilesSummary, gt: ReturnType<typeof useGT>): string {
+  const vars = {
+    files: summary.fileCount,
+    deletions: summary.deletionCount,
+    size: formatBytes(summary.totalBytes),
+    directory: summary.directory,
+  };
+  return summary.deletionCount === 0
+    ? gt(
+        "{files, plural, one {{files} file} other {{files} files}} ({size}) from {directory}. Every changed and new file goes, secrets included. Ignored files, node_modules, and build output stay on this machine.",
+        vars,
+      )
+    : gt(
+        "{files, plural, one {{files} file} other {{files} files}} and {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}} ({size}) from {directory}. Every changed and new file goes, secrets included. Ignored files, node_modules, and build output stay on this machine.",
+        vars,
+      );
 }
 
 function ContinueOnMachineDialog({
@@ -89,6 +100,7 @@ function ContinueOnMachineDialog({
   readonly threadRef: ScopedThreadRef;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const navigate = useNavigate();
   const router = useRouter();
   const links = useEnvironmentQuery(
@@ -109,7 +121,7 @@ function ContinueOnMachineDialog({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `Could not continue on ${link.label}`,
+        title: gt("Could not continue on {environment}", { environment: link.label }),
         description: failureMessage(error),
       }),
     );
@@ -146,12 +158,16 @@ function ContinueOnMachineDialog({
         stackedThreadToast({
           type: arrived ? "info" : "warning",
           title: arrived
-            ? `The thread on ${continued.label} is ready`
-            : `The thread on ${continued.label} has not reached this window yet`,
+            ? gt("The thread on {environment} is ready", { environment: continued.label })
+            : gt("The thread on {environment} has not reached this window yet", {
+                environment: continued.label,
+              }),
           description: arrived
-            ? "Open it when you're ready."
-            : `Check ${continued.label} in Settings → Connections, then open it.`,
-          actionProps: { children: "Open thread", onClick: openThread },
+            ? gt("Open it when you're ready.")
+            : gt("Check {environment} in Settings → Connections, then open it.", {
+                environment: continued.label,
+              }),
+          actionProps: { children: gt("Open thread"), onClick: openThread },
           data: { hideCopyButton: true },
         }),
       );
@@ -167,7 +183,7 @@ function ContinueOnMachineDialog({
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: `Could not turn on ${continued.label}`,
+              title: gt("Could not turn on {environment}", { environment: continued.label }),
               description: failureMessage(squashAtomCommandFailure(enabled)),
             }),
           );
@@ -183,29 +199,37 @@ function ContinueOnMachineDialog({
     });
     const picked =
       mode === "transfer"
-        ? `A new thread there picked up this one, with ${continued.transferredFiles.toLocaleString()} work files.`
-        : "A new thread there picked up this one.";
+        ? gt("A new thread there picked up this one, with {count} work files.", {
+            count: continued.transferredFiles,
+          })
+        : gt("A new thread there picked up this one.");
     toastManager.add(
       stackedThreadToast({
         type: "success",
-        title: `Continued on ${continued.label}`,
+        title: gt("Continued on {environment}", { environment: continued.label }),
         description:
           followThrough.kind === "open"
             ? picked
             : followThrough.kind === "turn-on"
-              ? `${picked} Turn on ${continued.label} here to open it.`
-              : `${picked} Connect this window to ${continued.label} to open it.`,
+              ? gt("{picked} Turn on {environment} here to open it.", {
+                  picked,
+                  environment: continued.label,
+                })
+              : gt("{picked} Connect this window to {environment} to open it.", {
+                  picked,
+                  environment: continued.label,
+                }),
         ...(followThrough.kind === "turn-on"
           ? {
               actionProps: {
-                children: `Turn on ${continued.label}`,
+                children: gt("Turn on {environment}", { environment: continued.label }),
                 onClick: () => void turnOnAndOpen(),
               },
             }
           : followThrough.kind === "connect"
             ? {
                 actionProps: {
-                  children: `Connect ${continued.label}`,
+                  children: gt("Connect {environment}", { environment: continued.label }),
                   onClick: () =>
                     void navigate({
                       to: "/settings/connections",
@@ -247,31 +271,33 @@ function ContinueOnMachineDialog({
   if (stage.kind === "ask" || (stage.kind === "running" && stage.mode === "transfer")) {
     const description =
       stage.kind !== "ask"
-        ? `Sending the work files to ${stage.link.label}…`
+        ? gt("Sending the work files to {environment}…", { environment: stage.link.label })
         : stage.error !== null
-          ? `The work files could not be read: ${stage.error}`
-          : (stage.summary.refusal ?? workFilesDescription(stage.summary));
+          ? gt("The work files could not be read: {error}", { error: stage.error })
+          : (stage.summary.refusal ?? workFilesDescription(stage.summary, gt));
     const canTransfer =
       stage.kind === "ask" && stage.error === null && stage.summary.refusal == null;
     return (
       <AlertDialog open onOpenChange={(open) => !open && !busy && onClose()}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Transfer the current work files too?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>Transfer the current work files too?</T>
+            </AlertDialogTitle>
             <AlertDialogDescription>{description}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" disabled={busy} />}>
-              Cancel
+              <T>Cancel</T>
             </AlertDialogClose>
             <Button variant="outline" disabled={busy} onClick={() => void run(stage.link, "skip")}>
-              Continue without files
+              <T>Continue without files</T>
             </Button>
             <Button
               disabled={busy || !canTransfer}
               onClick={() => void run(stage.link, "transfer")}
             >
-              {busy ? "Transferring…" : "Transfer files"}
+              {busy ? gt("Transferring…") : gt("Transfer files")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -283,15 +309,21 @@ function ContinueOnMachineDialog({
     <AlertDialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Continue on another machine</AlertDialogTitle>
+          <AlertDialogTitle>
+            <T>Continue on another machine</T>
+          </AlertDialogTitle>
           <AlertDialogDescription>
             {busy
-              ? `Starting a thread on ${stage.link.label}…`
+              ? gt("Starting a thread on {environment}…", { environment: stage.link.label })
               : links.isPending
-                ? "Checking your linked machines…"
+                ? gt("Checking your linked machines…")
                 : reachable.length === 0
-                  ? "None of this machine's linked machines answers now. Link one in Settings → Connections."
-                  : "A new thread there starts from this conversation, in the same repository. This thread stays as it is."}
+                  ? gt(
+                      "None of this machine's linked machines answers now. Link one in Settings → Connections.",
+                    )
+                  : gt(
+                      "A new thread there starts from this conversation, in the same repository. This thread stays as it is.",
+                    )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {!busy && reachable.length > 0 ? (
@@ -305,7 +337,7 @@ function ContinueOnMachineDialog({
         ) : null}
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" disabled={busy} />}>
-            Cancel
+            <T>Cancel</T>
           </AlertDialogClose>
         </AlertDialogFooter>
       </AlertDialogPopup>

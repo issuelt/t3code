@@ -1,3 +1,4 @@
+import { NodeHttpServer } from "@effect/platform-node";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -69,13 +70,7 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
-import {
-  descriptorOf,
-  layerHttpsTest,
-  layerLinkingEnvironment,
-  linkTo,
-  servePeer,
-} from "./PeerLinks.testkit.ts";
+import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 import * as WorkFilesTransfer from "./WorkFilesTransfer.ts";
@@ -1138,7 +1133,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
         observedByRunId: parentRunId,
       });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each(["no active parent run", "a newer run owned by another provider"] as const)(
@@ -1248,7 +1243,7 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
           observedByRunId: parentRunId,
         });
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(
@@ -1294,7 +1289,7 @@ it.effect(
           result: "All 412 tests pass on the box.",
         });
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task named only by environment inherits the parent's model, within the link", () =>
@@ -1340,7 +1335,7 @@ it.effect("a task named only by environment inherits the parent's model, within 
       });
       expect(broader.isError).toBe(true);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task naming another driver there never runs its model on the parent's instance", () =>
@@ -1369,7 +1364,7 @@ it.effect("a task naming another driver there never runs its model on the parent
         boxClaude.instanceId,
       );
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses worktree isolation for a task there before launching anything", () =>
@@ -1394,7 +1389,7 @@ it.effect("refuses worktree isolation for a task there before launching anything
       expect(JSON.stringify(result.content)).toContain("isolation");
       expect(yield* Ref.get(thread.launched)).toBeNull();
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("sends the work files before launching there, and launches nothing when they fail", () =>
@@ -1457,7 +1452,7 @@ it.effect("sends the work files before launching there, and launches nothing whe
       expect(retried.structuredContent).toEqual(accepted.structuredContent);
       expect(sent).toHaveLength(2);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect(
@@ -1509,7 +1504,7 @@ it.effect(
         const { subagents } = yield* a.orchestrator.getThreadProjection(parentThreadId);
         expect(subagents.map((task) => task.remoteChild?.threadId)).toEqual([launched]);
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("refuses to transfer work files to a task on this machine", () =>
@@ -1528,7 +1523,7 @@ it.effect("refuses to transfer work files to a task on this machine", () =>
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("needs target.environmentId");
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("follows an open task again after the laptop restarts", () =>
@@ -1561,7 +1556,7 @@ it.effect("follows an open task again after the laptop restarts", () =>
       const task = yield* taskResult(after, delegated.taskId);
       expect(task).toMatchObject({ status: "completed", result: "Finished while you were away." });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("fails the task when the box revokes the link, and cancel interrupts it there", () =>
@@ -1622,7 +1617,7 @@ it.effect("fails the task when the box revokes the link, and cancel interrupts i
         "The linked environment no longer accepts this link. It may have been revoked there; link it again.",
       );
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task's result is its own run's whole last reply, not a later run's", () =>
@@ -1673,7 +1668,7 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       expect(waits.length).toBeGreaterThan(0);
       expect(waits.every((runId) => runId === boxRunId)).toBe(true);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there waits on its own task ends with the answer after it", () =>
@@ -1715,7 +1710,7 @@ it.effect("a task whose thread there waits on its own task ends with the answer 
         executedModel: null,
       });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("the same key from another provider session is another task", () =>
@@ -1750,7 +1745,7 @@ it.effect("the same key from another provider session is another task", () =>
       expect(second.remoteChild.threadId).not.toBe(first.remoteChild.threadId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(2);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each([null, "Working before the provider failed."])(
@@ -1789,7 +1784,7 @@ it.effect.each([null, "Working before the provider failed."])(
         );
         expect(Option.isSome(offered)).toBe(true);
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each([false, true])(
@@ -1822,7 +1817,7 @@ it.effect.each([false, true])(
         });
         expect(yield* Ref.get(thread.waitedFor)).toEqual([boxRunId]);
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"] as const)(
@@ -2067,7 +2062,7 @@ it.effect("keeps a successful remote reply despite an error item in the run's ac
         result: "Recovered and completed the task.",
       });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("fails the task when its thread there is gone, or the link here is", () =>
@@ -2105,7 +2100,7 @@ it.effect("fails the task when its thread there is gone, or the link here is", (
       expect(unlinked?.status).toBe("failed");
       expect(unlinked?.result).toContain("not linked to");
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("cancel ends the task here even when the link is gone", () =>
@@ -2133,7 +2128,7 @@ it.effect("cancel ends the task here even when the link is gone", () =>
       expect(task?.result).toContain("could not be stopped in Box");
       expect(yield* Ref.get(thread.interrupted)).toBe(0);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a parent stopped while the task's result is read still stops its thread there", () =>
@@ -2168,7 +2163,7 @@ it.effect("a parent stopped while the task's result is read still stops its thre
       yield* Deferred.await(thread.interruptedOnce);
       expect(yield* Ref.get(thread.stops)).toContain("thread.stop");
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a stop the box refuses because the parent was lowered ends instead of retrying", () =>
@@ -2218,7 +2213,7 @@ it.effect("a stop the box refuses because the parent was lowered ends instead of
       expect(yield* Ref.get(thread.stops)).toEqual([]);
       expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("stopping the parent stops its task there", () =>
@@ -2249,7 +2244,7 @@ it.effect("stopping the parent stops its task there", () =>
       yield* Deferred.await(thread.interruptedOnce);
       expect(yield* Ref.get(thread.interrupted)).toBe(1);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 /** A follower retry schedule the test steps: each failed attempt is offered, then waits for `retry`. */
@@ -2532,7 +2527,7 @@ it.effect("stopping the parent stops follow-up work on a task there that has its
       expect(yield* stoppedThere(a, followUpId, 1)).toMatchObject({ status: "interrupted" });
       expect(yield* Ref.get(thread.interrupted)).toBe(4);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each([
@@ -2590,7 +2585,7 @@ it.effect.each([
           result: "The slow suite passes too.",
         });
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect.each([
@@ -2652,7 +2647,7 @@ it.effect.each([
           result: "The slow suite passes too.",
         });
       }),
-    ).pipe(Effect.provide(layerHttpsTest)),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a follow-up sent after the parent's own run ended is still a task", () =>
@@ -2738,7 +2733,7 @@ it.effect("a follow-up sent after the parent's own run ended is still a task", (
       );
       expect(Option.isSome(offered)).toBe(true);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a delayed Stop acknowledgement leaves a newer Stop owed", () =>
@@ -2791,7 +2786,7 @@ it.effect("a delayed Stop acknowledgement leaves a newer Stop owed", () =>
       expect(yield* Ref.get(thread.interrupted)).toBe(3);
       expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a Stop on a task that has its result reaches there after a restart", () =>
@@ -2831,7 +2826,7 @@ it.effect("a Stop on a task that has its result reaches there after a restart", 
       expect(yield* stoppedThere(after, delegated.taskId)).toMatchObject({ status: "completed" });
       expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a parent stopped while the box is unreachable still stops its task there", () =>
@@ -2869,7 +2864,7 @@ it.effect("a parent stopped while the box is unreachable still stops its task th
       yield* Deferred.await(thread.interruptedOnce);
       expect(yield* Ref.get(thread.interrupted)).toBe(1);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task cancelled while the box is unreachable is stopped there after a restart", () =>
@@ -2909,7 +2904,7 @@ it.effect("a task cancelled while the box is unreachable is stopped there after 
       // The result here is still the cancel's.
       expect(yield* taskResult(after, delegated.taskId)).toMatchObject({ status: "cancelled" });
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a task whose thread there has no run ends with its last reply", () =>
@@ -2936,7 +2931,7 @@ it.effect("a task whose thread there has no run ends with its last reply", () =>
       // One look, not a loop.
       expect(yield* Ref.get(thread.waitedFor)).toEqual([undefined]);
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("a local task runs in this thread's project", () =>
@@ -2956,5 +2951,5 @@ it.effect("a local task runs in this thread's project", () =>
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("invalid_request");
     }),
-  ).pipe(Effect.provide(layerHttpsTest)),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

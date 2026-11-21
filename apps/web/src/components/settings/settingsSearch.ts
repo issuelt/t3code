@@ -1136,23 +1136,23 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "dictation-engine",
-    title: "Dictation",
+    title: msg("Dictation"),
     to: "/settings/devices",
-    searchTerms: ["speech to text voice microphone transcribe local model"],
+    searchTerms: [msg("speech to text voice microphone transcribe local model")],
   },
   {
     id: "dictation-model",
-    title: "Dictation model",
+    title: msg("Dictation model"),
     to: "/settings/devices",
-    searchTerms: ["download remove parakeet whisper moonshine speech model languages disk"],
+    searchTerms: [msg("download remove parakeet whisper moonshine speech model languages disk")],
   },
   {
     id: "dictation-language",
-    title: "Dictation language",
+    title: msg("Dictation language"),
     to: "/settings/devices",
     // The row sits inside the Dictation section; land on the section heading.
     targetId: "dictation",
-    searchTerms: ["speech transcription automatic detect english spoken"],
+    searchTerms: [msg("speech transcription automatic detect english spoken")],
   },
   {
     id: "browser-profiles",
@@ -1492,9 +1492,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "dictation-environment",
-    title: "Dictation machine",
+    title: msg("Dictation machine"),
     to: "/settings/connections",
-    searchTerms: ["speech to text voice transcribe environment automatic"],
+    searchTerms: [msg("speech to text voice transcribe environment automatic")],
   },
   {
     id: "secret-providers",

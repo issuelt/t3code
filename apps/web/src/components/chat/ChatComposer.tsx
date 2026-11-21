@@ -368,7 +368,6 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
-  getShortcutContext: (target: EventTarget | null) => Partial<ShortcutMatchContext>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -997,6 +996,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         closed.cursor,
         isLiteralPendingAnswer,
         isLiteralPendingAnswer ? [] : collectInlineContextIds(closed.text),
+        true,
       );
     },
     onCommitted: () => {

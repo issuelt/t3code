@@ -157,7 +157,7 @@ export function ProviderUpdatesAction() {
       />
       <TooltipPopup side="top">
         <div>
-          Updates providers across connected machines. Each machine checks your permissions.
+          <T>Updates providers across connected machines. Each machine checks your permissions.</T>
         </div>
         {machines.map((machine) => (
           <div key={machine.environmentId}>

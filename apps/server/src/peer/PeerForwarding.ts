@@ -27,7 +27,6 @@ import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as FleetBroker from "../home/FleetBroker.ts";
-import * as Option from "effect/Option";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 

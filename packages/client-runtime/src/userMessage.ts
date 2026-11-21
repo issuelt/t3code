@@ -19,7 +19,8 @@ import {
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
-import { msg } from "gt-i18n";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
@@ -177,8 +178,10 @@ export function watchReportMarkdown(messageId: string, text: string): string | n
 }
 
 /** The header of an expanded watch report, whose body already lists each event. */
-export function watchReportHeading(eventCount: number): string {
-  return eventCount > 1 ? `Watch report · ${eventCount} events` : "Watch report";
+export function watchReportHeading(eventCount: number, resolve: MFunctionType = mFallback): string {
+  return eventCount > 1
+    ? resolve(msg("Watch report · {count} events", { count: eventCount }))
+    : resolve(msg("Watch report"));
 }
 
 type GroupableUserMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {

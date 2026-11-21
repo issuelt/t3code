@@ -270,7 +270,7 @@ export function SavedBackendListRow({
   const pairAgainAction =
     pairAgainHost === null ? null : (
       <Button size="xs" variant="outline" onClick={() => onPairAgain(environment, pairAgainHost)}>
-        Pair again
+        <T>Pair again</T>
       </Button>
     );
 

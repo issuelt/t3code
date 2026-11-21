@@ -272,7 +272,6 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
-  | TurnItemPositionStore.TurnItemPositionStoreV2
   | TaskFolders.TaskFolders
 > = Layer.effect(
   ProviderTurnStartServiceV2,

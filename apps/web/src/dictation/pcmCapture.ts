@@ -1,4 +1,7 @@
 import { DICTATION_SAMPLE_RATE } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 import processorUrl from "./pcmProcessor.worklet.ts?worker&url";
 
@@ -10,15 +13,19 @@ const FLUSH_TIMEOUT_MS = 300;
 function microphoneErrorMessage(error: unknown): string {
   const name = error instanceof DOMException ? error.name : null;
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Microphone access was denied. Allow it in your browser or system settings, then try again.";
+    return m(
+      msg(
+        "Microphone access was denied. Allow it in your browser or system settings, then try again.",
+      ),
+    );
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return "No microphone was found.";
+    return m(msg("No microphone was found."));
   }
   if (name === "NotReadableError" || name === "AbortError") {
-    return "The microphone is in use by another app.";
+    return m(msg("The microphone is in use by another app."));
   }
-  return "Could not open the microphone.";
+  return m(msg("Could not open the microphone."));
 }
 
 export type MicrophoneAccess =
@@ -47,7 +54,9 @@ export class PcmCapture {
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === "undefined") {
       return {
         granted: false,
-        message: "This page cannot use the microphone. Open T3 Code over HTTPS or localhost.",
+        message: m(
+          msg("This page cannot use the microphone. Open T3 Code over HTTPS or localhost."),
+        ),
       };
     }
     this.context = new AudioContext();
@@ -72,7 +81,7 @@ export class PcmCapture {
     }
     if (generation !== this.generation) {
       for (const track of stream.getTracks()) track.stop();
-      return { granted: false, message: "Voice input was cancelled." };
+      return { granted: false, message: m(msg("Voice input was cancelled.")) };
     }
     this.stream = stream;
     return { granted: true };
@@ -86,7 +95,7 @@ export class PcmCapture {
     // Not awaited: without user activation (a synthetic key event, say) resume
     // never settles, and waiting on it would hold dictation in "preparing" forever.
     if (context.state === "suspended") void context.resume().catch(() => undefined);
-    if (generation !== this.generation) throw new Error("Voice input was cancelled.");
+    if (generation !== this.generation) throw new Error(m(msg("Voice input was cancelled.")));
     this.source = context.createMediaStreamSource(stream);
     this.node = new AudioWorkletNode(context, PROCESSOR_NAME, {
       numberOfInputs: 1,

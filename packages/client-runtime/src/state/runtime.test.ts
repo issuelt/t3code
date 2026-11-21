@@ -1564,8 +1564,9 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "snapshot">>({
         removedAt: new Map(),
+        snapshot: Option.none(),
       }).pipe(Atom.keepAlive);
       const runtime = harness.runtime as unknown as Atom.AtomRuntime<
         EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
@@ -1587,14 +1588,20 @@ describe("environment query lifecycle", () => {
       expect(yield* archivedIds).toEqual([]);
 
       // Another client archives the thread, then deletes it from the archive.
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      registry.set(shellState, {
+        removedAt: new Map([[v2ThreadId, 2]]),
+        snapshot: Option.none(),
+      });
       expect(registry.get(atom).waiting).toBe(true);
       yield* Deferred.succeed(
         yield* Queue.take(requests),
         page([{ ...v2ThreadShell, archivedAt: v2Now }]),
       );
       expect(yield* archivedIds).toEqual([v2ThreadId]);
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      registry.set(shellState, {
+        removedAt: new Map([[v2ThreadId, 3]]),
+        snapshot: Option.none(),
+      });
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
       expect(yield* archivedIds).toEqual([]);
     }),

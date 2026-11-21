@@ -740,6 +740,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
         baseDir,
         logsDir: baseDir,
         serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        databasePath: path.join(baseDir, "state.sqlite"),
         channel: undefined,
         requestedVersion: version,
         allowDowngrade: false,

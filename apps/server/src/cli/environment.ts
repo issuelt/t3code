@@ -208,9 +208,13 @@ const environmentLinkCommand = Command.make("link", {
   ...authLocationFlags,
   url: Argument.String("url").pipe(
     Argument.withDescription(
-      "Where the other environment answers: an https address whose certificate this machine trusts.",
+      "Where the other environment answers: its T3 Connect, Tailscale, LAN or loopback address.",
     ),
     Argument.optional,
+  ),
+  alternateUrl: Flag.String("url").pipe(
+    Flag.withDescription("Another address for the same environment, tried after the first."),
+    Flag.atLeast(0),
   ),
   pairingCode: Flag.String("pairing-code").pipe(
     Flag.withDescription("A pairing code from the other environment (`t3 pair` there)."),

@@ -1402,12 +1402,12 @@ export function ProviderInstanceCard({
       </SettingsSection>
 
       {canLogin && environmentId !== undefined ? (
-        <SettingsSection title="Account">
+        <SettingsSection title={gt("Account", { $context: "provider sign-in settings section" })}>
           <SettingsRow
-            title={isAuthenticated ? "Re-authenticate" : "Log in"}
+            title={isAuthenticated ? gt("Re-authenticate") : gt("Log in")}
             control={
               <Button disabled={readOnly || !canManageLogin} onClick={() => setIsLoginOpen(true)}>
-                {isAuthenticated ? "Re-authenticate" : "Log in"}
+                {isAuthenticated ? gt("Re-authenticate") : gt("Log in")}
               </Button>
             }
           />

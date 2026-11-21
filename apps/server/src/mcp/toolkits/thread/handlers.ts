@@ -27,7 +27,6 @@ import { routeHome } from "../../homeRouting.ts";
 import { searchThreads } from "../../projectOperations.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
-import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";

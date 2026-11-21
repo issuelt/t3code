@@ -18,8 +18,10 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Base64 from "effect/encoding/Base64";
+import { msg } from "gt-react";
 import type { AtomRegistry } from "effect/reactivity";
 
+import { m } from "../i18n/messages";
 import { dictationEnvironment } from "../state/dictation";
 import { createDictationLevel, type DictationLevel } from "./dictationLevel";
 import { PcmCapture } from "./pcmCapture";
@@ -60,7 +62,7 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
   const error = squashAtomCommandFailure(result);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "The environment did not respond.";
+    : m(msg("The environment did not respond."));
 }
 
 /**

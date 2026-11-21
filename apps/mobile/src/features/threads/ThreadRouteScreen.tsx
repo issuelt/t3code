@@ -22,7 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useGT, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -1001,8 +1001,8 @@ function ThreadRouteContent(
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not start a fresh Home",
-          error instanceof Error ? error.message : "Try again.",
+          m(msg("Could not start a fresh Home")),
+          error instanceof Error ? error.message : m(msg("Try again.")),
         );
       }
       return;
@@ -1016,15 +1016,15 @@ function ThreadRouteContent(
   };
   const homeHeaderMenu = isActiveHomeThread
     ? {
-        title: "Home actions",
+        title: gt("Home actions"),
         icon: "ellipsis.circle" as const,
         separateBackground: false,
         items: [
           {
             id: "home-start-fresh",
-            title: "Start fresh",
+            title: gt("Start fresh"),
             icon: "arrow.clockwise" as const,
-            subtitle: "New Home thread; current stays in history",
+            subtitle: gt("New Home thread; current stays in history"),
             disabled: !canOperateThread,
             onPress: () => void handleStartFreshHome(),
           },

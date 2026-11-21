@@ -874,6 +874,7 @@ it.effect("an MCP pin lands above every existing pin, as a client pin does", () 
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(notHomeLayer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) =>
@@ -1220,6 +1221,7 @@ it.effect("run_scheduled_task_now reports why a started run failed to dispatch",
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(notHomeLayer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
@@ -1357,6 +1359,7 @@ it.effect(
         layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(NodeCrypto.layer),
+          Layer.provide(notHomeLayer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
               getThreadShell: (id) =>

@@ -859,6 +859,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
   const navigation = useNavigation();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const openExistingProject = useOpenExistingProject(environment);
+  const projects = useProjects();
 
   return async (
     workspaceRoot: string,

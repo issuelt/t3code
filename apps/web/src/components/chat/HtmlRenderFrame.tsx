@@ -106,7 +106,7 @@ export function HtmlRenderFrame(props: {
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Open beside chat"
+                      aria-label={gt("Open beside chat")}
                       size="icon-xs"
                       variant="glass"
                       onClick={() => {
@@ -125,7 +125,9 @@ export function HtmlRenderFrame(props: {
                 >
                   <PanelRightOpenIcon className="size-3.5" />
                 </TooltipTrigger>
-                <TooltipPopup side="left">Open beside chat</TooltipPopup>
+                <TooltipPopup side="left">
+                  <T>Open beside chat</T>
+                </TooltipPopup>
               </Tooltip>
             ) : null}
             <Tooltip>

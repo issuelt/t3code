@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -26,6 +27,7 @@ export function HomeShortcuts(props: {
   readonly selectedThreadKey: string | null;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
 }) {
+  const gt = useGT();
   const shortcuts = useAtomValue(homeShortcutsAtom);
   return (
     <View>
@@ -42,7 +44,9 @@ export function HomeShortcuts(props: {
             <RowPressable
               key={key}
               accessibilityRole="button"
-              accessibilityLabel={connectionState === "connected" ? label : `${label}, Offline`}
+              accessibilityLabel={
+                connectionState === "connected" ? label : gt("{label}, Offline", { label })
+              }
               accessibilityState={{ selected }}
               className={cn(
                 "min-h-12 flex-row items-center gap-3 rounded-xl px-4 py-3",

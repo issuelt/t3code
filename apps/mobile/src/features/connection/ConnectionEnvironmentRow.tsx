@@ -232,7 +232,7 @@ export function ConnectionEnvironmentRow(props: {
       {canPairAgain ? (
         <SettingsActionRow
           icon="qrcode.viewfinder"
-          label="Pair again"
+          label={gt("Pair again")}
           onPress={() => props.onPairAgain?.(props.environment.environmentId)}
         />
       ) : null}

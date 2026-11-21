@@ -1,4 +1,5 @@
 import { MicIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import type { PointerEvent } from "react";
 
 import type { ComposerDictation } from "~/dictation/useComposerDictation";
@@ -19,15 +20,16 @@ export function ComposerDictationControl(props: {
   readonly disabled: boolean;
   readonly shortcutLabel: string | null;
 }) {
+  const gt = useGT();
   const { dictation } = props;
   const phase = dictation.state.phase;
   const active = phase === "preparing" || phase === "recording" || phase === "transcribing";
-  const label = dictation.environmentId === null ? "Set up dictation" : "Dictate";
+  const label = dictation.environmentId === null ? gt("Set up dictation") : gt("Dictate");
 
   return (
     <div
       role="group"
-      aria-label="Dictation"
+      aria-label={gt("Dictation")}
       data-active={active ? "" : undefined}
       className="group flex h-8 items-center rounded-full border border-transparent transition-[border-color] duration-200 ease-out data-active:border-border motion-reduce:transition-none"
     >
@@ -49,7 +51,7 @@ export function ComposerDictationControl(props: {
           disabled={phase !== "recording"}
           onPointerDown={keepComposerFocus}
           onClick={dictation.stop}
-          aria-label={phase === "recording" ? "Stop and insert dictation" : "Transcribing"}
+          aria-label={phase === "recording" ? gt("Stop and insert dictation") : gt("Transcribing")}
           className="mr-0.5 grid size-7 place-items-center rounded-full bg-primary text-primary-foreground transition-[opacity,scale] duration-200 ease-out starting:scale-50 starting:opacity-0 disabled:opacity-45 motion-reduce:transition-none"
         >
           <span className="size-2.5 rounded-xs bg-current" />
@@ -73,7 +75,7 @@ export function ComposerDictationControl(props: {
           </TooltipTrigger>
           <TooltipPopup>
             {props.shortcutLabel && dictation.environmentId !== null
-              ? `${label} (hold ${props.shortcutLabel})`
+              ? gt("{label} (hold {shortcut})", { label, shortcut: props.shortcutLabel })
               : label}
           </TooltipPopup>
         </Tooltip>

@@ -5,9 +5,7 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  ProjectId,
   type TaskFolderError,
-  type Project as ProjectRecord,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
@@ -37,7 +35,6 @@ import {
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
-import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";

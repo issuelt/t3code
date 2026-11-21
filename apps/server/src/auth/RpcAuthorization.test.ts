@@ -13,7 +13,6 @@ import {
   IssueTrackerKind,
   SecretProviderId,
   ThreadId,
-  EnvironmentId,
   TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,

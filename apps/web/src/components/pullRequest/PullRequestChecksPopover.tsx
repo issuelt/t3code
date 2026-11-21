@@ -6,7 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";

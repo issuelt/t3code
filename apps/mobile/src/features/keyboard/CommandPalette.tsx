@@ -9,7 +9,6 @@ import {
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
@@ -355,7 +354,7 @@ export function CommandPalette(props: {
             {
               key: "usageWidget",
               kind: "action" as const,
-              title: "Configure usage widget",
+              title: gt("Configure usage widget"),
               searchTerms: ["widget", "accounts", "quota", "home screen"],
               run: () => openSettings(navigation, "SettingsUsageWidget"),
             },

@@ -268,7 +268,9 @@ export function AttachmentFilePreview(props: {
       if (!controller.signal.aborted) setArtifact(html);
     })().catch((cause: unknown) => {
       if (!controller.signal.aborted)
-        setArtifactError(cause instanceof Error ? cause.message : "Could not load this page.");
+        setArtifactError(
+          cause instanceof Error ? cause.message : m(msg("Could not load this page.")),
+        );
     });
     return () => controller.abort();
   }, [props.htmlRender, url, revision, props.file, refresh]);

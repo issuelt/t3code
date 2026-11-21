@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -88,6 +89,8 @@ describe("commandPaletteEntityItems", () => {
       threads: [homeThread],
       activeThread: homeThread,
       environmentLabel: () => "mac",
+      delegatedUnderParent: new Set(),
+      resolve: m,
       searchEnvironments: false,
       openDraft: () => {},
       openThread: () => {},

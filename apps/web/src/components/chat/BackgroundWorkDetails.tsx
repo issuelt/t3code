@@ -9,7 +9,7 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { T } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { useNowSecond } from "~/hooks/useNowSecond";
@@ -46,6 +46,7 @@ function BackgroundWorkTask(
     readonly task: OrchestrationV2PendingBackgroundTask;
   },
 ) {
+  const gt = useGT();
   const { task } = props;
   const [expanded, setExpanded] = useState(task.awaited === true);
   const [showCommand, setShowCommand] = useState(false);
@@ -132,7 +133,7 @@ function BackgroundWorkTask(
                 aria-expanded={showCommand}
                 onClick={() => setShowCommand(!showCommand)}
               >
-                {showCommand ? "Hide command" : "Show command"}
+                {showCommand ? gt("Hide command") : gt("Show command")}
               </Button>
             ) : null}
             {hasOutput ? (
@@ -142,7 +143,7 @@ function BackgroundWorkTask(
                 aria-pressed={fullOutput}
                 onClick={() => setFullOutput(!fullOutput)}
               >
-                {fullOutput ? "Last lines" : "Full output"}
+                {fullOutput ? gt("Last lines") : gt("Full output")}
               </Button>
             ) : null}
             {childThreadId ? (
@@ -151,7 +152,7 @@ function BackgroundWorkTask(
                 size="xs"
                 onClick={() => props.onOpenThread(childThreadId)}
               >
-                Open thread
+                <T>Open thread</T>
               </Button>
             ) : null}
           </div>

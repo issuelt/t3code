@@ -22,7 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   decodeProjectScriptKeybindingRule,
-  PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING,
+  projectScriptKeybindingSaveWarning,
   keybindingValueForCommand,
 } from "../../lib/projectScriptKeybindings";
 import {
@@ -123,7 +123,7 @@ export function useProjectScriptEditing(input: {
 
     if (!changesKeybinding) return updateResult;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+      toastManager.add(projectScriptKeybindingSaveWarning());
       return updateResult;
     }
 
@@ -161,7 +161,7 @@ export function useProjectScriptEditing(input: {
     for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
       const result = await removeKeybinding({ environmentId, input: rule });
       if (result._tag === "Failure") {
-        toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+        toastManager.add(projectScriptKeybindingSaveWarning());
         return updateResult;
       }
     }
@@ -173,7 +173,7 @@ export function useProjectScriptEditing(input: {
             ? { ...keybindingRule, replace: previous }
             : keybindingRule,
       });
-      if (result._tag === "Failure") toastManager.add(PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING);
+      if (result._tag === "Failure") toastManager.add(projectScriptKeybindingSaveWarning());
     }
     return updateResult;
   };

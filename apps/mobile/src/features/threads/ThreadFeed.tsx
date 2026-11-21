@@ -1653,6 +1653,8 @@ function AgentMessageFoldHeader(props: {
   const localSenderShell = useQuietThreadShell(
     props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
+  const gt = useGT();
+  const resolveMessage = useMessages();
   // A result returned from another machine names a thread this environment doesn't have.
   const remoteSenderShell = useQuietThreadShellById(
     props.senderThreadId && localSenderShell === null ? props.senderThreadId : null,
@@ -1660,7 +1662,7 @@ function AgentMessageFoldHeader(props: {
   const label =
     (localSenderShell ?? remoteSenderShell)?.title.trim() ||
     props.senderTitle?.trim() ||
-    props.fallbackLabel;
+    resolveMessage(props.fallbackLabel);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1763,6 +1765,7 @@ function DiscardAgentMessageButton(props: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
 }) {
+  const gt = useGT();
   const workflow = useAtomValue(
     environmentThreadDetails.queueWorkflowAtom({
       environmentId: props.environmentId,
@@ -1776,7 +1779,7 @@ function DiscardAgentMessageButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Discard queued agent message"
+      accessibilityLabel={gt("Discard queued agent message")}
       disabled={busy}
       hitSlop={6}
       className="self-start px-3.5 pb-2.5 active:opacity-70 disabled:opacity-40"
@@ -1789,13 +1792,15 @@ function DiscardAgentMessageButton(props: {
         setBusy(false);
         if (AsyncResult.isFailure(result)) {
           Dialog.alert(
-            "Could not discard the message",
-            "It is still queued and will reach the agent. Try again.",
+            m(msg("Could not discard the message")),
+            m(msg("It is still queued and will reach the agent. Try again.")),
           );
         }
       }}
     >
-      <Text className="font-t3-medium text-xs text-danger-foreground">Discard</Text>
+      <Text className="font-t3-medium text-xs text-danger-foreground">
+        <T>Discard</T>
+      </Text>
     </Pressable>
   );
 }
@@ -2440,7 +2445,7 @@ function renderFeedEntry(
             environmentId={sender?.environmentId ?? props.environmentId}
             senderThreadId={sender?.threadId}
             {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
-            fallbackLabel={reportLines === null ? "Agent" : "Watch report"}
+            fallbackLabel={reportLines === null ? msg("Agent") : msg("Watch report")}
             variant="work"
             summaryLines={expanded ? undefined : (reportLines ?? undefined)}
             summary={
@@ -2642,7 +2647,7 @@ function renderFeedEntry(
                   environmentId={senderRef?.environmentId ?? props.environmentId}
                   senderThreadId={senderRef?.threadId}
                   {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
-                  fallbackLabel="Agent"
+                  fallbackLabel={msg("Agent")}
                   variant="bubble"
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)

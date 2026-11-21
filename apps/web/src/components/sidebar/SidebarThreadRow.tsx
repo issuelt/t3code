@@ -762,7 +762,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ? gt("Setting up")
               : status === "working" && thread.goal?.status === "active"
                 ? gt("Goal", { $context: "thread status: working on a goal" })
-                : SIDEBAR_TOP_STATUS[topStatusKind].label,
+                : messages(SIDEBAR_TOP_STATUS[topStatusKind].label),
         };
   const isWokeStatus = topStatusKind === "woke";
 

@@ -645,7 +645,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           id: item.id,
           createdAt,
           runId: item.runId,
-          label: "Agent",
+          label: (input.resolve ?? m)(
+            msg("Agent", { $context: "sender of a message from another agent" }),
+          ),
           detail: item.text,
           attachments: item.attachments.map((attachment) => {
             const previewUrl = input.attachmentUrlById?.get(attachment.id);
