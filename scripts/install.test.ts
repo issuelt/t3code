@@ -243,6 +243,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         "ln",
         "grep",
         "tr",
+        "mktemp",
+        "chmod",
+        "mv",
+        "rm",
       ]) {
         const executable = NodeChildProcess.execFileSync(
           "sh",

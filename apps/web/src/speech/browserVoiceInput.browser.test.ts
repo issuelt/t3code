@@ -176,7 +176,7 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   expect(platform.recorder.uri).not.toBeNull();
   await controller.start();
   expect(controller.currentState.phase).toBe("idle");
-  expect(commitDraft).toHaveBeenCalledWith("bonjour", { start: 7, end: 7 });
+  expect(commitDraft).toHaveBeenCalledWith("Bonjour", { start: 7, end: 7 }, { start: 0, end: 7 });
   expect(requests).toHaveLength(2);
   for (const request of requests) {
     expect([...new Float32Array(request.pcm.slice().buffer)]).toEqual([
