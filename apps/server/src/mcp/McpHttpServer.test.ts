@@ -701,8 +701,8 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
     yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
 
     for (const invalidTarget of ["{model:", '{"model":42}']) {
-      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
-      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+      const result = yield* callTool("delegate_task", { task, target: invalidTarget });
+      expect(result.isError).toBe(true);
     }
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({

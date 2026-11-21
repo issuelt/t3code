@@ -353,7 +353,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const repointed = yield* repointRecordedLaunchers({ baseDir: root, targetEntryPath: newExe });
 
       assert.deepStrictEqual(repointed, [launcher]);
-      assert.equal(yield* fs.readLink(launcher), newExe);
+      assert.equal(yield* readPosixLauncherTarget(launcher), newExe);
       assert.equal(yield* fs.readLink(foreign), otherExe);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
@@ -383,7 +383,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const repointed = yield* repointRecordedLaunchers({ baseDir: root, targetEntryPath: newExe });
 
       assert.deepStrictEqual(repointed, [launcher]);
-      assert.equal(yield* fs.readLink(launcher), newExe);
+      assert.equal(yield* readPosixLauncherTarget(launcher), newExe);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
@@ -763,7 +763,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       );
 
       assert.include(output, "already on");
-      assert.equal(yield* fs.readLink(launcher), runtime.entryPath);
+      assert.equal(yield* readPosixLauncherTarget(launcher), runtime.entryPath);
     }).pipe(
       Effect.scoped,
       Effect.provideService(HostProcess.Platform, "linux"),

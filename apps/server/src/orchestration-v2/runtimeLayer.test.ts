@@ -6354,9 +6354,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
+          detail: (input) =>
             Effect.sync(() => {
-              reads += 1;
+              // An earlier test's watch on #13 stays open in the shared database.
+              if (input.number === 14) reads += 1;
               return {
                 ...watchedPullRequestDetail({
                   projectId,

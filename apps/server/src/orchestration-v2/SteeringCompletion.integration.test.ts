@@ -727,7 +727,8 @@ it.effect.each([
     text: "Merged #17.",
     createdBy: "agent",
     senderThreadId: ThreadId.make("home-launched:pm"),
-    envelope: "Message from agent thread home-launched:pm, not from the user.",
+    envelope:
+      '[T3 Code: the agent in T3 thread "home-launched:pm" sent this message, not the user.',
   },
 ] as const)(
   "steers a $kind that reaches Home while its turn is still starting",
@@ -2807,6 +2808,7 @@ const scheduledDeliveryAfterClaudeSwitch = (name: string, text: string) =>
       true,
       Effect.void,
       true,
+      undefined,
       undefined,
       undefined,
       [claudeAdapter],
