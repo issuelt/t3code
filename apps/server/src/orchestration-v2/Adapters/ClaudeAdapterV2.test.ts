@@ -3876,9 +3876,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               Effect.andThen(changes.notify),
             ),
         },
-        ...(options?.promptSuggestions === undefined
-          ? {}
-          : { promptSuggestions: options.promptSuggestions }),
         queryRunner: {
           allocateSessionId:
             options?.allocateSessionId ??
@@ -13365,9 +13362,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ["dev-server", false],
         ],
       );
-      yield* Queue.offer(harness.sdkMessages, turnOneResult);
-      yield* Queue.take(harness.terminalReceipts);
-
       // A replacing level rebuilds every entry; the mark must survive it.
       yield* Queue.offer(
         harness.sdkMessages,
@@ -13381,30 +13375,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ],
       );
 
-      // An awaited task that leaves the roster stays published, still marked, until its wake.
+      // Once the task ends, a reused id starts unmarked.
       yield* Queue.offer(
         harness.sdkMessages,
-        roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
+        claudeSdkFrame({ ...wakeNotification, uuid: "00000000-0000-4000-8000-000000000303" }),
       );
-      assert.deepStrictEqual(
-        marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
-        [
-          ["dev-server", false],
-          [WAKE_TASK_ID, true],
-        ],
-      );
-      // A reused id starts unmarked.
+      yield* nextRoster((tasks) => tasks.length === 1);
       yield* Queue.offer(
         harness.sdkMessages,
         roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000304"),
       );
-      assert.deepStrictEqual(
-        marks(yield* nextRoster((tasks) => tasks.every((task) => task.awaited !== true))),
-        [
-          ["dev-server", false],
-          [WAKE_TASK_ID, false],
-        ],
-      );
+      assert.deepStrictEqual(marks(yield* nextRoster((tasks) => tasks.length === 2)), [
+        ["dev-server", false],
+        [WAKE_TASK_ID, false],
+      ]);
 
       yield* awaitBackgroundTasks({
         providerThread: harness.providerThread,
@@ -13431,6 +13415,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [WAKE_TASK_ID, false],
         ],
       );
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -13564,13 +13550,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeResultFrame({ uuid: nextUuid(), result: "Watching." }),
       );
       yield* harness.awaitTerminal(1);
-      // Monitors that ended mid-turn stay held for a wake turn until the turn-start deadline.
-      yield* TestClock.adjust("2 minutes");
-      yield* harness.until(
-        () =>
-          providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks
-            ?.length === 1,
-      );
 
       const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
         .pendingBackgroundTasks;
@@ -14405,479 +14384,118 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  // Older Claude Code builds omit is_backgrounded on foreground calls.
-  for (const isBackgrounded of [false, undefined] as const) {
-    it.effect.skipIf(process.getuid === undefined)(
-      `tails foreground Bash output under the physical cwd the query launched in (is_backgrounded ${isBackgrounded})`,
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-task-output-cwd-",
-          });
-          const physicalCwd = path.join(root, "real", "project");
-          const launchCwd = path.join(root, "link");
-          yield* fileSystem.makeDirectory(physicalCwd, { recursive: true });
-          yield* fileSystem.symlink(physicalCwd, launchCwd);
-          // The session opens in /workspace; a relative TMPDIR puts Claude's
-          // task files under whichever cwd the CLI was launched in. Linux,
-          // because Claude Code's macOS build ignores TMPDIR.
-          const harness = yield* makeWakeHarnessWithOptions({ environment: { TMPDIR: "../tmp" } });
-          const now = yield* DateTime.now;
-          const toolUseId = "toolu_foreground_bash";
-          const taskId = "foreground-bash-task";
-          const tasks = path.join(
-            root,
-            "real",
-            "tmp",
-            `claude-${process.getuid?.()}`,
-            "project",
-            WAKE_NATIVE_SESSION,
-            "tasks",
-          );
-          yield* fileSystem.makeDirectory(tasks, { recursive: true });
-          yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "line 1\n");
+  it.effect.skipIf(process.getuid === undefined)(
+    "tails foreground Bash output under the physical cwd the query launched in",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-task-output-cwd-",
+        });
+        const physicalCwd = path.join(root, "real", "project");
+        const launchCwd = path.join(root, "link");
+        yield* fileSystem.makeDirectory(physicalCwd, { recursive: true });
+        yield* fileSystem.symlink(physicalCwd, launchCwd);
+        // The session opens in /workspace; a relative TMPDIR puts Claude's
+        // task files under whichever cwd the CLI was launched in. Linux,
+        // because Claude Code's macOS build ignores TMPDIR.
+        const harness = yield* makeWakeHarnessWithOptions({ environment: { TMPDIR: "../tmp" } });
+        const now = yield* DateTime.now;
+        const toolUseId = "toolu_foreground_bash";
+        const taskId = "foreground-bash-task";
+        const tasks = path.join(
+          root,
+          "real",
+          "tmp",
+          `claude-${process.getuid?.()}`,
+          "project",
+          WAKE_NATIVE_SESSION,
+          "tasks",
+        );
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "line 1\n");
 
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-claude-task-output-cwd"),
-              text: "Run the build.",
-              attachments: [],
-              runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: launchCwd },
-            }),
-          );
-          assert.equal(harness.getOpenedOptions()?.cwd, launchCwd);
-          for (const frame of [
-            claudeSdkFrame({
-              type: "assistant",
-              message: {
-                model: "claude-sonnet-4-6",
-                id: "msg_foreground_bash",
-                type: "message",
-                role: "assistant",
-                content: [
-                  {
-                    type: "tool_use",
-                    id: toolUseId,
-                    name: "Bash",
-                    input: { command: "vp run build", description: "Build" },
-                  },
-                ],
-                stop_reason: null,
-                stop_sequence: null,
-                usage: { input_tokens: 1, output_tokens: 1 },
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000a01",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_started",
-              task_id: taskId,
-              tool_use_id: toolUseId,
-              description: "vp run build",
-              ...(isBackgrounded === undefined ? {} : { is_backgrounded: isBackgrounded }),
-              task_type: "local_bash",
-              uuid: "00000000-0000-4000-8000-000000000a02",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-            claudeSdkFrame({
-              type: "user",
-              message: {
-                role: "user",
-                content: [{ type: "tool_result", tool_use_id: toolUseId, content: "line 1" }],
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000a03",
-              session_id: WAKE_NATIVE_SESSION,
-              tool_use_result: { stdout: "line 1\n", stderr: "", interrupted: false },
-            }),
-            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000a04", result: "Built." }),
-          ]) {
-            yield* Queue.offer(harness.sdkMessages, frame);
-          }
-          yield* harness.awaitTerminal(1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-task-output-cwd"),
+            text: "Run the build.",
+            attachments: [],
+            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: launchCwd },
+          }),
+        );
+        assert.equal(harness.getOpenedOptions()?.cwd, launchCwd);
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_foreground_bash",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: toolUseId,
+                  name: "Bash",
+                  input: { command: "vp run build", description: "Build" },
+                },
+              ],
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "vp run build",
+            is_backgrounded: false,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000a02",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: toolUseId, content: "line 1" }],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000a03",
+            session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: { stdout: "line 1\n", stderr: "", interrupted: false },
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000a04", result: "Built." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
 
-          const chunks = harness.events.flatMap((event) =>
-            event.type === "command_output.delta" ? [event.chunk] : [],
-          );
-          assert.deepEqual(chunks, ["line 1\n"]);
-          const command = harness.events.findLast(
-            (event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
-          );
-          assert.equal(
-            command?.type === "turn_item.updated" ? command.turnItem.status : null,
-            "completed",
-          );
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
+        const chunks = harness.events.flatMap((event) =>
+          event.type === "command_output.delta" ? [event.chunk] : [],
+        );
+        assert.deepEqual(chunks, ["line 1\n"]);
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
           ),
         ),
-    );
-  }
-
-  for (const ending of [
-    "notification",
-    "silent notification",
-    "foreground notification",
-    "query exit",
-  ] as const) {
-    it.effect.skipIf(process.getuid === undefined)(
-      `tails background Bash output after its turn ends until ${ending}`,
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-background-output-",
-          });
-          const harness = yield* makeWakeHarnessWithOptions({
-            environment: { CLAUDE_CODE_TMPDIR: root },
-            close: Queue.shutdown,
-          });
-          const toolUseId = "toolu_background_bash";
-          const taskId = "background-bash-task";
-          const tasks = path.join(
-            root,
-            `claude-${process.getuid?.()}`,
-            "project",
-            WAKE_NATIVE_SESSION,
-            "tasks",
-          );
-          const outputFile = path.join(tasks, `${taskId}.output`);
-          yield* fileSystem.makeDirectory(tasks, { recursive: true });
-          // A silent command leaves its output file empty.
-          const silent = ending === "silent notification";
-          const writeOutput = (text: string) =>
-            fileSystem.writeFileString(outputFile, silent ? "" : text);
-          yield* writeOutput("line 1\n");
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make("attempt-claude-background-output"),
-              text: "Run the build in the background.",
-              attachments: [],
-            }),
-          );
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "assistant",
-              message: {
-                model: "claude-sonnet-4-6",
-                id: "msg_background_bash",
-                type: "message",
-                role: "assistant",
-                content: [
-                  {
-                    type: "tool_use",
-                    id: toolUseId,
-                    name: "Bash",
-                    input: {
-                      command: "vp run build",
-                      run_in_background: ending !== "foreground notification",
-                    },
-                  },
-                ],
-                stop_reason: null,
-                stop_sequence: null,
-                usage: { input_tokens: 1, output_tokens: 1 },
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000b01",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_started",
-              task_id: taskId,
-              tool_use_id: toolUseId,
-              description: "vp run build",
-              is_backgrounded: ending !== "foreground notification",
-              task_type: "local_bash",
-              uuid: "00000000-0000-4000-8000-000000000b02",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-          if (ending === "foreground notification") {
-            yield* harness.offerAndWait(
-              claudeSdkFrame({
-                type: "system",
-                subtype: "background_tasks_changed",
-                tasks: [{ task_id: taskId, task_type: "local_bash", description: "vp run build" }],
-                uuid: "00000000-0000-4000-8000-000000000b06",
-                session_id: WAKE_NATIVE_SESSION,
-              }),
-            );
-          }
-          // Each row returns one of the launch results Claude Code writes for a backgrounded command.
-          const launchResult = {
-            notification: `Command running in background with ID: ${taskId}. Output is being written to: ${outputFile}.`,
-            "silent notification": `Command did not complete within its 120s timeout and was moved to the background (ID: ${taskId}). Output is being written to: ${outputFile}.`,
-            "foreground notification": `Command was manually backgrounded by user with ID: ${taskId}. Output is being written to: ${outputFile}.`,
-            "query exit": `Command was moved to the background (ID: ${taskId}) after running for 5s. Output is being written to: ${outputFile}.`,
-          }[ending];
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "user",
-              message: {
-                role: "user",
-                content: [{ type: "tool_result", tool_use_id: toolUseId, content: launchResult }],
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000b03",
-              session_id: WAKE_NATIVE_SESSION,
-              ...(ending === "foreground notification"
-                ? {
-                    tool_use_result: {
-                      stdout: "",
-                      stderr: "",
-                      interrupted: false,
-                      backgroundTaskId: taskId,
-                      backgroundedByUser: true,
-                    },
-                  }
-                : {}),
-            }),
-          );
-          yield* harness.offerAndWait(
-            makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000000b04",
-              result: "Build started.",
-            }),
-          );
-          yield* harness.awaitTerminal(1);
-          const commandItems = () =>
-            harness.events.flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-                ? [event.turnItem]
-                : [],
-            );
-          const item = commandItems().at(-1);
-          assert.equal(item?.status, "running");
-          assert.isNull(item?.completedAt);
-          if (!silent) {
-            yield* harness.until(() =>
-              harness.events.some(
-                (event) => event.type === "command_output.delta" && event.chunk === "line 1\n",
-              ),
-            );
-            yield* writeOutput("line 1\nline 2\n");
-            yield* TestClock.adjust("250 millis");
-            yield* harness.until(() =>
-              harness.events.some(
-                (event) => event.type === "command_output.delta" && event.chunk === "line 2\n",
-              ),
-            );
-            const terminalIndex = harness.events.findIndex(
-              (event) => event.type === "turn.terminal",
-            );
-            assert.isAbove(
-              harness.events.findIndex(
-                (event) => event.type === "command_output.delta" && event.chunk === "line 2\n",
-              ),
-              terminalIndex,
-            );
-            assert.isTrue(
-              harness.events.every(
-                (event) => event.type !== "command_output.delta" || event.itemId === item?.id,
-              ),
-            );
-          }
-          yield* writeOutput("line 1\nline 2\nline 3\n");
-          if (ending !== "query exit") {
-            const notification = claudeSdkFrame({
-              type: "system",
-              subtype: "task_notification",
-              task_id: taskId,
-              tool_use_id: toolUseId,
-              status: "completed",
-              output_file: outputFile,
-              summary: "Build finished.",
-              uuid: "00000000-0000-4000-8000-000000000b05",
-              session_id: WAKE_NATIVE_SESSION,
-            });
-            yield* harness.offerAndWait(notification);
-            yield* harness.offerAndWait(notification);
-          } else {
-            yield* harness.runtime.interruptTurn({
-              providerThread: harness.providerThread,
-              providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
-              requestRuntimeRestart: true,
-            });
-          }
-          yield* harness.until(() => commandItems().at(-1)?.status !== "running");
-          const settled = commandItems().at(-1);
-          assert.equal(settled?.status, ending === "query exit" ? "interrupted" : "completed");
-          const expectedOutput = silent ? undefined : "line 1\nline 2\nline 3\n";
-          assert.equal(settled?.output, expectedOutput);
-          assert.lengthOf(commandItems(), 2);
-          assert.equal(
-            harness.events
-              .flatMap((event) => (event.type === "command_output.delta" ? [event.chunk] : []))
-              .join(""),
-            expectedOutput ?? "",
-          );
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
-          ),
-        ),
-    );
-  }
-
-  // Older builds list foreground tasks on the roster, so only a launch result proves a move.
-  for (const result of [
-    "text mention",
-    "unrelated Command line",
-    "structured foreground output",
-  ] as const) {
-    it.effect.skipIf(process.getuid === undefined)(
-      `settles a foreground Bash call whose output mentions its task id (${result})`,
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-foreground-mention-",
-          });
-          const harness = yield* makeWakeHarnessWithOptions({
-            environment: { CLAUDE_CODE_TMPDIR: root },
-            close: Queue.shutdown,
-          });
-          const toolUseId = "toolu_foreground_mention";
-          const taskId = "foreground-mention-task";
-          const tasks = path.join(
-            root,
-            `claude-${process.getuid?.()}`,
-            "project",
-            WAKE_NATIVE_SESSION,
-            "tasks",
-          );
-          yield* fileSystem.makeDirectory(tasks, { recursive: true });
-          yield* fileSystem.writeFileString(path.join(tasks, `${taskId}.output`), "");
-          const stdout = `Waiting on ${taskId}\nCommand running in background with ID: ${taskId}. Output is being written to: log.`;
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make("attempt-claude-foreground-mention"),
-              text: "Show the task log.",
-              attachments: [],
-            }),
-          );
-          for (const frame of [
-            claudeSdkFrame({
-              type: "assistant",
-              message: {
-                model: "claude-sonnet-4-6",
-                id: "msg_foreground_mention",
-                type: "message",
-                role: "assistant",
-                content: [
-                  {
-                    type: "tool_use",
-                    id: toolUseId,
-                    name: "Bash",
-                    input: { command: "cat task.log" },
-                  },
-                ],
-                stop_reason: null,
-                stop_sequence: null,
-                usage: { input_tokens: 1, output_tokens: 1 },
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000c01",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_started",
-              task_id: taskId,
-              tool_use_id: toolUseId,
-              description: "cat task.log",
-              task_type: "local_bash",
-              uuid: "00000000-0000-4000-8000-000000000c02",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-            claudeSdkFrame({
-              type: "system",
-              subtype: "background_tasks_changed",
-              tasks: [{ task_id: taskId, task_type: "local_bash", description: "cat task.log" }],
-              uuid: "00000000-0000-4000-8000-000000000c03",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-            claudeSdkFrame({
-              type: "user",
-              message: {
-                role: "user",
-                content: [
-                  {
-                    type: "tool_result",
-                    tool_use_id: toolUseId,
-                    content:
-                      result === "text mention"
-                        ? `Waiting on ${taskId}`
-                        : result === "unrelated Command line"
-                          ? `Command completed with ID: ${taskId}.`
-                          : stdout,
-                  },
-                ],
-              },
-              parent_tool_use_id: null,
-              uuid: "00000000-0000-4000-8000-000000000c04",
-              session_id: WAKE_NATIVE_SESSION,
-              ...(result === "structured foreground output"
-                ? { tool_use_result: { stdout, stderr: "", interrupted: false } }
-                : {}),
-            }),
-            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c05", result: "Shown." }),
-          ]) {
-            yield* harness.offerAndWait(frame);
-          }
-          yield* harness.awaitTerminal(1);
-          const command = harness.events.findLast(
-            (event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
-          );
-          assert.equal(
-            command?.type === "turn_item.updated" ? command.turnItem.status : null,
-            "completed",
-          );
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              McpProviderSessions.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-            ),
-          ),
-        ),
-    );
-  }
+      ),
+  );
 
   it.effect("lets the native SDK acknowledge Stop before closing its own query", () =>
     Effect.gen(function* () {
@@ -17065,8 +16683,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       yield* harness.offerAndWait(wakeNotification);
       assert.lengthOf(harness.continuationRequests, 0);
-      // The wake turn the notification starts holds the session until its result.
-      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
 
       yield* Queue.offer(harness.sdkMessages, wakeAssistant);
       yield* harness.awaitContinuation(1);
@@ -17955,8 +17572,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(emptyRoster);
         yield* harness.offerAndWait(wakeNotification);
         if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
-        // The wake turn the notification starts holds the session until its result.
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        // Query replacement reads the internal roster, which the exit already cleared.
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
         yield* harness.offerAndWait(wakeTurnInit);
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
@@ -18064,498 +17681,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
-  );
-
-  // A completed background task makes Claude start a wake turn on its own. Until that turn's
-  // result, idle release and auto-settlement must see work, or they close the query under it.
-  it.effect("holds a background wake turn busy from its notification until its result", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let closes = 0;
-        const harness = yield* makeWakeHarnessWithOptions({
-          close: () =>
-            Effect.sync(() => {
-              closes += 1;
-            }),
-        });
-        const now = yield* DateTime.now;
-        const latestRoster = () =>
-          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
-            .pendingBackgroundTasks ?? [];
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-hold-1"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-
-        // The order the CLI sends when a background command finishes while the thread is idle.
-        yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            type: "system",
-            subtype: "background_tasks_changed",
-            tasks: [],
-            uuid: "00000000-0000-4000-8000-000000000121",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.offerAndWait(
-          claudeSdkFrame({
-            type: "system",
-            subtype: "status",
-            status: "requesting",
-            uuid: "00000000-0000-4000-8000-000000000122",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        yield* harness.until(() =>
-          providerThreadRosterEvents(harness.events).some(
-            (event) => event.providerThread.status === "idle",
-          ),
-        );
-        assert.isTrue(backgroundWorkHoldsCompletion(latestRoster()));
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-hold-2"),
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        yield* harness.offerAndWait(wakeAssistant);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
-
-        assert.equal(harness.terminalEvents()[1]?.status, "completed");
-        assert.isTrue(
-          harness.events.some(
-            (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
-          ),
-        );
-        assert.equal(closes, 0);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        yield* harness.until(() => latestRoster().length === 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
-    ),
-  );
-
-  const WAKE_HOLD_LAYERS = Layer.mergeAll(
-    IdAllocator.layer,
-    McpProviderSessions.layer,
-    NodeServices.layer,
-    NodeCrypto.layer,
-  );
-  const emptyBackgroundRoster = (uuid: string) =>
-    claudeSdkFrame({
-      type: "system",
-      subtype: "background_tasks_changed",
-      tasks: [],
-      uuid,
-      session_id: WAKE_NATIVE_SESSION,
-    });
-  const startBackgroundBuildTurn = (
-    harness: Effect.Success<typeof makeWakeHarness>,
-    attemptId: string,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make(attemptId),
-          text: "Run the build in the background.",
-          attachments: [],
-        }),
-      );
-    });
-  const startWakeContinuation = (
-    harness: Effect.Success<typeof makeWakeHarness>,
-    attemptId: string,
-  ) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make(attemptId),
-          text: "Background task completed.",
-          attachments: [],
-          providerTurnOrdinal: 2,
-          messageCreatedBy: "agent",
-          messageCreationSource: "provider",
-        }),
-      );
-    });
-  const latestWakeRoster = (harness: Effect.Success<typeof makeWakeHarness>) =>
-    providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks ?? [];
-
-  // The CLI can drop the task from the roster before it sends the notification.
-  it.effect("holds a wake turn whose empty roster arrives before the notification", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-empty-first-1");
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-
-        yield* harness.offerAndWait(emptyBackgroundRoster("00000000-0000-4000-8000-000000000901"));
-        yield* harness.offerAndWait(wakeNotification);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork, "no hold after the notification");
-        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
-
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.awaitContinuation(1);
-        yield* startWakeContinuation(harness, "attempt-claude-wake-empty-first-2");
-        yield* harness.offerAndWait(wakeAssistant);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        yield* harness.until(() => latestWakeRoster(harness).length === 0);
-      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-    ),
-  );
-
-  it.effect("ends a wake turn hold when no turn starts by the deadline", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-deadline-1");
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-        yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(emptyBackgroundRoster("00000000-0000-4000-8000-000000000902"));
-        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
-
-        yield* TestClock.adjust("1 minute");
-        assert.isTrue(yield* harness.hasPendingBackgroundWork, "hold ended before the deadline");
-        yield* TestClock.adjust("1 minute");
-        yield* harness.until(() => !backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-    ),
-  );
-
-  // Claude runs a notification that lands mid-turn as its own turn after that turn's result.
-  it.effect("holds a task notified during a user turn past that turn's result", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-mid-turn-1");
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* harness.offerAndWait(wakeNotification);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-        // The wake turn's init has not arrived yet.
-        assert.isTrue(
-          yield* harness.hasPendingBackgroundWork,
-          "the user turn's result released it",
-        );
-        yield* harness.until(() => backgroundWorkHoldsCompletion(latestWakeRoster(harness)));
-
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.awaitContinuation(1);
-        yield* startWakeContinuation(harness, "attempt-claude-wake-mid-turn-2");
-        yield* harness.offerAndWait(wakeAssistant);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        yield* harness.until(() => latestWakeRoster(harness).length === 0);
-      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-    ),
-  );
-
-  // A task notified during a wake turn gets a wake turn of its own after that turn's result.
-  it.effect("keeps a task notified during a wake turn held for its own wake turn", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const secondStarted = claudeSdkFrame({
-          type: "system",
-          subtype: "task_started",
-          task_id: "review-task-2",
-          tool_use_id: "toolu_review_2",
-          description: "second",
-          is_backgrounded: true,
-          task_type: "local_bash",
-          uuid: "00000000-0000-4000-8000-000000000911",
-          session_id: WAKE_NATIVE_SESSION,
-        });
-        const secondNotification = claudeSdkFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: "review-task-2",
-          tool_use_id: "toolu_review_2",
-          status: "completed",
-          output_file: "/tmp/claude-replay/tasks/review-task-2.output",
-          summary: "second done",
-          uuid: "00000000-0000-4000-8000-000000000912",
-          session_id: WAKE_NATIVE_SESSION,
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-second-1"),
-            text: "Run two builds in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, secondStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-        yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.offerAndWait(secondNotification);
-        yield* harness.offerAndWait(wakeAssistant);
-        yield* harness.offerAndWait(wakeResult);
-        // The first result ends only the hold its turn started for. Drain the first wake run.
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-second-2"),
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        yield* harness.awaitTerminal(2);
-        // The CLI now opens a second wake turn for review-task-2. Its init has not arrived.
-        assert.isTrue(
-          yield* harness.hasPendingBackgroundWork,
-          "second task released before its own wake turn",
-        );
-      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-    ),
-  );
-
-  // The CLI stamps run_id on task_* frames and the matching origin.runId on the wake turn's
-  // result. Older CLIs send neither.
-  const WAKE_RUN_ID = "run-wake-1";
-  const SECOND_WAKE_TASK_ID = "review2-task-b";
-  const SECOND_WAKE_RUN_ID = "run-wake-2";
-  const withRunId = (frame: SDKMessage, runId: string | undefined) =>
-    runId === undefined ? frame : claudeSdkFrame({ ...frame, run_id: runId });
-  const wakeResultFor = (runId: string | undefined, uuid: string) =>
-    claudeSdkFrame({
-      ...makeResultFrame({ uuid, result: WAKE_RESULT_TEXT }),
-      origin:
-        runId === undefined ? { kind: "task-notification" } : { kind: "task-notification", runId },
-    });
-  const secondWakeTaskStarted = claudeSdkFrame({
-    type: "system",
-    subtype: "task_started",
-    task_id: SECOND_WAKE_TASK_ID,
-    tool_use_id: "toolu_review2_b",
-    description: "second",
-    is_backgrounded: true,
-    task_type: "local_bash",
-    uuid: "00000000-0000-4000-8000-000000000a01",
-    session_id: WAKE_NATIVE_SESSION,
-  });
-  const secondWakeNotification = claudeSdkFrame({
-    type: "system",
-    subtype: "task_notification",
-    task_id: SECOND_WAKE_TASK_ID,
-    tool_use_id: "toolu_review2_b",
-    status: "completed",
-    output_file: `/tmp/claude-replay/tasks/${SECOND_WAKE_TASK_ID}.output`,
-    summary: "second done",
-    uuid: "00000000-0000-4000-8000-000000000a02",
-    session_id: WAKE_NATIVE_SESSION,
-  });
-  const heldWakeTaskIds = (harness: Effect.Success<typeof makeWakeHarness>) =>
-    latestWakeRoster(harness)
-      .map((task) => task.taskId)
-      .toSorted();
-
-  // Two tasks notified while idle get one wake turn each. With run ids, the first wake turn's
-  // result ends only its own task's hold.
-  it.effect.each([true, false])(
-    "ends only the hold its wake turn answers when two idle notifications share a turn start (runIds=%s)",
-    (runIds) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-runid-1");
-          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-          yield* Queue.offer(harness.sdkMessages, secondWakeTaskStarted);
-          yield* Queue.offer(harness.sdkMessages, turnOneResult);
-          yield* harness.awaitTerminal(1);
-          // Both finish while idle, before the first wake turn starts.
-          yield* harness.offerAndWait(
-            withRunId(wakeNotification, runIds ? WAKE_RUN_ID : undefined),
-          );
-          yield* harness.offerAndWait(
-            withRunId(secondWakeNotification, runIds ? SECOND_WAKE_RUN_ID : undefined),
-          );
-          yield* harness.offerAndWait(wakeTurnInit);
-          yield* harness.awaitContinuation(1);
-          yield* startWakeContinuation(harness, "attempt-claude-wake-runid-2");
-          yield* harness.offerAndWait(wakeAssistant);
-          yield* harness.offerAndWait(
-            wakeResultFor(runIds ? WAKE_RUN_ID : undefined, "00000000-0000-4000-8000-000000000a03"),
-          );
-          yield* harness.awaitTerminal(2);
-          if (!runIds) {
-            // Without run ids, the result cannot name its notification and ends every started hold.
-            yield* harness.until(() => latestWakeRoster(harness).length === 0);
-            assert.isFalse(yield* harness.hasPendingBackgroundWork);
-            return;
-          }
-          // The CLI opens the second task's wake turn next. Its init has not arrived.
-          assert.isTrue(
-            yield* harness.hasPendingBackgroundWork,
-            "second task released by the first wake turn's result",
-          );
-          yield* harness.until(() => heldWakeTaskIds(harness).join() === SECOND_WAKE_TASK_ID);
-          // The second hold waits for a turn start again, under a fresh deadline.
-          yield* TestClock.adjust("2 minutes");
-          yield* harness.until(() => latestWakeRoster(harness).length === 0);
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-      ),
-  );
-
-  // A user turn can open before the wake turn of a task notified while idle.
-  it.effect.each([true, false])(
-    "keeps an idle hold past a user turn that starts before its wake turn (runIds=%s)",
-    (runIds) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          const now = yield* DateTime.now;
-          yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-user-first-1");
-          yield* Queue.offer(
-            harness.sdkMessages,
-            withRunId(wakeTaskStarted, runIds ? WAKE_RUN_ID : undefined),
-          );
-          yield* Queue.offer(harness.sdkMessages, turnOneResult);
-          yield* harness.awaitTerminal(1);
-          yield* harness.offerAndWait(
-            withRunId(wakeNotification, runIds ? WAKE_RUN_ID : undefined),
-          );
-          yield* harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-claude-wake-user-first-2"),
-              text: "How is the build going?",
-              attachments: [],
-              providerTurnOrdinal: 2,
-            }),
-          );
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "system",
-              subtype: "init",
-              uuid: "00000000-0000-4000-8000-000000000a11",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              ...makeResultFrame({
-                uuid: "00000000-0000-4000-8000-000000000a12",
-                result: "Still building.",
-              }),
-              origin: { kind: "human" },
-            }),
-          );
-          yield* harness.awaitTerminal(2);
-          if (!runIds) {
-            // Without run ids, the first root result after a turn start ends the hold.
-            yield* harness.until(() => latestWakeRoster(harness).length === 0);
-            return;
-          }
-          assert.isTrue(
-            yield* harness.hasPendingBackgroundWork,
-            "the user turn's result released the hold",
-          );
-          assert.deepEqual(heldWakeTaskIds(harness), [WAKE_TASK_ID]);
-          // The hold re-arms its deadline for the wake turn's own start.
-          yield* TestClock.adjust("2 minutes");
-          yield* harness.until(() => latestWakeRoster(harness).length === 0);
-        }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-      ),
-  );
-
-  // A held task whose wake turn has started is running work, so a model switch must not kill it.
-  it.effect("refuses a model switch while a held task's wake turn runs", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        yield* startBackgroundBuildTurn(harness, "attempt-claude-wake-switch-1");
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
-        yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* harness.awaitContinuation(1);
-        const refused = yield* harness.runtime
-          .startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-claude-wake-switch-2"),
-              text: "Switch model.",
-              attachments: [],
-              providerTurnOrdinal: 2,
-              modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION,
-            }),
-          )
-          .pipe(Effect.flip);
-        assert.equal(
-          makeProviderFailure({ cause: refused, class: "provider_error" }).message,
-          new ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError().message,
-        );
-      }).pipe(Effect.provide(WAKE_HOLD_LAYERS)),
-    ),
   );
 
   it.effect.each([true, false])(

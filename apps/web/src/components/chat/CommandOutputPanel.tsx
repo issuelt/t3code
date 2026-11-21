@@ -1,10 +1,6 @@
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
-import {
-  TERMINAL_PALETTES,
-  terminalOutputPlainText,
-  terminalOutputSpans,
-} from "@t3tools/shared/terminalOutput";
+import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
 import { T, Var } from "gt-react";
 import { useLayoutEffect, useRef } from "react";
 
@@ -13,7 +9,6 @@ import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { useInitialOutputReady, type TurnItemSource } from "./timelineRowContext";
-import { WorkLogOutputTail } from "./WorkLogOutputTail";
 
 const FOLLOW_SLACK_PX = 8;
 
@@ -34,7 +29,6 @@ export function CommandOutputPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
-  readonly mode?: "full" | "tail";
   readonly source?: TurnItemSource["commandOutput"] | undefined;
 }) {
   const input = { threadId: props.threadId, itemId: props.itemId };
@@ -76,14 +70,6 @@ export function CommandOutputPanel(props: {
       <div className="text-muted-foreground italic">
         <T>No output.</T>
       </div>
-    );
-  }
-  if (props.mode === "tail") {
-    return (
-      <WorkLogOutputTail
-        lines={terminalOutputPlainText(text).replace(/\n$/, "").split("\n")}
-        failed={false}
-      />
     );
   }
   // Parse after all hooks to preserve the text/theme compiler cache.

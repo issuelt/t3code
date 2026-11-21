@@ -41,8 +41,7 @@ export function assertClaudeBackgroundTaskInterruptOutput(
     projection.turnItems.flatMap((item) =>
       item.type === "command_execution" ? [item.status] : [],
     ),
-    // A backgrounded command's row stays running until its task ends; the interrupt ends it.
-    ["interrupted", "interrupted"],
-    "the interrupt stopped both the background command and the foreground command",
+    ["completed", "interrupted"],
+    "the background launch completed; the foreground command was interrupted",
   );
 }

@@ -285,8 +285,6 @@ export function derivePendingBackgroundWork(input: {
   }
 
   const byTaskId = new Map<string, PendingBackgroundWorkTask>();
-  const claimedItemIds = new Set<string>();
-  const claimedNativeItemIds = new Set<string>();
 
   const providerThreads =
     input.activeProviderThreadId === undefined || input.activeProviderThreadId === null
@@ -298,8 +296,6 @@ export function derivePendingBackgroundWork(input: {
       if (task.taskId.length === 0 || byTaskId.has(task.taskId)) {
         continue;
       }
-      if (task.itemId !== undefined) claimedItemIds.add(task.itemId);
-      if (task.nativeItemId !== undefined) claimedNativeItemIds.add(task.nativeItemId);
       const { description: rawDescription, ...named } = task;
       const description = rawDescription?.trim();
       byTaskId.set(task.taskId, {
@@ -314,12 +310,7 @@ export function derivePendingBackgroundWork(input: {
 
   for (const item of pendingBackgroundTurnItems(input)) {
     const taskId = nativeTaskIdFromTurnItem(item);
-    const nativeItemId = item.nativeItemRef?.nativeId;
-    if (
-      byTaskId.has(taskId) ||
-      claimedItemIds.has(item.id) ||
-      (nativeItemId != null && claimedNativeItemIds.has(nativeItemId))
-    ) {
+    if (byTaskId.has(taskId)) {
       continue;
     }
 
