@@ -27,7 +27,11 @@ const titlesIn =
 const japanese: MFunctionType = (encodedMsg, options) => {
   const english = mFallback(encodedMsg, options);
   return (
-    english === "Thread no longer available" ? "スレッドは利用できなくなりました" : english
+    english === "Thread no longer available"
+      ? "スレッドは利用できなくなりました"
+      : english === "Thread"
+        ? "スレッド"
+        : english
   ) as typeof english;
 };
 
@@ -158,7 +162,7 @@ describe("thread links", () => {
       "[Old](t3-thread://v1/t1)",
     );
     expect(relabelThreadLinks("See <t3-thread://v1/gone>", local, () => undefined, japanese)).toBe(
-      "See スレッドは利用できなくなりました",
+      "See [スレッド](t3-thread://v1/gone)",
     );
   });
 

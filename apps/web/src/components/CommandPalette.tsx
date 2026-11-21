@@ -537,8 +537,8 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const activeThreadIsHome =
-    activeThread !== null && activeThreadServerConfig?.settings.home.threadId === activeThread.id;
-  const activeThreadIsHomeFolder = activeThread !== null && isHomeThreadId(activeThread.id);
+    !!activeThread && activeThreadServerConfig?.settings.home.threadId === activeThread.id;
+  const activeThreadIsHomeFolder = !!activeThread && isHomeThreadId(activeThread.id);
   const canContinueActiveThreadElsewhere = useEnvironmentCanContinueElsewhere(
     activeThread?.environmentId ?? null,
   );

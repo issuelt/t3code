@@ -82,7 +82,7 @@ function BackgroundWorkTask(
           <>
             {backgroundWorkHoldsCompletion([task]) ? (
               <Badge variant="outline" size="sm">
-                <T>waiting</T>
+                {gt("Waiting", { $context: "status of background work" })}
               </Badge>
             ) : null}
             {startedAt !== null ? (

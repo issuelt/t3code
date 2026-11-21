@@ -81,6 +81,12 @@ it("drops the removed CI tab from saved order and visibility preferences", () =>
     "usage",
     "threads",
     "pullRequests",
+    "issues",
   ]);
-  expect(enabledNavigationTabs(undefined, ["ci"])).toEqual(["threads", "pullRequests", "usage"]);
+  expect(enabledNavigationTabs(undefined, ["ci"])).toEqual([
+    "threads",
+    "pullRequests",
+    "issues",
+    "usage",
+  ]);
 });

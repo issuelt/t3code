@@ -417,7 +417,7 @@ it.each([true, false])(
       new Set(["apple-speech"]),
     );
     expect(mocks.statusRequests).toEqual([]);
-    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("Dictated", expect.anything());
   },
 );
 
