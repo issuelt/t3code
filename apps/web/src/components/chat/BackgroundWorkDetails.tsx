@@ -8,6 +8,8 @@ import type {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { T } from "gt-react";
 import { useState } from "react";
 
 import { useNowSecond } from "~/hooks/useNowSecond";
@@ -77,9 +79,9 @@ function BackgroundWorkTask(
         label={<span className="text-foreground">{title}</span>}
         trailing={
           <>
-            {task.awaited ? (
+            {backgroundWorkHoldsCompletion([task]) ? (
               <Badge variant="outline" size="sm">
-                waiting
+                <T>waiting</T>
               </Badge>
             ) : null}
             {startedAt !== null ? (
@@ -163,10 +165,14 @@ export function BackgroundWorkDetails(props: BackgroundWorkDetailsProps) {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<InlineButton />}>Details</DialogTrigger>
+      <DialogTrigger render={<InlineButton />}>
+        <T>Details</T>
+      </DialogTrigger>
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Background work</DialogTitle>
+          <DialogTitle>
+            <T>Background work</T>
+          </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           {open ? (

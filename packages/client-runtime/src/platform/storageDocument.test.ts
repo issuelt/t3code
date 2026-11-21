@@ -9,7 +9,6 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
-  DpopConnectionCredential,
   RelayConnectionRegistration,
   SshConnectionProfile,
   SshConnectionRegistration,
@@ -28,9 +27,7 @@ import {
 import {
   ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
-  catalogCredential,
   catalogRoutes,
-  putCatalogCredential,
   setRoutesInCatalog,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
@@ -42,19 +39,6 @@ const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCat
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const decodeCatalogDocument = Schema.decodeUnknownSync(ConnectionCatalogDocument);
-
-const encodeCatalogDocument = Schema.encodeSync(ConnectionCatalogDocument);
-// Builds before DPoP credentials decode `credentials` as bearer only and ignore unknown keys.
-const { dpopCredentials: _dpopCredentials, ...legacyCatalogFields } =
-  ConnectionCatalogDocument.fields;
-const decodeLegacyCatalogDocument = Schema.decodeSync(
-  Schema.Struct({
-    ...legacyCatalogFields,
-    credentials: Schema.Array(
-      Schema.Struct({ connectionId: Schema.String, credential: BearerConnectionCredential }),
-    ),
-  }),
-);
 
 const RELAY_TARGET = new RelayConnectionTarget({
   environmentId: ENVIRONMENT_ID,
@@ -74,11 +58,6 @@ const BEARER_PROFILE = new BearerConnectionProfile({
 });
 const BEARER_CREDENTIAL = new BearerConnectionCredential({
   token: "bearer-token",
-});
-const DPOP_CREDENTIAL = new DpopConnectionCredential({
-  accessToken: "direct-dpop-token",
-  expiresAtEpochMs: 3_600_000,
-  dpopThumbprint: "thumbprint",
 });
 const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
   environmentId: ENVIRONMENT_ID,
@@ -318,37 +297,6 @@ describe("ConnectionCatalogDocument", () => {
     });
 
     expect(decoded.disabledEnvironmentIds).toEqual([]);
-  });
-
-  it("reads the bearer credential of a catalog saved before DPoP credentials", () => {
-    const decoded = decodeCatalogDocument({
-      schemaVersion: 1,
-      targets: [{ ...BEARER_TARGET }],
-      profiles: [{ ...BEARER_PROFILE }],
-      credentials: [{ connectionId: "bearer-1", credential: { ...BEARER_CREDENTIAL } }],
-      remoteDpopTokens: [],
-    });
-
-    expect(catalogCredential(decoded, "bearer-1")).toEqual(BEARER_CREDENTIAL);
-  });
-
-  it("keeps a DPoP credential where a build that predates it still decodes the catalog", () => {
-    const registered = registerConnectionInCatalog(
-      EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new BearerConnectionRegistration({
-        target: BEARER_TARGET,
-        profile: BEARER_PROFILE,
-        credential: BEARER_CREDENTIAL,
-      }),
-    );
-    const converted = putCatalogCredential(registered, "bearer-1", DPOP_CREDENTIAL);
-    const encoded = encodeCatalogDocument(converted);
-
-    expect(() => decodeLegacyCatalogDocument(encoded)).not.toThrow();
-    expect(catalogCredential(decodeCatalogDocument(encoded), "bearer-1")).toEqual(DPOP_CREDENTIAL);
-    expect(
-      catalogCredential(removeConnectionFromCatalog(converted, ENVIRONMENT_ID), "bearer-1"),
-    ).toBeUndefined();
   });
 
   it("switches a saved environment off and back on without touching its records", () => {

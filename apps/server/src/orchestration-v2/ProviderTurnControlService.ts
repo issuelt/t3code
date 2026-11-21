@@ -1,5 +1,5 @@
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { labelAgentMessage } from "@t3tools/provider-core/server/agentMessageLabel";
+import { withSenderNoteFor } from "@t3tools/provider-core/server/agentMessageLabel";
 import {
   MessageId,
   type ModelSelection,
@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -85,6 +86,16 @@ export interface ProviderTurnControlServiceV2Shape {
     | ProviderSessionManager.ProviderSessionManagerV2Error
     | ProviderAdapter.ProviderAdapterV2Error
   >;
+  /** Best effort: a provider thread that is no longer live picks the title up when its next turn starts. */
+  readonly applyThreadTitle: (input: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  }) => Effect.Effect<
+    void,
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -104,6 +115,7 @@ export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
   | EventSink.EventSinkV2
+  | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
@@ -112,6 +124,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -250,6 +263,18 @@ export const layer: Layer.Layer<
           });
         },
       ),
+      applyThreadTitle: Effect.fn("ProviderTurnControlService.applyThreadTitle")(function* (input) {
+        const { thread, providerThreads } = yield* projections.getThreadRecords(input.threadId, [
+          "providerThreads",
+        ]);
+        const providerThread = providerThreads.find(
+          (candidate) => candidate.id === thread.activeProviderThreadId,
+        );
+        if (!providerThread?.providerSessionId) return;
+        const session = yield* sessions.get(providerThread.providerSessionId);
+        if (Option.isNone(session) || session.value.applyThreadTitle === undefined) return;
+        yield* session.value.applyThreadTitle({ providerThread, title: input.title });
+      }),
       interrupt: Effect.fn("ProviderTurnControlService.interrupt")(
         function* (input) {
           const loaded = yield* load({ ...input, operation: "interrupt" });
@@ -423,6 +448,10 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.threadId,
+          );
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -432,31 +461,17 @@ export const layer: Layer.Layer<
               ...(input.modelSelection === undefined
                 ? {}
                 : { modelSelection: input.modelSelection }),
+              ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text: labelAgentMessage({
-                  text: projectComposerContextForProvider({
+                text: withSenderNoteFor(
+                  message,
+                  projectComposerContextForProvider({
                     text: message.text,
                     records: message.context?.records ?? [],
                   }),
-                  attachments: message.attachments,
-                  senderThreadId: message.senderThreadId,
-                  senderTitle:
-                    message.senderThreadId === undefined
-                      ? undefined
-                      : // A sender in another environment has no local thread; the label then names its id.
-                        yield* projections.getThread(message.senderThreadId).pipe(
-                          Effect.map((thread) => thread.title),
-                          Effect.orElseSucceed(() => undefined),
-                        ),
-                  recipientThreadId: input.threadId,
-                  recipientParentThreadId:
-                    message.senderThreadId === undefined
-                      ? null
-                      : yield* projections
-                          .getThread(input.threadId)
-                          .pipe(Effect.map((thread) => thread.lineage.parentThreadId)),
-                }),
+                  input.threadId,
+                ),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

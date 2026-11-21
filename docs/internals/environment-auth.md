@@ -27,36 +27,23 @@ model. DPoP binds a token to a client's proof key; an invalid proof must fail
 rather than fall back to bearer authentication. The OAuth token-exchange
 vocabulary gives these grants a familiar meaning.
 
-A DPoP session lasts an hour. A direct client renews it at `/oauth/token` by
-presenting the access token with a proof from the same key. Only subjects that a
-direct pairing creates may renew there, which today means `one-time-token`
-(`DIRECT_PAIRING_SUBJECTS` in `SessionStore.ts`). The rule is an allowlist.
-A bootstrap exchange issues a DPoP session only to such a subject or to a grant
-bound to the client's key, as T3 Connect's are. Any other grant, such as the
-`t3 serve` startup link, gets a bearer with the normal lifetime even when the
-client sent a proof, because a one-hour session it cannot renew would end the
-link after an hour.
-T3 Connect, dev-token, and desktop sessions renew through the authority that
-issued them, so unlinking or rotating that authority still ends them. The server
-accepts a token up to `DPOP_RENEWAL_WINDOW` (30 days) past its expiry, so a link
-in use never expires and an idle one pairs again. Renewal copies the subject,
-never widens scopes, and stops when the managed policy disallows remote clients.
-The rows that share a key and a subject form one family. Revoking any row revokes
-the whole family. A device that pairs again with the same key starts a new chain,
-and the pairing revokes the older rows at the new row's issue time. The family
-check refuses only revocations after a row was issued, so the new chain renews. A row revoked alone would leave its predecessors able to
-renew. Sharing & access lists a family by its newest row while that row's
-`expires_at` plus the renewal window is still in the future, because the device
-can renew until then. A policy rollout revokes disallowed subjects in SQL with no
-expiry filter for the same reason.
+A device that exchanges a plain pairing link with a DPoP proof gets a one-hour
+token on a session that renews: presenting the token, even expired, with a
+proof from the same key moves the session's expiry 30 days out and returns a
+fresh token for the same session. The session itself must still be unexpired
+and unrevoked, so a device idle past the window pairs again. Renewal stays in place rather than issuing a
+successor, so live sockets keep their session, Sharing & access shows one row
+per device for its whole renewal window, and one revoke ends it. T3 Connect,
+CLI and desktop sessions never renew, so unlinking Connect or rotating
+their credential still cuts a device off.
 
-A bearer session from a pairing link converts to DPoP. The conversion revokes the
-bearer in the same transaction and records it as the successor's predecessor.
-If the response is lost, the same bearer may convert again with the same proof
-key while a successor it created is unrevoked. Any other key, a bearer revoked
-for another reason, and a revoked family stay refused. Expired bearers cannot
-convert. `t3 auth session issue` refuses the pairing subjects, so a CLI bearer
-cannot convert.
+A [peer link](remote.md#peer-links)'s session renews on use instead: its
+bearer token is never reissued, so the session row alone holds its deadline and
+the token's own expiry is ignored. Authenticating a call from it moves the
+row 30 days out, at most once a day so a busy link does not write on every
+call. Only an unexpired, unrevoked row moves, so an idle link still ends after
+30 days and a revoke is final. Other MCP clients keep the fixed 30 days their
+token carries.
 
 ### Guest links are not sessions
 
@@ -90,19 +77,36 @@ The result is an ordinary session with subject `mcp-client`. A read-only
 grant holds `orchestration:read` alone. On `/mcp` it passes only tools
 declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
 where every tool must declare who may call it to compile. Any other grant adds
-`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
+`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions, and for a
+[peer link](remote.md#peer-links)'s session alone the thread routes in
+[linkThreadHttp](../../apps/server/src/peer/linkThreadHttp.ts), which only read, and the
+client pairing described below. Every other HTTP and WebSocket
 path rejects that subject, because the RPC surface would let the agent act
 above its ceiling. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see
 [threadAccess](../../apps/server/src/mcp/threadAccess.ts).
 
+These clients have no calling thread, so `/mcp` does not offer them tools that
+act as one, such as `request_secret` or `delegate_task`. Hiding is only
+discovery: the handlers still refuse such a call with
+`thread_credential_required`. A secret card belongs to a thread's run, so an
+outside agent that needs a secret starts a thread and lets that agent ask.
+
+A full-access [peer link](../../apps/server/src/peer/PeerClientPairing.ts) may
+mint a one-time pairing for a client of the environment that holds it. Its
+agents already run as this machine's user and could run `t3 auth pairing create`,
+so this adds no authority; a narrower link would gain some, so it is refused
+here, on the linked side, whatever the linking side sent. The pairing carries
+the client's scopes on the linking environment intersected with a normal
+pairing's. A person starts it: the linking environment exposes it as a WebSocket
+RPC behind `access:write`, and the linked side as an HTTP route that accepts only
+a link's session. It is not an MCP tool, because a tool is reachable by whatever
+holds a thread credential, and hiding one from tool listings is only discovery.
+
 Issuer and resource URLs come from the request's Host and
 `X-Forwarded-Proto`, so one server answers over loopback, Tailscale Serve and a
 T3 Connect tunnel. A proxy that rewrites Host or drops the protocol header
-breaks sign-in. A DPoP proof may also name the URL rebuilt from the first
-`X-Forwarded-Host`, so a proxy that rewrites Host, as nginx does by default, keeps
-direct DPoP links working. Trusting that header is safe there because `ath` binds
-the proof to a token this server signed and `jti` still blocks replay.
+breaks sign-in.
 
 Bearer and DPoP clients obtain short-lived WebSocket tickets through authenticated
 HTTP so long-lived tokens stay out of socket URLs. A ticket names the route it

@@ -5,8 +5,11 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
-export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
+import { m } from "../i18n/messages";
+
+export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = msg("Invalid keybinding.");
 
 /** Shortcut failures after the action settings commit must not invite retrying the saved edit. */
 export const PROJECT_SCRIPT_KEYBINDING_SAVE_WARNING = {
@@ -32,7 +35,7 @@ export function decodeProjectScriptKeybindingRule(input: {
   if (!normalizedKey) return null;
 
   if (input.command === null) {
-    throw new Error(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE);
+    throw new Error(m(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE));
   }
 
   const decoded = decodeKeybindingRule({
@@ -40,7 +43,7 @@ export function decodeProjectScriptKeybindingRule(input: {
     command: input.command,
   });
   if (decoded._tag === "None") {
-    throw new Error(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE);
+    throw new Error(m(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE));
   }
   return decoded.value;
 }

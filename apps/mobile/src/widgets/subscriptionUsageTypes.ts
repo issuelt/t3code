@@ -25,20 +25,4 @@ export interface AndroidSubscriptionUsageSnapshot {
   emptyMessage: string;
 }
 
-export interface SubscriptionUsageSnapshot {
-  theme?: WidgetTheme;
-  androidWidgetUrl?: string;
-  android?: {
-    defaults: AndroidSubscriptionUsageSnapshot;
-    widgets: Record<string, AndroidSubscriptionUsageSnapshot>;
-  };
-  url?: string;
-  checkedAt: number;
-  providers: Array<{
-    name: string;
-    detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
-    expiresAt: number;
-    totalWindows: number;
-  }>;
-}
+export type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";

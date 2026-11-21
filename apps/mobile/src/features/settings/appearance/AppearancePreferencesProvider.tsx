@@ -7,7 +7,7 @@ import {
   type AndroidNavigationStyle,
 } from "../../../lib/androidNavigationStyle";
 
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import { useMaterial3Theme, type Material3Theme } from "@pchmn/expo-material3-theme";
@@ -20,7 +20,8 @@ import {
 } from "../../../lib/appearancePreferences";
 import { BRAND_ACCENT_SOURCE, resolveMaterialAccentVariables } from "../../../lib/materialAccent";
 import { appAtomRegistry } from "../../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../../state/preferences";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
   isSystemColorsAvailable,
@@ -213,7 +214,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     fallbackSourceColor: BRAND_ACCENT_SOURCE,
   });
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -258,11 +259,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   }, [materialTheme]);
 
   const updatePreferences = (patch: Partial<Preferences>) => {
-    startTransition(() => savePreferences(patch));
+    startTransition(() => {
+      void savePreferences(patch);
+    });
   };
 
   const updateThemePreferences = (patch: Partial<Preferences>) => {
-    savePreferences(patch);
+    void savePreferences(patch);
   };
 
   const setThemeIdForAppearance = (appearance: MobileThemeAppearance, value: MobileThemeId) => {

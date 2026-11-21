@@ -8,10 +8,13 @@ import {
   type FleetProjectUpdateInput,
   type FleetThreadSearchInput,
   OrchestratorMcpFailure,
+  type Project as ProjectRecord,
   ProjectId,
   type SourceControlCloneRepositoryInput,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +22,7 @@ import * as Option from "effect/Option";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Project from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Repositories from "../sourceControl/SourceControlRepositoryService.ts";
 import { newCommandId, unavailable } from "./threadAccess.ts";
 
@@ -35,6 +39,30 @@ export function projectFailure(error: Project.ProjectServiceError) {
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
 
+/** Settings, not the project record, hold the default model and actions that new threads use. */
+export const withSavedProjectSettings = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) => service.getSettings),
+    Effect.mapError(unavailable),
+  );
+  return (project: ProjectRecord) => {
+    const resolved = resolveProjectSettings(settings, project.id, project);
+    return {
+      ...project,
+      defaultModelSelection:
+        resolved.sources.defaultModelSelection === "project"
+          ? resolved.settings.defaultModelSelection
+          : null,
+      scripts: resolveProjectScripts(settings, project),
+    };
+  };
+});
+
+// The project is already committed, so a failed Settings read must not report the create as failed.
+const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
+  Effect.orElseSucceed(() => (project: ProjectRecord) => project),
+);
+
 export const createProject = Effect.fn("mcp.createProject")(function* ({
   workspaceRoot,
   ...input
@@ -44,6 +72,7 @@ export const createProject = Effect.fn("mcp.createProject")(function* ({
     // Only updates record model defaults; reject defaults that creation would silently drop.
     if (
       input.scripts !== undefined ||
+      input.trackedFolders !== undefined ||
       input.createWorkspaceRootIfMissing !== undefined ||
       input.defaultModelSelection !== undefined
     )
@@ -71,23 +100,31 @@ export const createProject = Effect.fn("mcp.createProject")(function* ({
         ),
       );
     return {
-      ...project,
+      ...(yield* withSavedProjectSettingsAfterCreate)(project),
       ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
     };
   }
+  if (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        "Creating a project does not set its default model; set defaultModelSelection afterwards with t3_project_update.",
+    });
   const commandId = yield* newCommandId();
-  return yield* projects
+  const created = yield* projects
     .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
     .pipe(Effect.mapError(projectFailure));
+  return (yield* withSavedProjectSettingsAfterCreate)(created);
 });
 
 export const updateProject = Effect.fn("mcp.updateProject")(function* (
   input: FleetProjectUpdateInput,
 ) {
   const projects = yield* Project.ProjectService;
-  return yield* projects
+  const updated = yield* projects
     .update({ ...input, commandId: yield* newCommandId() })
     .pipe(Effect.mapError(projectFailure));
+  return (yield* withSavedProjectSettings)(updated);
 });
 
 export const cloneProject = Effect.fn("mcp.cloneProject")(function* (

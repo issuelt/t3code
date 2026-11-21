@@ -114,3 +114,35 @@ it("opens full command details for short labels and keeps pending tasks current"
     .toHaveAttribute("aria-expanded", "false");
   await expect.element(page.getByText("Command output tail")).not.toBeInTheDocument();
 });
+
+it("gives a subagent the same status as the background work line", async () => {
+  await using screen = await render(
+    <ThreadNow
+      attention={null}
+      syncPhase={null}
+      goal={null}
+      work={backgroundWorkNowItem({
+        environmentId: EnvironmentId.make("test"),
+        threadId: ThreadId.make("thread"),
+        tasks: [
+          {
+            taskId: "subagent-task",
+            kind: "subagent",
+            description: "Review refactor diffs",
+            childThreadId: ThreadId.make("child"),
+          },
+        ],
+        turnItems: [],
+        stopDisabled: false,
+        stopping: false,
+        onStop: async () => undefined,
+        onOpenThread: () => undefined,
+      })}
+    />,
+  );
+  await expect.element(page.getByText("Waiting · Review refactor diffs")).toBeVisible();
+  await screen.getByRole("button", { name: "Details", exact: true }).click();
+  await expect
+    .element(page.getByRole("dialog").getByText("Waiting", { exact: true }))
+    .toBeVisible();
+});

@@ -24,19 +24,28 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  findPosixLauncher,
+  readPosixLauncherTarget,
+  generatedWindowsShimTarget,
   launcherOwnsVersionsDir,
-  pinnedRuntimeCommand,
   isUnpublishedRelease,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  PinnedRuntimePreflightBlockedError,
   pinnedRuntimeVersionsDir,
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
   recordedPinnedRuntimeLaunchers,
   resolveLauncherPath,
   windowsShimTarget,
+  writePosixLauncher,
 } from "../cloud/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  decodeServiceUnit,
+  isExactServiceVersion,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "../cloud/serviceProtocol.ts";
+import { runStagedServicePreflight } from "../cloud/servicePreflight.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -47,6 +56,7 @@ import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return this.reason;
@@ -164,7 +174,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     );
 
   if (platform === "win32") {
-    const shimPath = yield* findWindowsShim(input.launchedAs);
+    const shimPath = yield* findWindowsShim(input.launchedAs, versionsDir);
     if (shimPath === undefined) return Option.none<string>();
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
@@ -180,63 +190,78 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.some(shimPath);
   }
 
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return Option.none<string>();
-  // Fully resolved, through chained links and a symlinked T3 home alike. A dangling link keeps
-  // its first hop, since the runtime it names may already be pruned.
-  const launchedAs = input.launchedAs;
-  const resolvedTarget = yield* fs
-    .realPath(launchedAs)
-    .pipe(Effect.orElseSucceed(() => path.resolve(path.dirname(launchedAs), linkTarget.value)));
-  const realVersionsDir = yield* fs
-    .realPath(versionsDir)
-    .pipe(Effect.orElseSucceed(() => versionsDir));
-  if (
-    !ownsTarget(resolvedTarget) &&
-    !launcherOwnsVersionsDir(path, realVersionsDir, resolvedTarget)
-  ) {
-    return Option.none<string>();
-  }
-  yield* remember(input.launchedAs);
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
+  const launcher = yield* findPosixLauncher({ launchedAs: input.launchedAs, versionsDir });
+  if (launcher === undefined) return Option.none<string>();
+  yield* remember(launcher);
+  yield* writePosixLauncher({
+    launcher,
+    executable: input.targetEntryPath,
+    exclusive: false,
+  }).pipe(
     Effect.mapError(
-      () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
+      (cause) =>
+        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${launcher}.`, cause }),
     ),
   );
-  return Option.some(input.launchedAs);
+  return Option.some(launcher);
 });
 
 /**
  * An update started from a versioned binary, or by the service itself, has no launcher of its
- * own, so each recorded symlink launcher still in this home's versions tree moves as well.
+ * own, so each recorded launcher still running a runtime in this home's versions tree moves as
+ * well: a legacy symlink, or the script {@link writePosixLauncher} writes.
  */
 export const repointRecordedLaunchers = Effect.fn("cli.update.repoint_recorded_launchers")(
   function* (input: { readonly baseDir: string; readonly targetEntryPath: string }) {
     if ((yield* HostProcess.Platform) === "win32") return [];
     const fs = yield* FileSystem.FileSystem;
-    const realTarget = yield* fs.realPath(input.targetEntryPath).pipe(Effect.option);
+    const path = yield* Path.Path;
+    const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+    const realPath = (file: string) =>
+      fs.realPath(file).pipe(Effect.orElseSucceed(() => undefined));
+    const realVersionsDir = (yield* realPath(versionsDir)) ?? versionsDir;
+    const inVersions = (candidate: string) =>
+      launcherOwnsVersionsDir(path, versionsDir, candidate) ||
+      launcherOwnsVersionsDir(path, realVersionsDir, candidate);
+    const realTarget = yield* realPath(input.targetEntryPath);
     const repointed: Array<string> = [];
     for (const launcher of yield* recordedPinnedRuntimeLaunchers(input.baseDir)) {
+      const linkTarget = yield* fs.readLink(launcher).pipe(Effect.option);
+      // The script itself, so an alias that links to it keeps working.
+      const resolved = yield* realPath(launcher);
+      const scriptTarget =
+        resolved === undefined ? undefined : yield* readPosixLauncherTarget(resolved);
+      const runs =
+        scriptTarget !== undefined
+          ? ((yield* realPath(scriptTarget)) ?? scriptTarget)
+          : Option.isSome(linkTarget)
+            ? (resolved ?? path.resolve(path.dirname(launcher), linkTarget.value))
+            : undefined;
       // An update to the version already running finds most launchers in place.
-      const current = yield* fs.realPath(launcher).pipe(Effect.option);
-      if (Option.isSome(current) && Option.getOrUndefined(realTarget) === current.value) continue;
-      const result = yield* repointLauncher({ launchedAs: launcher, ...input }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning(error.reason).pipe(Effect.as(Option.none<string>())),
+      if (runs === undefined || runs === realTarget || !inVersions(runs)) continue;
+      const at = scriptTarget !== undefined && resolved !== undefined ? resolved : launcher;
+      const written = yield* writePosixLauncher({
+        launcher: at,
+        executable: input.targetEntryPath,
+        exclusive: false,
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.logWarning(`Could not repoint the t3 launcher at ${at}.`, { cause }).pipe(
+            Effect.as(false),
+          ),
         ),
       );
-      if (Option.isSome(result)) repointed.push(result.value);
+      if (written) repointed.push(at);
     }
     return repointed;
   },
 );
 
-/** Windows executables see their own path, so find the installer shim by matching t3.cmd targets on PATH. */
+/** Windows executables see their own path, so locate the installer shim by matching its target. */
 export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
   executablePath: string,
+  versionsDir?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -244,12 +269,26 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
   const candidates = [
     ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
-  ].filter((entry) => entry.trim().length > 0);
-  for (const directory of candidates) {
-    const shimPath = path.join(directory, "t3.cmd");
+  ]
+    .filter((entry) => entry.trim().length > 0)
+    .map((directory) => ({
+      shimPath: path.join(directory, "t3.cmd"),
+      parseTarget: windowsShimTarget,
+    }));
+  if (versionsDir !== undefined) {
+    const recorded = yield* fs
+      .readFileString(path.join(path.dirname(versionsDir), "launchers"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    for (const shimPath of recorded.split(/\r?\n/)) {
+      if (path.isAbsolute(shimPath) && path.basename(shimPath).toLowerCase() === "t3.cmd") {
+        candidates.push({ shimPath, parseTarget: generatedWindowsShimTarget });
+      }
+    }
+  }
+  for (const { shimPath, parseTarget } of candidates) {
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isNone(contents)) continue;
-    const target = windowsShimTarget(contents.value);
+    const target = parseTarget(contents.value);
     if (
       target !== undefined &&
       path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
@@ -302,6 +341,7 @@ export const updateCommand = Command.make("update", {
       return yield* runUpdate({
         baseDir: config.baseDir,
         logsDir: config.logsDir,
+        databasePath: config.dbPath,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
         requestedVersion: Option.getOrUndefined(flags.version),
@@ -367,6 +407,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
+  readonly databasePath: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
   readonly requestedVersion: string | undefined;
@@ -537,31 +578,37 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     arch,
     releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
     requirePublishedRelease: mirror !== undefined,
-    validate: (paths) =>
-      runner
-        .run({
-          command: pinnedRuntimeCommand(paths).command,
-          args: [...pinnedRuntimeCommand(paths).args, "--version"],
-          timeout: Duration.seconds(30),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "verifying the downloaded t3", cause }),
-          ),
-          Effect.flatMap((result) =>
-            result.code === 0 && /\bv(\S+)\s*$/.exec(result.stdout)?.[1] === targetVersion
-              ? Effect.void
-              : Effect.fail(
-                  new PinnedRuntimeInstallError({
-                    step: "verifying the downloaded t3",
-                    exitCode: Number(result.code),
+    validate: (runtime) =>
+      runStagedServicePreflight({
+        runner,
+        runtime,
+        targetVersion,
+        databasePath: input.databasePath,
+        // The target then runs under its own launcher, so only its database check matters. Older
+        // builds may predate protocol 4; every stable release since 0.0.43 accepts 3.
+        launcherProtocol:
+          compareExactServiceVersions(targetVersion, currentVersion) < 0
+            ? 3
+            : SERVICE_LAUNCHER_PROTOCOL,
+      }).pipe(
+        Effect.catchTags({
+          PinnedRuntimeInstallError: (error) =>
+            Effect.fail(
+              error.exitCode === undefined
+                ? error
+                : new PinnedRuntimePreflightBlockedError({
+                    version: targetVersion,
+                    reason: `t3@${targetVersion} could not confirm it supports this database (its check exited with code ${error.exitCode}), so t3 did not switch to it.`,
                   }),
-                ),
-          ),
-        ),
+            ),
+        }),
+      ),
   }).pipe(
     Effect.ensuring(Effect.sync(progress.finish)),
+    Effect.catchTags({
+      PinnedRuntimePreflightBlockedError: (error) =>
+        Effect.fail(new CliUpdateError({ reason: error.reason })),
+    }),
     Effect.catchIf(isUnpublishedRelease, () =>
       Effect.fail(
         new CliUpdateError({
@@ -617,7 +664,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // A handed-off service install rewrites the unit later, while the old launcher may be stopped.
   if (servicePlan?.handedOff !== true) {
     // A stopped service's unit still names the launcher runtime it will start.
-    const unit = yield* fs.readFileString(status.unitPath).pipe(Effect.option);
+    const unit = yield* fs
+      .readFile(status.unitPath)
+      .pipe(Effect.map(decodeServiceUnit), Effect.option);
     yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [currentVersion, targetVersion],

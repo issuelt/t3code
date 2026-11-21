@@ -9,9 +9,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -27,10 +29,10 @@ import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 const KIND_LABELS = {
-  subagent: "Subagent",
-  command: "Command",
-  monitor: "Monitor",
-  background_task: "Background task",
+  subagent: msg("Subagent"),
+  command: msg("Command", { $context: "noun, a running shell command" }),
+  monitor: msg("Monitor", { $context: "noun, a background watcher task" }),
+  background_task: msg("Background task"),
 } as const;
 
 type BackgroundWorkTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
@@ -38,6 +40,8 @@ type BackgroundWorkTarget = { readonly environmentId: EnvironmentId; readonly th
 export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<BackgroundWorkTarget>) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const gt = useGT();
+  const m = useMessages();
   const target = route.params;
   const ref = scopeThreadRef(target.environmentId, target.threadId);
   const thread = useAtomValue(environmentThreadShells.threadShellAtom(ref));
@@ -53,7 +57,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
   };
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title="Background work" onClose={() => navigation.goBack()} />
+      <SheetHeader title={gt("Background work")} onClose={() => navigation.goBack()} />
       <ScreenContent>
         <ScrollView
           nestedScrollEnabled
@@ -64,7 +68,7 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
         >
           {tasks.length === 0 ? (
             <Text className="pt-6 text-center text-sm text-foreground-muted">
-              Nothing running in the background.
+              <T>Nothing running in the background.</T>
             </Text>
           ) : (
             tasks.map((task) => (
@@ -101,12 +105,13 @@ function BackgroundWorkRow(props: {
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { task, item } = props;
+  const m = useMessages();
   const [expanded, setExpanded] = useState(task.awaited === true);
   const [showCommand, setShowCommand] = useState(false);
   const [fullOutput, setFullOutput] = useState(false);
   const streamsOutput = useCommandOutputStreaming(props.environmentId);
   const command = task.command ?? (item?.type === "command_execution" ? item.input : undefined);
-  const title = task.description?.trim() || item?.title || command || KIND_LABELS[task.kind];
+  const title = task.description?.trim() || item?.title || command || m(KIND_LABELS[task.kind]);
   const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
   const startedAt = item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null;
   const completedAt = item?.completedAt ? DateTime.toEpochMillis(item.completedAt) : null;
@@ -134,9 +139,11 @@ function BackgroundWorkRow(props: {
         <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
           {title}
         </Text>
-        {task.awaited ? (
+        {backgroundWorkHoldsCompletion([task]) ? (
           <View className="rounded border border-border px-1">
-            <Text className="text-2xs text-foreground-muted">waiting</Text>
+            <Text className="text-2xs text-foreground-muted">
+              <T>waiting</T>
+            </Text>
           </View>
         ) : null}
         {startedAt !== null ? (

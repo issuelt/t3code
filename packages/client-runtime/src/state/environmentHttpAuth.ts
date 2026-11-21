@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -71,7 +73,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
     }
     if (Option.isNone(signer)) {
       return yield* new RemoteEnvironmentAuthFetchError({
-        message: "No DPoP signer is available to authorize the environment request.",
+        ...translatableMessage(
+          msg("No DPoP signer is available to authorize the environment request."),
+        ),
         cause: authorization._tag,
       });
     }
@@ -81,7 +85,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
         Effect.mapError(
           (cause) =>
             new RemoteEnvironmentAuthFetchError({
-              message: "Could not create the environment request authorization proof.",
+              ...translatableMessage(
+                msg("Could not create the environment request authorization proof."),
+              ),
               cause,
             }),
         ),
@@ -91,9 +97,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
 );
 
 /**
- * A T3 Connect request's span starts an exported trace that the environment
- * continues; its local caller's span would leave that trace without a root.
- * A paired DPoP credential is direct work and stays local.
+ * A DPoP request is T3 Connect work, so its span starts an exported trace that
+ * the environment continues; its local caller's span would leave that trace
+ * without a root.
  */
 export const executeAuthenticatedEnvironmentHttpRequest = <
   Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1],
@@ -103,8 +109,7 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
 >(
   input: Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
 ) =>
-  input.prepared.httpAuthorization?._tag === "Dpop" &&
-  input.prepared.httpAuthorization.credentialId === undefined
+  input.prepared.httpAuthorization?._tag === "Dpop"
     ? executeEnvironmentRequest(input).pipe(
         Effect.withSpan(ENVIRONMENT_REQUEST_SPAN, { root: true }),
         withRelayClientTracing,
@@ -124,7 +129,7 @@ export const executeConnectedEnvironmentHttpRequest = Effect.fn(
   const prepared = yield* SubscriptionRef.get(supervisor.prepared);
   if (Option.isNone(prepared)) {
     return yield* new RemoteEnvironmentAuthFetchError({
-      message: "The environment is not connected.",
+      ...translatableMessage(msg("The environment is not connected.")),
       cause: supervisor.target._tag,
     });
   }
@@ -148,7 +153,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
 >(input: {
   readonly prepared: Pick<
     PreparedConnection,
-    "environmentId" | "label" | "httpBaseUrl" | "httpAuthorization" | "target"
+    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target"
   >;
   readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<
@@ -168,7 +173,6 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly request: (input: {
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
     readonly headers: EnvironmentHttpAuthHeaders;
-    readonly requestUrl?: string;
   }) => Effect.Effect<A, E, R>;
   /** Some endpoints report rejected credentials in a successful response. */
   readonly isUnauthorizedResponse?: (response: NoInfer<A>) => boolean;
@@ -188,38 +192,35 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         const remote = input.remoteAuthorization;
         if (remote === undefined || Option.isNone(remote)) {
           return yield* new RemoteEnvironmentAuthFetchError({
-            message: "No relay authorization service is available for the environment request.",
+            ...translatableMessage(
+              msg("No relay authorization service is available for the environment request."),
+            ),
             cause: input.prepared.target._tag,
           });
         }
-        const current = yield* remote.value
-          .authorizeDpopHttp({
-            expectedEnvironmentId: input.prepared.environmentId,
-            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
-            ...(authorization.credentialId === undefined
-              ? {}
-              : {
-                  direct: {
-                    credentialId: authorization.credentialId,
-                    httpBaseUrl: input.prepared.httpBaseUrl,
-                    label: input.prepared.label,
-                  },
-                }),
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RemoteEnvironmentAuthFetchError({
-                  message: "Could not authorize the environment request.",
-                  cause,
-                }),
-            ),
-          );
-        // A learned direct route keeps its own origin; only the token renews.
-        if (input.prepared.target._tag === "RelayConnectionTarget") {
-          httpBaseUrl = current.httpBaseUrl;
+        const authFetchError = (cause: unknown) =>
+          new RemoteEnvironmentAuthFetchError({
+            ...translatableMessage(msg("Could not authorize the environment request.")),
+            cause,
+          });
+        const direct = authorization.directConnection;
+        if (direct !== undefined) {
+          authorization = yield* remote.value
+            .authorizeDirectDpopHttp(direct, rejectedAccessToken)
+            .pipe(Effect.mapError(authFetchError));
+        } else {
+          const current = yield* remote.value
+            .authorizeDpopHttp({
+              expectedEnvironmentId: input.prepared.environmentId,
+              ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+            })
+            .pipe(Effect.mapError(authFetchError));
+          // A learned direct route keeps its own origin; only the token renews.
+          if (input.prepared.target._tag === "RelayConnectionTarget") {
+            httpBaseUrl = current.httpBaseUrl;
+          }
+          authorization = current.httpAuthorization;
         }
-        authorization = current.httpAuthorization;
       }
 
       const requestUrl = requestUrlFor(httpBaseUrl);
@@ -236,7 +237,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         withEnvironmentRequestInit(
           authorization,
           input.requestInit,
-          input.request({ client, headers, requestUrl }),
+          input.request({ client, headers }),
         ),
       ).pipe(Effect.result);
 
@@ -262,7 +263,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           continue;
         }
         return yield* new RemoteEnvironmentAuthFetchError({
-          message: "The environment rejected the renewed session authorization.",
+          ...translatableMessage(
+            msg("The environment rejected the renewed session authorization."),
+          ),
           cause: result.success,
         });
       }

@@ -4,7 +4,10 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
-import { isListedThreadLineage, type EnvironmentId } from "@t3tools/contracts";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+import type { MessageResolver } from "../../i18n/messages";
 import {
   foldSearchQuery,
   PALETTE_SECONDARY_LIMIT,
@@ -131,6 +134,9 @@ export function commandPaletteEntityItems(input: {
   readonly environmentLabel: (environmentId: EnvironmentId) => string;
   /** Thread rows match environment names when there are several environments. */
   readonly searchEnvironments: boolean;
+  /** Delegated threads shown under their parent instead of on their own. */
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly resolve: MessageResolver;
   readonly openDraft: (project: EnvironmentProject) => void;
   readonly openThread: (thread: EnvironmentThreadShell) => void;
 }) {
@@ -159,19 +165,31 @@ export function commandPaletteEntityItems(input: {
     kind: "project",
     project,
     title: project.title,
-    detail: `New thread · ${input.environmentLabel(project.environmentId)}`,
+    detail: input.resolve(
+      msg("New thread · {environment}", {
+        environment: input.environmentLabel(project.environmentId),
+      }),
+    ),
     searchTerms: [project.workspaceRoot, "new thread", "project"],
     run: () => input.openDraft(project),
   }));
   const threadItems: CommandPaletteItem[] = input.threads
-    .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
+    .filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        !isShownUnderParent(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          thread.lineage,
+          input.delegatedUnderParent,
+        ),
+    )
     .map((thread) => {
       const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
       const environment = input.environmentLabel(thread.environmentId);
       return {
         key: scopedThreadKey(thread.environmentId, thread.id),
         kind: "thread",
-        title: thread.title || "Untitled thread",
+        title: thread.title || input.resolve(msg("Untitled thread")),
         detail: [project?.title, environment].filter(Boolean).join(" · "),
         searchTerms: [],
         threadSearch: threadSearchSubject(

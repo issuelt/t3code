@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
-import * as Linking from "expo-linking";
+import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 import { androidWidgetRefreshDeadlines } from "./androidSubscriptionUsageSnapshot";
 
@@ -17,7 +17,7 @@ export async function publishSubscriptionUsage(snapshot: SubscriptionUsageSnapsh
     // Cached layouts from older versions still deliver taps through JS.
     listening = true;
     addUserInteractionListener((event) => {
-      if (event.source === "SubscriptionUsage" && tapUrl) void Linking.openURL(tapUrl);
+      if (event.source === "SubscriptionUsage" && tapUrl) void tryOpenExternalUrl(tapUrl);
     });
   }
   widget.updateSnapshot(snapshot);
