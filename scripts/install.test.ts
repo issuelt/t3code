@@ -229,32 +229,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       const binDir = NodePath.join(root, "bin");
       const link = NodePath.join(binDir, "t3");
       await NodeFSP.mkdir(binDir, { recursive: true });
-      const tools = NodePath.join(root, "tools");
-      await NodeFSP.mkdir(tools);
-      for (const command of [
-        "sh",
-        "uname",
-        "tar",
-        "sha256sum",
-        "cat",
-        "mkdir",
-        "readlink",
-        "dirname",
-        "ln",
-        "grep",
-        "tr",
-        "mktemp",
-        "chmod",
-        "mv",
-        "rm",
-      ]) {
-        const executable = NodeChildProcess.execFileSync(
-          "sh",
-          ["-c", 'command -v "$1"', "sh", command],
-          { encoding: "utf8" },
-        ).trim();
-        await NodeFSP.symlink(executable, NodePath.join(tools, command));
-      }
 
       await NodeFSP.writeFile(link, "#!/bin/sh\necho mine\n");
       const foreign = await installOver({ script: "install.sh", home, binDir });
@@ -297,7 +271,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         script: "install.sh",
         home: NodePath.join(root, "alias"),
         binDir,
-        env: { HOME: root, SHELL: "/bin/zsh", PATH: tools },
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
       expect(await NodeFSP.readFile(link, "utf8")).toBe(
@@ -307,12 +281,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
       );
 
-      // Bash fills an unset SHELL from passwd; an empty value exercises the missing-shell fallback.
+      // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
       const noShell = await installOver({
         script: "install.sh",
         home,
         binDir,
-        env: { HOME: root, SHELL: "", PATH: tools },
+        env: { HOME: root, SHELL: undefined, PATH: "/usr/bin:/bin" },
       });
       expect(noShell.code, noShell.output).toBe(0);
       expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
@@ -322,7 +296,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         script: "install.sh",
         home,
         binDir,
-        env: { HOME: root, PATH: `${binDir}/:${tools}` },
+        env: { HOME: root, PATH: `${binDir}/:/usr/bin:/bin` },
       });
       expect(slashed.code, slashed.output).toBe(0);
       expect(slashed.output).toContain("Run t3 to use T3 Code here");
@@ -333,7 +307,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         home,
         binDir: "bin",
         cwd: root,
-        env: { HOME: root, SHELL: "/bin/zsh", PATH: tools },
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(relative.code, relative.output).toBe(0);
       expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
