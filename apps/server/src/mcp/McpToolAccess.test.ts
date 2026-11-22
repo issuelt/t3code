@@ -572,21 +572,36 @@ it.effect("keeps Home fleet operations on their existing route", () => {
 const LIVE = "2030-01-01T00:00:00Z";
 const EXPIRED = "1960-01-01T00:00:00Z";
 it.effect.each([
-  ["t3_thread_read", "desktop reaches it", true, LIVE, "saw environmentId"],
+  ["t3_thread_read", "desktop reaches it", "connected", LIVE, "saw environmentId"],
   [
     "t3_thread_read",
     "only a peer link reaches it",
-    false,
+    "absent",
     LIVE,
     "t3_thread_read in environment-box",
   ],
-  ["t3_thread_read", "neither reaches it", false, null, "saw environmentId"],
-  ["t3_thread_read", "its only link expired", false, EXPIRED, "saw environmentId"],
-  // Changes keep the fleet route, which registers Home's report and checks its mode.
-  ["t3_thread_send", "only a peer link reaches it", false, LIVE, "saw environmentId"],
+  ["t3_thread_read", "neither reaches it", "absent", null, "saw environmentId"],
+  ["t3_thread_read", "its only link expired", "absent", EXPIRED, "saw environmentId"],
+  // The fleet route registers Home's report, so a change takes it while the desktop is connected.
+  ["t3_thread_send", "desktop reaches it", "connected", LIVE, "saw environmentId"],
+  [
+    "t3_thread_send",
+    "only a peer link reaches it",
+    "absent",
+    LIVE,
+    "t3_thread_send in environment-box",
+  ],
+  [
+    "t3_thread_send",
+    "the desktop lists it offline and a peer link reaches it",
+    "offline",
+    LIVE,
+    "t3_thread_send in environment-box",
+  ],
+  ["t3_thread_send", "its only link expired", "offline", EXPIRED, "saw environmentId"],
 ] as const)(
   "Home's %s in another environment when %s",
-  ([tool, , desktopReaches, linkExpiresAt, expected]) => {
+  ([tool, , desktop, linkExpiresAt, expected]) => {
     const toolkit = Toolkit.make(
       Tool.make("t3_thread_read", linkedProbe),
       Tool.make("t3_thread_send", linkedProbe),
@@ -610,9 +625,10 @@ it.effect.each([
           reach: Effect.succeed({
             hostConnected: true,
             mcpRelay: true,
-            environments: desktopReaches
-              ? [{ environmentId: box, label: "box", connected: true }]
-              : [],
+            environments:
+              desktop === "absent"
+                ? []
+                : [{ environmentId: box, label: "box", connected: desktop === "connected" }],
           }),
         }),
       ),

@@ -444,15 +444,6 @@ const THREAD_ONLY = new Set<unknown>([
  * environment, which checks the rest. The handler here never sees
  * `environmentId`, so it cannot leak into what it writes.
  */
-const HOME_PEER_READS: ReadonlySet<string> = new Set([
-  "orchestrator_capabilities",
-  "t3_project_list",
-  "t3_thread_search",
-  "t3_thread_list",
-  "t3_thread_read",
-  "t3_thread_wait",
-]);
-
 const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
   declarations: Handlers<Tools>,
@@ -463,13 +454,12 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   const home = yield* Effect.serviceOption(HomeService.HomeService);
   const desktop = yield* Effect.serviceOption(FleetBroker.FleetBroker);
   const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
-  // Home's fleet route reaches only the desktop's connections. Home's reads also use a live
-  // peer link; its changes stay on the fleet route, which keeps its reports and mode checks.
-  const homeReadsThroughPeerLink = Effect.fn("McpToolAccess.homeReadsThroughPeerLink")(function* (
-    name: string,
+  // Home's fleet route reaches only the desktop's connections and registers Home's reports.
+  // When the desktop cannot reach an environment, Home uses a live peer link instead.
+  const homeUsesPeerLink = Effect.fn("McpToolAccess.homeUsesPeerLink")(function* (
     environmentId: EnvironmentId,
   ) {
-    if (!HOME_PEER_READS.has(name) || Option.isNone(peerLinks)) return false;
+    if (Option.isNone(peerLinks)) return false;
     const link = yield* peerLinks.value.get(environmentId).pipe(Effect.orElseSucceed(Option.none));
     if (Option.isNone(link) || DateTime.isLessThan(link.value.expiresAt, yield* DateTime.now))
       return false;
@@ -540,10 +530,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
             "t3_thread_update",
             "t3_pending_request",
           ].includes(name);
-          if (
-            fleetTool &&
-            (target === undefined || !(yield* homeReadsThroughPeerLink(name, target)))
-          ) {
+          if (fleetTool && (target === undefined || !(yield* homeUsesPeerLink(target)))) {
             return yield* here({ ...params, environmentId });
           }
           if (!fleetTool && target !== undefined)
