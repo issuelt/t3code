@@ -1443,7 +1443,7 @@ describe("Kiro permission policy", () => {
     options,
   });
 
-  it("never lets a policy approval persist Kiro's workspace-wide allow_always", () => {
+  it("saves Kiro's allow_always only when Full access has no one-time choice", () => {
     const fullAccess = policy({ runtimeMode: "full-access" });
     assert.equal(
       kiroPermissionDisposition(
@@ -1455,13 +1455,17 @@ describe("Kiro permission policy", () => {
       ),
       "allow",
     );
-    // With no one-time choice, approving would save a rule beyond the thread,
-    // so the request goes to the user, whose card can still allow it.
     const alwaysOnly = writeRequest([
       { optionId: "always-accept", name: "Always allow", kind: "allow_always" },
       { optionId: "reject", name: "Deny", kind: "reject_once" },
     ]);
-    assert.equal(kiroPermissionDisposition(fullAccess, alwaysOnly), "ask");
+    // Full access never asks, even when approving saves a rule beyond the thread.
+    assert.equal(kiroPermissionDisposition(fullAccess, alwaysOnly), "allow");
+    // Other modes send that request to the user, whose card can still allow it.
+    assert.equal(
+      kiroPermissionDisposition(policy({ runtimeMode: "auto-accept-edits" }), alwaysOnly),
+      "ask",
+    );
     assert.deepEqual(
       kiroApprovalOptions(alwaysOnly).map((option) => option.decision),
       ["acceptForSession", "decline", "cancel"],

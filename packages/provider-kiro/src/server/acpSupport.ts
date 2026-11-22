@@ -109,10 +109,10 @@ export function kiroApprovalOptions(
 }
 
 /**
- * T3's answer to a Kiro permission request. A policy approval may only use
- * Kiro's `allow_once`: its `allow_always` saves a consent rule for the whole
- * workspace or wider, which would outlive the thread. When Kiro offers no
- * one-time choice, the request goes to the user instead of persisting a grant.
+ * T3's answer to a Kiro permission request. Outside full access a policy
+ * approval may only use Kiro's `allow_once`, because `allow_always` saves a
+ * workspace-wide consent rule; without a one-time choice the user decides.
+ * Full access never asks, so it takes `allow_always` when that is all Kiro offers.
  */
 export function kiroPermissionDisposition(
   policy: AcpRuntimePolicy,
@@ -122,7 +122,9 @@ export function kiroPermissionDisposition(
   const offersOnce = request.options.some(
     (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
   );
-  return disposition === "allow" && !offersOnce ? "ask" : disposition;
+  return disposition === "allow" && !offersOnce && policy.runtimeMode !== "full-access"
+    ? "ask"
+    : disposition;
 }
 
 export interface KiroAcpRuntimeInput extends Omit<

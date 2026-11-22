@@ -4320,11 +4320,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           ...backgroundLaunch(CHILD),
           event("permission.asked", permission),
+          // Full access answers the permission at once; the form is a question and waits.
+          out("permission.reply", { sessionID: CHILD, requestID: permission.id, decision: "once" }),
+          reply("permission.reply", null),
           event("form.created", { form }),
           ...reconnected({ [SESSION]: { type: "running" }, [CHILD]: { type: "running" } }),
           ...openRequests([]),
           out("permission.list", { sessionID: CHILD }),
-          replyData("permission.list", [permission]),
+          replyData("permission.list", []),
           out("session.form.list", { sessionID: CHILD }),
           replyData("session.form.list", [form]),
           out("session.interrupt", { sessionID: SESSION }),
@@ -4333,8 +4336,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { providerID: "opencode", id: "recovered" },
           }),
-          out("permission.reply", { sessionID: CHILD, requestID: permission.id, decision: "once" }),
-          reply("permission.reply", null),
           out("session.form.reply", { sessionID: CHILD, formID: form.id, answer: { q0: "Red" } }),
           reply("session.form.reply", null),
         ],
@@ -4375,12 +4376,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* Deferred.succeed(resume, undefined);
       yield* Deferred.await(recovered);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      assert.equal(requests.get(permission.id)?.status, "pending");
+      assert.isUndefined(requests.get(permission.id));
       assert.equal(requests.get(form.id)?.status, "pending");
-      yield* runtime.respondToRuntimeRequest({
-        requestId: requests.get(permission.id)!.id,
-        decision: "accept",
-      });
       yield* runtime.respondToRuntimeRequest({
         requestId: requests.get(form.id)!.id,
         answers: { q0: "Red" },

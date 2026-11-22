@@ -62,6 +62,11 @@ const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   interactionMode: "default",
   cwd: null,
 });
+// Full access answers every approval itself, so tests of the card use a mode that asks.
+const askingPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+  ...runtimePolicy,
+  runtimeMode: "approval-required",
+});
 const modelSelection = (instanceId = INSTANCE_ID) => ({
   instanceId,
   model: MODEL,
@@ -774,7 +779,14 @@ describe("MuseAdapterV2", () => {
   it.effect("settles partial messages and pending approvals before a provider failure", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        askingPolicy,
+      );
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("item/started", {
         turnId: nativeId,
@@ -930,7 +942,14 @@ describe("MuseAdapterV2", () => {
           connectionClosed = true;
         });
         yield* Effect.gen(function* () {
-          const harness = yield* makeHarness(fake);
+          const harness = yield* makeHarness(
+            fake,
+            INSTANCE_ID,
+            undefined,
+            undefined,
+            undefined,
+            askingPolicy,
+          );
           const { nativeId } = yield* startConversation(harness, fake);
           yield* fake.emit("approval/requested", approval(nativeId));
           yield* harness.takeEvent(
@@ -985,7 +1004,14 @@ describe("MuseAdapterV2", () => {
   it.effect("settles an active turn once when both the connection and host exit unexpectedly", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        askingPolicy,
+      );
       const first = yield* startConversation(harness, fake);
       yield* fake.emit("item/started", {
         turnId: first.nativeId,
@@ -1076,7 +1102,14 @@ describe("MuseAdapterV2", () => {
   it.effect("uses the latest native approval requirement and waits for its resolution event", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        askingPolicy,
+      );
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("approval/requested", approval(nativeId));
       const first = yield* harness.takeEvent(
@@ -1124,7 +1157,14 @@ describe("MuseAdapterV2", () => {
   it.effect("keeps the user's decision when Muse settles before acknowledging it", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        askingPolicy,
+      );
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("approval/requested", approval(nativeId));
       const pending = yield* harness.takeEvent(
@@ -1162,7 +1202,7 @@ describe("MuseAdapterV2", () => {
         undefined,
         undefined,
         undefined,
-        runtimePolicy,
+        askingPolicy,
         { continuationRequests: { offer: (request) => Effect.sync(() => offers.push(request)) } },
       );
       yield* fake.emit("turn/started", { turnId: "report-1" });
@@ -1221,14 +1261,11 @@ describe("MuseAdapterV2", () => {
             approvalId: "parent-approval",
             currentRequirementId: { approvalId: "parent-approval", sourceIndex: 0 },
           };
+          // Full access answers the root approval the same way, without a card.
           yield* fake.emit("approval/requested", parent);
-          const shown = yield* harness.takeEvent("runtime_request.updated");
-          assert.strictEqual(shown.runtimeRequest.status, "pending");
-          yield* harness.takeEvent("provider_session.updated");
-          yield* fake.emit("approval/resolved", parent);
-          // The child remains unacknowledged when the visible request stops blocking the turn.
-          const session = yield* harness.takeEvent("provider_session.updated");
-          assert.strictEqual(session.providerSession.status, "running");
+          const parentDecision = yield* fake.takeCall("approval/decide");
+          assert.strictEqual(parentDecision.params.choiceId, "once");
+          assert.deepStrictEqual(harness.allEvents.slice(before), []);
         }
         yield* fake.emit("approval/resolved", child);
         const resolved = yield* harness.takeEvent("runtime_request.updated");

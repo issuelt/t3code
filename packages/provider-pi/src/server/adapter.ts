@@ -1843,6 +1843,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         const state = threadState;
         const turn = state?.activeTurn ?? null;
+        // A confirm is a yes/no approval; select, input and editor ask for an answer and still show.
+        if (
+          method === "confirm" &&
+          (turn?.turnInput.runtimePolicy ?? input.runtimePolicy).runtimeMode === "full-access"
+        ) {
+          yield* connection.send({
+            type: "extension_ui_response",
+            id: nativeRequestId,
+            confirmed: true,
+          });
+          return;
+        }
         const createdAt = yield* DateTime.now;
         const timeout = recordNumber(event, "timeout");
         // Pi treats zero as no timeout and negative durations as immediate expiry.

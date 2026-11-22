@@ -147,8 +147,9 @@ function uncapturedTurns(
   ];
 }
 
+// Full access confirms dialogs itself, so tests of the dialog card use a mode that asks.
 const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-  runtimeMode: "full-access",
+  runtimeMode: "approval-required",
   interactionMode: "default",
   cwd: null,
 });
@@ -569,13 +570,14 @@ const openRuntime = Effect.fnUntraced(function* (
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
   initialNativeThreadId?: string,
+  policy = runtimePolicy,
 ) {
   const adapter = yield* makeAdapter(fake, "", forkFake, continuationRequests);
   const runtime = yield* adapter.openSession({
     threadId,
     providerSessionId,
     modelSelection: modelSelection(model),
-    runtimePolicy,
+    runtimePolicy: policy,
     ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
   });
   const emitted = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -2175,7 +2177,7 @@ describe("PiAdapterV2", () => {
       assert.isTrue(extensions.some((path) => path?.endsWith("pi-t3-mcp-extension.ts")));
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
-      assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      assert.equal(spawn.env.T3_PI_RUNTIME_MODE, runtimePolicy.runtimeMode);
       assert.equal(spawn.env.T3CODE_THREAD_ID, THREAD_ID);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -4913,6 +4915,56 @@ describe("PiAdapterV2", () => {
       const uiResponse = yield* fake.takeRequest("extension_ui_response");
       assert.equal(uiResponse["id"], "ui-trust");
       assert.equal(uiResponse["confirmed"], true);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("confirms extension dialogs in full access and still asks its questions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const fullAccess = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        runtimeMode: "full-access",
+      });
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        undefined,
+        undefined,
+        fullAccess,
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: fullAccess,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-trust",
+        method: "confirm",
+        title: "Run project extensions?",
+        message: "This project has .pi/extensions.",
+      });
+      const confirmed = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(confirmed["id"], "ui-trust");
+      assert.equal(confirmed["confirmed"], true);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-pick",
+        method: "select",
+        title: "Pick a target",
+        options: ["staging", "production"],
+      });
+      const asked = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      assert.equal(
+        asked.type === "runtime_request.updated" ? asked.runtimeRequest.kind : undefined,
+        "user_input",
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

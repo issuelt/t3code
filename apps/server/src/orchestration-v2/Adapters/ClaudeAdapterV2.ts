@@ -12698,9 +12698,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          const fullAccess = context.input.runtimePolicy.runtimeMode === "full-access";
           if (
             context.input.runtimePolicy.interactionMode === "plan" &&
-            context.input.runtimePolicy.approvalPolicy === "never"
+            (context.input.runtimePolicy.approvalPolicy === "never" || fullAccess)
           ) {
             return {
               behavior: "deny",
@@ -12736,6 +12737,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return {
               behavior: "deny",
               message: `Claude Code's removal safety check denied this command; the user did not reject it. The command did not run. Do not bypass the check by splitting the removal, putting it in a script, or using another tool or shell. If the warning below supplies a safe rewrite, use it and let the same check evaluate it. Otherwise continue the rest of the task without the removal and tell the user what you needed to delete and why. Warning: ${safetyReason}`,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
+          // Full access answers every ask the CLI still forwards, ask rules and checks included.
+          if (fullAccess) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
@@ -12844,7 +12854,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return { action: "cancel" } satisfies ElicitationResult;
           }
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          if ((yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
+          if (
+            context.input.runtimePolicy.runtimeMode === "full-access" ||
+            (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)
+          ) {
             return acceptance;
           }
           // The CLI waits on this answer, so a turn held for its prompt echo

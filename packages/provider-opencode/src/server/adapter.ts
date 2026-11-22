@@ -2052,6 +2052,21 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         ) {
           if (pendingRequestsByNativeId.has(nativeRequestId)) return;
           const { state, turn, subagent } = owner;
+          // Full access installs allow-all rules, but OpenCode can still ask before they apply.
+          if (request.type === "permission" && turn.runtimePolicy.runtimeMode === "full-access") {
+            const replied = yield* sdkCall(
+              "permission.reply",
+              { requestID: nativeRequestId, reply: "once" },
+              (signal) =>
+                client.permission.reply({ requestID: nativeRequestId, reply: "once" }, { signal }),
+            ).pipe(
+              Effect.timeout("10 seconds"),
+              Effect.as(true),
+              // A failed reply falls back to the card so the request cannot hang unseen.
+              Effect.orElseSucceed(() => false),
+            );
+            if (replied) return;
+          }
           const now = yield* DateTime.now;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
             driver: OPENCODE_PROVIDER,
