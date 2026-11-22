@@ -2161,6 +2161,15 @@ describe("OpenCodeAdapterV2", () => {
             );
           }
           assert.equal(replies.length, 2);
+          // Full access answers the permission itself; only the question reaches the user.
+          assert.isFalse(
+            events.some(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.kind !== "user_input",
+            ),
+          );
+          assert.deepInclude(replies, { requestID: "wake-permission", reply: "once" });
           yield* push(status("idle"));
           yield* awaitTerminal;
           assert.equal(promptIds.length, 1);

@@ -2602,6 +2602,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (target === undefined) return;
       const { state, turn } = target;
       if ([...pending.values()].some((entry) => entry.native.id === native.id)) return;
+      // Full access installs allow-all rules, but OpenCode can still ask before they apply.
+      if (native.type === "permission" && rootOf(state).policy.runtimeMode === "full-access") {
+        const replied = yield* deliver(
+          client.permission
+            .reply({
+              sessionID: Session.ID.make(sessionId),
+              requestID: Permission.ID.make(native.id),
+              decision: "once",
+            })
+            .pipe(Effect.catchTags(permissionGone)),
+        );
+        // A failed reply falls back to the card so the request cannot hang unseen.
+        if (replied) return;
+      }
       const now = yield* DateTime.now;
       const requestId = yield* idAllocator.allocate.runtimeRequest({
         driver,
