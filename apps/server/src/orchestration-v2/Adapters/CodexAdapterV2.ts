@@ -798,6 +798,11 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+// Codex still asks under full access's granular policy, for example before `rm -rf`.
+const isFullAccess = (context: {
+  readonly input: { readonly runtimePolicy: { readonly runtimeMode: RuntimeMode } };
+}) => context.input.runtimePolicy.runtimeMode === "full-access";
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -5988,7 +5993,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
             const allowance = sessionAllowance(payload.threadId, context);
-            if (allowance.has("command")) {
+            if (allowance.has("command") || isFullAccess(context)) {
               return {
                 decision: "acceptForSession",
               } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
@@ -6059,7 +6064,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
             const allowance = sessionAllowance(payload.threadId, context);
-            if (allowance.has("file-change")) {
+            if (allowance.has("file-change") || isFullAccess(context)) {
               return {
                 decision: "acceptForSession",
               } satisfies CodexSchema.FileChangeRequestApprovalResponse;
@@ -6129,6 +6134,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for permissions approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+
+            if (isFullAccess(context)) {
+              return permissionsResponseFromDecision({
+                decision: "acceptForSession",
+                permissions: payload.permissions,
+              });
             }
 
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
@@ -6208,7 +6220,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            if (isFullAccess(context)) {
               return acceptance;
             }
 
@@ -6276,7 +6288,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
             const allowance = sessionAllowance(payload.conversationId, context);
-            if (allowance.has("command")) {
+            if (allowance.has("command") || isFullAccess(context)) {
               return {
                 decision: "approved_for_session",
               } satisfies CodexSchema.ExecCommandApprovalResponse;
@@ -6345,7 +6357,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
             const allowance = sessionAllowance(payload.conversationId, context);
-            if (allowance.has("file-change")) {
+            if (allowance.has("file-change") || isFullAccess(context)) {
               return {
                 decision: "approved_for_session",
               } satisfies CodexSchema.ApplyPatchApprovalResponse;
