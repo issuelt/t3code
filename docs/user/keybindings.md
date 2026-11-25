@@ -77,7 +77,7 @@ find only searches the files loaded so far.
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
 displayed threads. The shortcuts follow the current list filters and order.
 `Cmd+K` opens the command palette to search commands, projects, and threads.
-Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
+Use the arrow keys or `Ctrl+N` and `Ctrl+P`, then Return, to choose a result, or `Cmd+1` through `Cmd+9` to
 choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
 to show only actions.
 
@@ -195,6 +195,10 @@ through the pages you have visited, like a browser's back and forward buttons.
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved shortcuts
+
+In the command palette, `Ctrl+N` and `Ctrl+P` move the selection down and up like the
+arrow keys, on every platform and over any binding for those keys. On Windows and Linux,
+close the palette first to use `mod+n` (new thread) or `mod+p` (go to file).
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel
 tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`

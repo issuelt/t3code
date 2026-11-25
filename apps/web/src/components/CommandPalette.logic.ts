@@ -64,6 +64,22 @@ export function buildLinkedThreadActionItems(
   }));
 }
 
+/** Ctrl+N and Ctrl+P (Ctrl only, also on macOS) step through the list like the arrow keys. */
+export function emacsListNavigationArrowKey(event: {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  readonly altKey: boolean;
+  readonly shiftKey: boolean;
+  readonly isComposing?: boolean;
+}): "ArrowDown" | "ArrowUp" | null {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+    return null;
+  }
+  const key = event.key.toLowerCase();
+  return key === "n" ? "ArrowDown" : key === "p" ? "ArrowUp" : null;
+}
+
 export function browseInputEndPaddingClass(input: {
   readonly willCreateProjectPath: boolean;
   readonly hasHighlightedBrowseItem: boolean;

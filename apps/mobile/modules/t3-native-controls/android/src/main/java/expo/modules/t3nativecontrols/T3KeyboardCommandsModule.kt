@@ -54,7 +54,10 @@ class T3KeyboardCommandsView(
   private fun enabledCommandFor(event: KeyEvent): String? {
     if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return null
     val largeScreen = resources.configuration.smallestScreenWidthDp >= LARGE_SCREEN_MIN_WIDTH_DP
-    return hardwareKeyboardCommand(event, largeScreen)?.takeIf(enabledCommands::contains)
+    val paletteCommand =
+      if (event.hasModifiers(KeyEvent.META_CTRL_ON)) CTRL_PALETTE_COMMANDS[event.keyCode] else null
+    return paletteCommand?.takeIf(enabledCommands::contains)
+      ?: hardwareKeyboardCommand(event, largeScreen)?.takeIf(enabledCommands::contains)
   }
 }
 
@@ -62,6 +65,12 @@ private val UNMODIFIED_COMMANDS = mapOf(
   KeyEvent.KEYCODE_DPAD_DOWN to "paletteNext",
   KeyEvent.KEYCODE_DPAD_UP to "palettePrevious",
   KeyEvent.KEYCODE_ESCAPE to "paletteDismiss",
+)
+
+// Inside the palette, Ctrl+N/P step through results like the arrows instead of starting a task.
+private val CTRL_PALETTE_COMMANDS = mapOf(
+  KeyEvent.KEYCODE_N to "paletteNext",
+  KeyEvent.KEYCODE_P to "palettePrevious",
 )
 
 private val CTRL_COMMANDS = mapOf(

@@ -239,6 +239,7 @@ import {
   type AddProjectCloneFlow,
   type AddProjectEnvironmentOption,
   buildPaletteRemoteSourceReadiness,
+  emacsListNavigationArrowKey,
   errorMessage,
   getEnvironmentBrowsePlatform,
   remoteProjectInputPlaceholder,
@@ -2856,6 +2857,24 @@ function OpenCommandPaletteDialog(props: {
     if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) {
       // Confirming an IME candidate must not submit a path or select a row.
       (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      return;
+    }
+
+    const arrowKey = emacsListNavigationArrowKey(event.nativeEvent);
+    if (arrowKey !== null) {
+      // Ctrl+N/P win over bindings such as New thread (mod+n on Windows and Linux) here only.
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.dispatchEvent(
+        new globalThis.KeyboardEvent("keydown", {
+          key: arrowKey,
+          code: arrowKey,
+          repeat: event.repeat,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
       return;
     }
 

@@ -8,6 +8,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
 import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
+import { registerCommands } from "../shortcuts/dispatcher";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
@@ -26,12 +27,14 @@ vi.mock("../state/server", async (original) => {
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
   const { THREAD_JUMP_KEYBINDING_COMMANDS } = await import("@t3tools/contracts");
   // The default jump bindings are desktop-only; these hold in the browser too.
-  const jumpBindings = compileResolvedKeybindingsConfig(
-    THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+  const jumpBindings = compileResolvedKeybindingsConfig([
+    ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
       key: `mod+${index + 1}`,
       command,
     })),
-  );
+    { key: "mod+n", command: "chat.new" },
+    { key: "mod+p", command: "filePicker.toggle" },
+  ]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(jumpBindings) };
 });
 vi.mock("../hooks/useHandleNewThread", async (original) => {
@@ -321,6 +324,33 @@ describe("CommandPalette open intents", () => {
         projectId: ProjectId.make("lima"),
       }),
     );
+  });
+
+  it("moves the highlight with Ctrl+N/P while open, and leaves Ctrl+N to New thread while closed", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
+    const onNewThread = vi.fn();
+    using _commands = { [Symbol.dispose]: registerCommands({ "chat.new": onNewThread }) };
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    await userEvent.keyboard("{Control>}n{/Control}");
+    expect(onNewThread).toHaveBeenCalledOnce();
+
+    openCommandPalette({});
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
+    const options = page.getByRole("option");
+    await userEvent.keyboard("{Control>}n{/Control}");
+    await expect.element(options.nth(1)).toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Control>}n{/Control}");
+    await expect.element(options.nth(2)).toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Control>}p{/Control}");
+    await expect.element(options.nth(1)).toHaveAttribute("data-highlighted");
+
+    expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: "command" });
+    expect(onNewThread).toHaveBeenCalledOnce();
+    expect(entities.handleNewThread).not.toHaveBeenCalled();
   });
 
   it("leaves a submenu only on a fresh, unmodified Backspace", async () => {
