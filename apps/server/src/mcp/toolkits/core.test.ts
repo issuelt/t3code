@@ -532,7 +532,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
                 return Deferred.succeed(
                   recorded.length === 1 ? firstRecorded : secondRecorded,
                   entry,
-                ).pipe(Effect.asVoid);
+                );
               },
               flush: Effect.void,
               recordOwners: () => Effect.void,

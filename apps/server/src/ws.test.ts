@@ -2977,7 +2977,7 @@ it.live("revoking a session ends the desktop relay connected with it", () =>
             Layer.mock(ProviderInstallationGate.ProviderInstallationGate)({}),
             Layer.mock(AnalyticsService.AnalyticsService)({
               recordOwners: () => Effect.void,
-              record: () => Effect.void,
+              record: () => Effect.succeed(true),
             }),
             Layer.mock(ServerBrowser.ServerBrowser)({
               profileReporter: Effect.succeed(() => Effect.void),
