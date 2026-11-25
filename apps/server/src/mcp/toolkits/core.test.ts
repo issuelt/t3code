@@ -444,14 +444,14 @@ it.effect("captures send_to_user results for providers that drop MCP outputs", (
       undefined,
     );
 
+    // The fork returns invalid arguments as a readable tool result instead of a JSON-RPC error.
     const invalid = yield* server
       .callTool({ name: "send_to_user", arguments: { message: "" } })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.flip,
       );
-    expect(invalid).toMatchObject({ _tag: "InvalidParams" });
+    expect(invalid.isError).toBe(true);
     expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: "" })).toEqual({
       isError: true,
     });

@@ -4791,7 +4791,7 @@ it.effect(
         const fallback = started[2]!;
         assert.notEqual(fallback.runId, initial.runId);
 
-        const completed = yield* watchRun(fallback.runId, "waiting");
+        const completed = yield* watchRun(fallback.runId, "completed");
         const fallbackProviderTurn = (yield* orchestrator.getThreadProjection(
           threadId,
         )).providerTurns.find((candidate) => candidate.runAttemptId === fallback.attemptId)!;

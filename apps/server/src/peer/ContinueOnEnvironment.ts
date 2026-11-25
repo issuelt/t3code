@@ -184,9 +184,17 @@ const make = Effect.gen(function* () {
         ? `Its working files were copied into this checkout (${transferred.files} files written, ${transferred.deletions} deleted).`
         : "Its working files were not copied here.";
     // What the thread shows: its fork ancestors' rows, then its own, without rolled-back runs.
-    const history = yield* readForkHistoryItems(projectionStore, records, {
-      ordinal: Number.POSITIVE_INFINITY,
-    }).pipe(Effect.mapError(() => refused("This thread's conversation could not be read.")));
+    // A continuation carries every own run, so it reads like a side chat that inherits all of them.
+    const continuation = {
+      ...records.thread,
+      lineage: { ...records.thread.lineage, sideChat: true },
+    };
+    const history = yield* readForkHistoryItems(
+      projectionStore,
+      records,
+      { ordinal: Number.POSITIVE_INFINITY },
+      continuation,
+    ).pipe(Effect.mapError(() => refused("This thread's conversation could not be read.")));
     const selected = selectHistory({
       messages: history.flatMap((item) => {
         const message = historicalMessage(item);

@@ -1640,7 +1640,6 @@ export const layerToolSearch = Layer.mergeAll(
 /** Outside layerTools: only linked environments list it, never an agent. */
 export const layerWorkFilesToolkit = toolkitRegistration(WorkFilesToolkit, WorkFilesHandlers.layer);
 
-
 /**
  * A webhook subscription belongs to the outside client's session. Its id is the same for the
  * session's whole life, and a client signs in again rather than refreshing a token, so a new
