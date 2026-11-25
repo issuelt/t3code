@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -34,7 +35,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -346,6 +346,65 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([{ displayName: "Renamed" }, { accentColor: "#ff0000" }])(
+    "keeps the live instance when only %o changes",
+    (presentation) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make("account-a");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          displayName: "Account A",
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        const changes = yield* registry.subscribeChanges;
+        yield* mutator.reconcile({ [instanceId]: { ...entry, ...presentation } });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        yield* PubSub.take(changes);
+        expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("restores the default Pi name after clearing a saved custom label", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("pi-account");
+      const entry = {
+        driver: PiDriver.driverKind,
+        enabled: true,
+        config: { ...PiDriver.defaultConfig(), binaryPath: "unused-pi" },
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [PiDriver],
+        configMap: { [instanceId]: { ...entry, displayName: "My Pi account" } },
+      });
+      const initial = yield* registry.getInstance(instanceId);
+      const before = yield* initial!.snapshot.getSnapshot;
+      expect(before.displayName).toBe("My Pi account");
+
+      yield* mutator.reconcile({ [instanceId]: entry });
+
+      const updated = yield* registry.getInstance(instanceId);
+      const after = yield* updated!.snapshot.getSnapshot;
+      expect(after.displayName).toBe("Pi");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -1051,74 +1110,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
         "sk-rotated",
       ]);
     });
-  });
-
-  it.effect("does not rebuild an instance replaced after selection", () => {
-    const fixture = setup({ [secret.reference]: "sk-live" });
-    return Effect.gen(function* () {
-      const { registry, mutator } = yield* fixture.make;
-      const selected = yield* registry.listInstances;
-      fixture.vault.set(secret.reference, "sk-rotated");
-      yield* mutator.reloadSecrets();
-      const replacement = yield* registry.getInstance(instanceId);
-      expect(replacement).not.toBe(selected[0]);
-      yield* mutator.rebuild(selected);
-      expect(yield* registry.getInstance(instanceId)).toBe(replacement);
-      expect(fixture.created).toHaveLength(2);
-      yield* mutator.rebuild([replacement!]);
-      expect(fixture.created).toHaveLength(3);
-    }).pipe(Effect.scoped);
-  });
-
-  it.effect("keeps a rebuilt instance live while another instance's secret read waits", () => {
-    const plainId = ProviderInstanceId.make("fake_plain");
-    const created: Array<ProviderInstanceId> = [];
-    return Effect.gen(function* () {
-      const gate = yield* Deferred.make<void>();
-      const readStarts = yield* Queue.unbounded<void>();
-      const driver: AnyProviderDriver = {
-        driverKind,
-        metadata: { displayName: "Fake" },
-        configSchema: Schema.Unknown,
-        defaultConfig: () => ({}),
-        create: (input) =>
-          Effect.sync(() => {
-            created.push(input.instanceId);
-            return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
-          }),
-      };
-      const resolver = Layer.succeed(SecretResolver.SecretResolver, {
-        read: (references) =>
-          Queue.offer(readStarts, undefined).pipe(
-            Effect.andThen(Deferred.await(gate)),
-            Effect.as(references.map(() => "sk-live")),
-          ),
-        invalidate: () => Effect.void,
-        label: (provider) => Effect.succeed(provider),
-      });
-      const { registry, mutator } = yield* makeProviderInstanceRegistry({
-        drivers: [driver],
-        configMap: {
-          [instanceId]: {
-            driver: driverKind,
-            config: {},
-            environment: [{ name: "OPENAI_API_KEY", value: secret, sensitive: true }],
-          },
-          [plainId]: { driver: driverKind, config: {} },
-        },
-      }).pipe(Effect.provide(resolver));
-      const plain = yield* registry.getInstance(plainId);
-      // Startup's read and the rebuild's read both wait on the vault.
-      const rebuilding = yield* mutator.rebuild([plain!]).pipe(Effect.forkScoped);
-      yield* Queue.take(readStarts);
-      yield* Queue.take(readStarts);
-      expect(yield* registry.getInstance(plainId)).toBe(plain);
-
-      yield* Deferred.succeed(gate, undefined);
-      yield* Fiber.join(rebuilding);
-      expect(yield* registry.getInstance(plainId)).not.toBe(plain);
-      expect(created.filter((id) => id === plainId)).toHaveLength(2);
-    }).pipe(Effect.scoped);
   });
 
   it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {

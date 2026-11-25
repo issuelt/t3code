@@ -425,6 +425,47 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
   ),
 );
 
+it.effect("captures send_to_user results for providers that drop MCP outputs", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const draft = "### Status\n\nAll checks passed.";
+    const result = yield* server
+      .callTool({ name: "send_to_user", arguments: { message: draft } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).not.toBe(true);
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: draft })).toEqual(
+      { sentMessage: draft },
+    );
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: draft })).toBe(
+      undefined,
+    );
+
+    const invalid = yield* server
+      .callTool({ name: "send_to_user", arguments: { message: "" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.flip,
+      );
+    expect(invalid).toMatchObject({ _tag: "InvalidParams" });
+    expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: "" })).toEqual({
+      isError: true,
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerMessageToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpProviderSessions.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+      ),
+    ),
+  ),
+);
+
 it.effect("records only failed calls of tools that hand off no work", () => {
   // Recording runs detached from the tool response, so each recorded event is awaited.
   const recorded: Array<{ event: string; properties: object }> = [];
@@ -618,7 +659,7 @@ it.effect("handoff analytics read only the caller's active run and its message",
           Layer.succeed(
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
+              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),

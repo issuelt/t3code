@@ -55,6 +55,7 @@ interface LiveEntry {
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
   readonly secrets: InstanceSecrets;
+  readonly setPresentation: (entry: ProviderInstanceConfig) => void;
 }
 
 interface RegistryState {
@@ -68,6 +69,60 @@ interface RegistryState {
 
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+const withoutPresentation = ({
+  displayName: _displayName,
+  accentColor: _accentColor,
+  ...runtime
+}: ProviderInstanceConfig) => runtime;
+
+// Display name and accent colour are only labels; changing them must not stop the instance's sessions.
+const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
+  Equal.equals(withoutPresentation(a), withoutPresentation(b));
+
+// Drivers stamp the presentation they were created with into every snapshot, so a renamed
+// instance kept live restamps what it reports.
+const withLivePresentation = (
+  instance: ProviderInstance,
+  created: ProviderInstanceConfig,
+  defaultSnapshotDisplayName: string | undefined,
+) => {
+  let current = created;
+  const restamp = <S extends ServerProvider>(snapshot: S): S => {
+    const next: { -readonly [K in keyof S]: S[K] } = { ...snapshot };
+    for (const key of ["displayName", "accentColor"] as const) {
+      const value = current[key];
+      if (value === created[key]) continue;
+      const stamped = value || (key === "displayName" ? defaultSnapshotDisplayName : undefined);
+      if (stamped) next[key] = stamped;
+      else delete next[key];
+    }
+    return next;
+  };
+  const { snapshot, snapshotForCwd } = instance;
+  const wrapped: ProviderInstance = {
+    ...instance,
+    get displayName() {
+      return current.displayName;
+    },
+    get accentColor() {
+      return current.accentColor;
+    },
+    snapshot: {
+      ...snapshot,
+      getSnapshot: Effect.suspend(() => snapshot.getSnapshot).pipe(Effect.map(restamp)),
+      refresh: Effect.suspend(() => snapshot.refresh).pipe(Effect.map(restamp)),
+      streamChanges: Stream.suspend(() => snapshot.streamChanges).pipe(Stream.map(restamp)),
+    },
+    ...(snapshotForCwd
+      ? { snapshotForCwd: (cwd: string) => snapshotForCwd(cwd).pipe(Effect.map(restamp)) }
+      : {}),
+  };
+  const setPresentation = (entry: ProviderInstanceConfig) => {
+    current = entry;
+  };
+  return { instance: wrapped, setPresentation };
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -350,14 +405,14 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
+  const { instance, setPresentation } = withLivePresentation(
+    createResult.success,
+    entry,
+    driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
+  );
   return {
     kind: "live" as const,
-    live: {
-      instance: createResult.success,
-      scope: childScope,
-      entry,
-      secrets,
-    },
+    live: { instance, scope: childScope, entry, secrets, setPresentation },
   };
 });
 
@@ -394,7 +449,7 @@ const makeReconcile = <R>(input: {
         const nextEntry = configMap[instanceId];
         if (
           rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry))
+          (nextEntry !== undefined && !runtimeEqual(live.entry, nextEntry))
         ) {
           replacedIds.add(instanceId);
         }
@@ -440,6 +495,7 @@ const makeReconcile = <R>(input: {
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
       let orderChanged = false;
+      let presentationChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
@@ -449,7 +505,13 @@ const makeReconcile = <R>(input: {
 
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
-          builtEntries.set(instanceId, existing);
+          if (entryEqual(existing.entry, entry)) {
+            builtEntries.set(instanceId, existing);
+          } else {
+            existing.setPresentation(entry);
+            builtEntries.set(instanceId, { ...existing, entry });
+            presentationChanged = true;
+          }
           continue;
         }
         const parked = parkedSnapshot(instanceId, entry);
@@ -489,6 +551,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        presentationChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
@@ -637,6 +700,15 @@ export const makeProviderInstanceRegistry = Effect.fn(
         (rawInstanceId) => instanceId === undefined || rawInstanceId === instanceId,
         undefined,
       ).pipe(Effect.asVoid);
+  const rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"] = (
+    instanceIds,
+  ) =>
+    semaphore.withPermits(1)(
+      Ref.get(configMapRef).pipe(
+        Effect.flatMap((configMap) => reconcileWithR(configMap, new Set(instanceIds))),
+        Effect.provideContext(driverContext),
+      ),
+    );
   const applySecret: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["applySecret"] =
     (reference, value) =>
       reloadWhere(
@@ -646,44 +718,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
           ),
         { reference, value },
       );
-
-  const rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"] =
-    Effect.fn("ProviderInstanceRegistry.rebuild")(function* (instances) {
-      // Reconcile also builds every pending instance, so read the secrets it needs first and
-      // outside the lock, as startup does; a vault prompt then holds neither the lock nor the
-      // selected instances, which stay live until the cached read lets them rebuild at once.
-      const configMap = yield* Ref.get(configMapRef);
-      const live = yield* Ref.get(entries);
-      const selected = new Set(instances.map((instance) => instance.instanceId));
-      const references = yield* Effect.filter(
-        Object.entries(configMap),
-        ([rawInstanceId, entry]) => {
-          const id = ProviderInstanceId.make(rawInstanceId);
-          return (selected.has(id) || !live.has(id)) &&
-            secretReferencesOf(driversById, entry).length > 0
-            ? isEntryEnabled(driversById, entry)
-            : Effect.succeed(false);
-        },
-      ).pipe(
-        Effect.map((targets) =>
-          targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry)),
-        ),
-      );
-      if (references.length > 0) yield* (yield* SecretResolver.SecretResolver).read(references);
-      yield* semaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(entries);
-          const ids = new Set(
-            instances
-              .filter((instance) => current.get(instance.instanceId)?.instance === instance)
-              .map((instance) => instance.instanceId),
-          );
-          if (ids.size === 0) return;
-          yield* reconcileWithR(yield* Ref.get(configMapRef), ids);
-        }),
-      );
-    }, Effect.provideContext(driverContext));
-
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
     Ref.set(configMapRef, input.configMap).pipe(

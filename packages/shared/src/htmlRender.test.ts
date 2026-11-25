@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   HTML_ARTIFACT_SANDBOX,
+  htmlRenderFileName,
   injectHtmlRenderBootstrap,
   htmlArtifactDocument,
   htmlRenderThemeMessage,
@@ -13,6 +14,15 @@ import {
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+describe("htmlRenderFileName", () => {
+  it("never ends on half of an emoji at the length limit", () => {
+    const fits = "a".repeat(118);
+    const crosses = "a".repeat(119);
+    expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
+    expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+  });
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {
@@ -44,7 +54,7 @@ describe("injectHtmlRenderBootstrap", () => {
 
   it("wraps fragments without a head and keeps existing meta tags", () => {
     const fragment =
-      '<meta charset="utf-8"><meta name="viewport" content="width=device-width"><p>hi</p>';
+      '<meta charset="utf-8"><meta data-if="a<b" name="viewport" content="width=device-width"><p>hi</p>';
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
     expect(injected.match(/charset/g)).toHaveLength(1);
@@ -64,11 +74,28 @@ describe("injectHtmlRenderBootstrap", () => {
   it.each([
     '<template><head><meta name="viewport"></head></template>',
     '<template><template>inner</template><head><meta name="viewport"></head></template>',
+    '<template data-if="a<b"><head><meta name="viewport"></head></template>',
   ])("keeps the bootstrap outside inert template content: %s", (fragment) => {
     const injected = injectHtmlRenderBootstrap(fragment);
     expect(injected.startsWith("<!doctype html><head>")).toBe(true);
-    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf("<template>"));
+    expect(injected.indexOf('<style id="t3-theme">')).toBeLessThan(injected.indexOf("<template"));
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
+  it.each([
+    "<template ",
+    "<template '",
+    "<meta ",
+    "<meta name ",
+    '<meta "',
+    "<head ",
+    "<head '",
+    '<html a="b" ',
+  ])("scans a run of unclosed %s tags in one pass", (tag) => {
+    const fragment = tag.repeat(2_000_000 / tag.length);
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected.startsWith("<!doctype html><head>")).toBe(true);
     expect(injected.endsWith(fragment)).toBe(true);
   });
 

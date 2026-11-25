@@ -151,6 +151,41 @@ function providerTurn(input: {
   };
 }
 
+// Turns reach orchestration only as `provider_turn.updated` events, so tests read them there.
+function trackProviderTurns(
+  runtime: Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "events">,
+) {
+  const turns = new Map<string, OrchestrationV2ProviderTurn>();
+  const events = runtime.events.pipe(
+    Stream.tap((event) =>
+      Effect.sync(() => {
+        if (event.type === "provider_turn.updated") {
+          turns.set(event.providerTurn.id, event.providerTurn);
+        }
+      }),
+    ),
+  );
+  const awaitTurns = Effect.fnUntraced(function* (
+    predicate: (turns: ReadonlyArray<OrchestrationV2ProviderTurn>) => boolean,
+  ) {
+    const seen = () => [...turns.values()];
+    if (!predicate(seen())) {
+      yield* events.pipe(
+        Stream.takeUntil(() => predicate(seen())),
+        Stream.runDrain,
+      );
+    }
+    return seen();
+  });
+  const awaitLatestTurn = (
+    predicate: (turn: OrchestrationV2ProviderTurn) => boolean = () => true,
+  ) =>
+    awaitTurns((seen) => seen.length > 0 && predicate(seen.at(-1)!)).pipe(
+      Effect.map((seen) => seen.at(-1)!),
+    );
+  return { events, awaitTurns, awaitLatestTurn };
+}
+
 const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(function* (
   suffix: string,
   nativeSessionId: string,
@@ -260,6 +295,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       runtimePolicy: turnPolicy,
     });
   return {
+    ...trackProviderTurns(runtime),
     nativeSessionId,
     now,
     policy,
@@ -466,7 +502,7 @@ describe("OpenCodeAdapterV2", () => {
         yield* Effect.promise(() =>
           nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
         );
-        yield* harness.runtime.events.pipe(
+        yield* harness.events.pipe(
           Stream.filter((event) => event.type === "turn.terminal"),
           Stream.take(1),
           Stream.runDrain,
@@ -538,10 +574,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       const start = yield* harness.startTurn().pipe(Effect.forkScoped);
       yield* Effect.promise(() => catalogStarted.promise);
-      const snapshot = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      const activeTurn = snapshot.providerTurns.at(-1)!;
+      const activeTurn = yield* harness.awaitLatestTurn();
       const steer = (message: string) =>
         harness.runtime
           .steerTurn({
@@ -616,7 +649,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -648,7 +681,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -864,7 +897,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         });
         yield* harness.startTurn();
-        const received = yield* harness.runtime.events.pipe(
+        const received = yield* harness.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
           Effect.forkScoped,
@@ -999,7 +1032,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -1107,7 +1140,7 @@ describe("OpenCodeAdapterV2", () => {
           contextUsage: { usedTokens: 150_000, maxTokens: 160_000 },
         },
       });
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -1194,7 +1227,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       });
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -1236,7 +1269,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.filter(
           (event) =>
             event.type === "runtime_request.updated" ||
@@ -1312,7 +1345,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         });
         yield* harness.startTurn();
-        const received = yield* harness.runtime.events.pipe(
+        const received = yield* harness.events.pipe(
           Stream.takeUntil(
             (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
           ),
@@ -1723,7 +1756,7 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
         });
-        const awaitTerminal = harness.runtime.events.pipe(
+        const awaitTerminal = harness.events.pipe(
           Stream.filter((event) => event.type === "turn.terminal"),
           Stream.take(1),
           Stream.runDrain,
@@ -1736,14 +1769,9 @@ describe("OpenCodeAdapterV2", () => {
           yield* awaitTerminal;
         }
         assert.equal(offers.length, 0, "foreground admission must not offer a continuation");
-        const before = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        assert.equal(before.providerTurns.length, 1);
-        assert.equal(
-          before.providerTurns[0]?.status,
-          state === "settled" ? "completed" : "running",
-        );
+        const before = yield* harness.awaitTurns((turns) => turns.length > 0);
+        assert.equal(before.length, 1);
+        assert.equal(before[0]?.status, state === "settled" ? "completed" : "running");
 
         // Pinned task.ts injects a synthetic root prompt; prompt.ts saves it before starting its loop.
         yield* push(user("msg_background_result"));
@@ -1906,10 +1934,7 @@ describe("OpenCodeAdapterV2", () => {
           yield* push(status("idle"));
           yield* Fiber.join(starting);
           assert.equal(promptIds.length, 1, "failed waiting foreground cannot submit");
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(snapshot.providerTurns.at(-1)?.status, "failed");
+          yield* harness.awaitLatestTurn((turn) => turn.status === "failed");
           return;
         }
         if (end === "catalog-live" || end === "catalog-replay") {
@@ -1939,15 +1964,13 @@ describe("OpenCodeAdapterV2", () => {
           yield* TestClock.adjust("10 seconds");
           if (idle !== null) yield* Fiber.join(idle);
           else yield* Fiber.join(starting);
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           );
           assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");
+          const turn = yield* harness.awaitLatestTurn((turn) => turn.completedAt !== null);
+          assert.equal(turn.status, "completed");
           return;
         }
         assert.equal(offers.length, state === "settled" ? 1 : 0, "only a settled root needs a run");
@@ -1955,10 +1978,8 @@ describe("OpenCodeAdapterV2", () => {
           yield* offers[0]!.onRunEndedWithoutStarting!();
           yield* harness.startTurn("", undefined, undefined, false, "no-wake", {});
           yield* awaitTerminal;
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(snapshot.providerTurns.at(-1)?.status, "completed");
+          const turn = yield* harness.awaitLatestTurn((turn) => turn.completedAt !== null);
+          assert.equal(turn.status, "completed");
           assert.equal(promptIds.length, 1);
           return;
         }
@@ -2122,7 +2143,7 @@ describe("OpenCodeAdapterV2", () => {
           });
           assert.equal(beforeAdmission.runtimeRequests.length, 0);
           yield* harness.startTurn("", undefined, undefined, false, "held", {});
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil(
               (event) =>
                 event.type === "runtime_request.updated" &&
@@ -2224,7 +2245,7 @@ describe("OpenCodeAdapterV2", () => {
           assert.isTrue(Exit.isFailure(replacement), "uncertain native work requires reconnect");
           assert.equal(promptIds.length, 1, "replacement cannot join the surviving native loop");
           assert.deepEqual(aborted, [root, "ses_descendant"]);
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil(
               (event) =>
                 event.type === "provider_session.updated" &&
@@ -2278,19 +2299,13 @@ describe("OpenCodeAdapterV2", () => {
           yield* Effect.promise(() => routeStarted.promise);
           yield* TestClock.adjust("10 seconds");
           assert.isTrue(Exit.isFailure(yield* Fiber.join(starting)));
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(
-            snapshot.providerTurns.at(-1)?.status,
-            "failed",
-            "the installed turn must be finalized",
-          );
+          // The installed turn must be finalized.
+          yield* harness.awaitLatestTurn((turn) => turn.status === "failed");
           assert.deepEqual(aborted, [root, "ses_descendant"]);
           const replacement = yield* harness.startTurn("replacement").pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(replacement), "incomplete replay requires reconnect");
           assert.equal(promptIds.length, 1, "failed replay cannot submit a foreground prompt");
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           );
@@ -2372,7 +2387,7 @@ describe("OpenCodeAdapterV2", () => {
         if (end === "owned-exit" || end === "failed-stream") {
           if (end === "owned-exit") yield* Deferred.succeed(nativeExit, 1);
           else nativeEvents.close();
-          yield* harness.runtime.events.pipe(
+          yield* harness.events.pipe(
             Stream.filter(
               (event) =>
                 event.type === "provider_session.updated" &&
@@ -2460,10 +2475,8 @@ describe("OpenCodeAdapterV2", () => {
             [],
             "old callbacks cannot abort the installed runtime",
           );
-          const replacementSnapshot = yield* replacement.runtime.readThreadSnapshot({
-            providerThread: resumed,
-          });
-          assert.equal(replacementSnapshot.providerTurns.at(-1)?.status, "running");
+          const replacementTurn = yield* replacement.awaitLatestTurn();
+          assert.equal(replacementTurn.status, "running");
           return;
         }
         const foreground =
@@ -2496,12 +2509,10 @@ describe("OpenCodeAdapterV2", () => {
         if (end === "foreground-stop" || end === "foreground-eof") {
           if (end === "foreground-eof") nativeEvents.close();
           else {
-            const snapshot = yield* harness.runtime.readThreadSnapshot({
-              providerThread: harness.providerThread,
-            });
+            const turn = yield* harness.awaitLatestTurn((turn) => turn.status === "running");
             yield* harness.runtime.interruptTurn({
               providerThread: harness.providerThread,
-              providerTurnId: snapshot.providerTurns.at(-1)!.id,
+              providerTurnId: turn.id,
               requestRuntimeRestart: true,
             });
           }
@@ -2554,14 +2565,8 @@ describe("OpenCodeAdapterV2", () => {
           assert.equal(promptIds.length, 2);
           if (end === "foreground-second-saved") {
             yield* push({ type: "session.idle", properties: { sessionID: root } });
-            const snapshot = yield* harness.runtime.readThreadSnapshot({
-              providerThread: harness.providerThread,
-            });
-            assert.equal(
-              snapshot.providerTurns.at(-1)?.status,
-              "running",
-              "an earlier reply cannot admit the foreground prompt",
-            );
+            // An earlier reply cannot admit the foreground prompt.
+            yield* harness.awaitLatestTurn((turn) => turn.status === "running");
           }
           return;
         }
@@ -2593,7 +2598,7 @@ describe("OpenCodeAdapterV2", () => {
           if (end === "sequential") yield* secondResult;
           assert.equal(offers.length, 2, "completed sequential wakes each offer once");
           yield* harness.startTurn("", undefined, undefined, false, "wake-two", {});
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           );
@@ -2608,11 +2613,11 @@ describe("OpenCodeAdapterV2", () => {
             ),
           );
           assert.equal(promptIds.length, 1, "continuations never submit another prompt");
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
+          const turns = yield* harness.awaitTurns(
+            (turns) => turns.length === 3 && turns.every((turn) => turn.completedAt !== null),
+          );
           assert.deepEqual(
-            snapshot.providerTurns.map((turn) => turn.status),
+            turns.map((turn) => turn.status),
             ["completed", "completed", "completed"],
           );
           return;
@@ -2625,10 +2630,7 @@ describe("OpenCodeAdapterV2", () => {
           if (end === "foreground-buffered" || end === "foreground-buffered-error")
             yield* harness.startTurn("follow up", undefined, undefined, false, "next");
           assert.equal(promptIds.length, 2, "the foreground prompt is submitted");
-          const snapshot = yield* harness.runtime.readThreadSnapshot({
-            providerThread: harness.providerThread,
-          });
-          assert.equal(snapshot.providerTurns.at(-1)?.status, "running");
+          yield* harness.awaitLatestTurn((turn) => turn.status === "running");
           yield* push(user(promptIds[1]!));
           yield* push({
             type: "message.part.updated",
@@ -2665,7 +2667,7 @@ describe("OpenCodeAdapterV2", () => {
           end === "foreground-buffered" ||
           end === "foreground-buffered-error"
         ) {
-          const events = yield* harness.runtime.events.pipe(
+          const events = yield* harness.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runCollect,
           );
@@ -2794,7 +2796,7 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
@@ -2951,7 +2953,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const childTurns = yield* harness.runtime.events.pipe(
+      const childTurns = yield* harness.events.pipe(
         Stream.filter(
           (event) =>
             event.type === "provider_turn.updated" &&
@@ -3064,7 +3066,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
         ),
@@ -3183,7 +3185,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "plan.updated"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -3250,7 +3252,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
+      const received = yield* harness.events.pipe(
         Stream.takeUntil(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
         ),
@@ -3511,7 +3513,7 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       yield* Fiber.join(start);
-      const terminal = yield* harness.runtime.events.pipe(
+      const terminal = yield* harness.events.pipe(
         Stream.filter((event) => event.type === "turn.terminal"),
         Stream.take(1),
         Stream.runCollect,
@@ -3573,7 +3575,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       });
       yield* harness.startTurn("/compact");
-      const events = yield* harness.runtime.events.pipe(
+      const events = yield* harness.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
@@ -3627,7 +3629,7 @@ describe("OpenCodeAdapterV2", () => {
         id: ProviderThreadId.make("provider-thread:opencode-test:forked-run-row"),
       };
       yield* harness.startTurn("/compact", forkedRow);
-      const terminal = yield* harness.runtime.events.pipe(
+      const terminal = yield* harness.events.pipe(
         Stream.filter(
           (event): event is Extract<typeof event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
@@ -3748,14 +3750,12 @@ describe("OpenCodeAdapterV2", () => {
         { options: [{ id: "variant", value: "high" }], interactionMode: "plan" },
       );
       yield* harness.startTurn();
-      const snapshot = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
+      const turn = yield* harness.awaitLatestTurn();
       yield* harness.runtime.steerTurn({
         threadId: harness.threadId,
         runId: harness.runId,
         providerThread: harness.providerThread,
-        providerTurnId: snapshot.providerTurns.at(-1)!.id,
+        providerTurnId: turn.id,
         message: {
           messageId: MessageId.make("message-opencode-steer-agent"),
           text: "also cover the README",
@@ -3874,6 +3874,7 @@ describe("OpenCodeAdapterV2", () => {
         modelSelection,
         runtimePolicy: policy,
       });
+      const tracked = trackProviderTurns(runtime);
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
@@ -3981,9 +3982,8 @@ describe("OpenCodeAdapterV2", () => {
 
       yield* Effect.promise(() => statusCalled.promise);
 
-      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
-      assert.equal(snapshot.providerTurns.at(-1)?.status, "running");
-      const activeTurn = snapshot.providerTurns.at(-1)!;
+      const activeTurn = yield* tracked.awaitLatestTurn();
+      assert.equal(activeTurn.status, "running");
       const steer = yield* runtime
         .steerTurn({
           threadId,
@@ -4089,8 +4089,8 @@ describe("OpenCodeAdapterV2", () => {
           properties: { sessionID: "native-opencode-race", status: { type: "idle" } },
         }),
       );
-      const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
-      assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
+      const interrupted = yield* tracked.awaitLatestTurn((turn) => turn.completedAt !== null);
+      assert.equal(interrupted.status, "interrupted");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
@@ -4134,10 +4134,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       );
       yield* harness.startTurn();
-      const snapshot = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      const turn = snapshot.providerTurns.at(-1)!;
+      const turn = yield* harness.awaitLatestTurn();
       const steer = yield* harness.runtime
         .steerTurn({
           threadId: harness.threadId,
@@ -4175,10 +4172,8 @@ describe("OpenCodeAdapterV2", () => {
           properties: { sessionID: "root", status: { type: "idle" } },
         }),
       );
-      const stopped = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      assert.equal(stopped.providerTurns.at(-1)?.status, "interrupted");
+      const stopped = yield* harness.awaitLatestTurn((turn) => turn.completedAt !== null);
+      assert.equal(stopped.status, "interrupted");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
@@ -4261,10 +4256,8 @@ describe("OpenCodeAdapterV2", () => {
           },
         }),
       );
-      const running = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      yield* harness.runtime.events.pipe(
+      const running = yield* harness.awaitLatestTurn();
+      yield* harness.events.pipe(
         Stream.tap((event) =>
           event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
         ),
@@ -4276,7 +4269,7 @@ describe("OpenCodeAdapterV2", () => {
           threadId: harness.threadId,
           runId: harness.runId,
           providerThread: harness.providerThread,
-          providerTurnId: running.providerTurns.at(-1)!.id,
+          providerTurnId: running.id,
           message: {
             messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
             text: "also cover the README",
@@ -4294,17 +4287,13 @@ describe("OpenCodeAdapterV2", () => {
           Deferred.await(terminal).pipe(Effect.as("completed")),
         );
         assert.equal(outcome, "rechecked");
-        const active = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        const active = yield* harness.awaitLatestTurn();
+        assert.equal(active.status, "running");
         yield* Effect.promise(() => nativeEvents.push(idle));
       }
       if (idleTiming === "after-refused-connection") {
-        const active = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        assert.equal(active.providerTurns.at(-1)?.status, "running");
+        const active = yield* harness.awaitLatestTurn();
+        assert.equal(active.status, "running");
         yield* Effect.promise(() => nativeEvents.push(idle));
       }
       yield* Deferred.await(terminal);
@@ -4312,10 +4301,8 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(statusCalls, idleTiming === "idle-during-status" ? 2 : 1);
       }
 
-      const settled = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      assert.equal(settled.providerTurns.at(-1)?.status, "completed");
+      const settled = yield* harness.awaitLatestTurn((turn) => turn.completedAt !== null);
+      assert.equal(settled.status, "completed");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -4363,10 +4350,8 @@ describe("OpenCodeAdapterV2", () => {
             }),
           );
         yield* userMessage(promptIds[0]);
-        const running = yield* harness.runtime.readThreadSnapshot({
-          providerThread: harness.providerThread,
-        });
-        const received = yield* harness.runtime.events.pipe(
+        const running = yield* harness.awaitLatestTurn();
+        const received = yield* harness.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
           Effect.forkScoped,
@@ -4375,7 +4360,7 @@ describe("OpenCodeAdapterV2", () => {
           threadId: harness.threadId,
           runId: harness.runId,
           providerThread: harness.providerThread,
-          providerTurnId: running.providerTurns.at(-1)!.id,
+          providerTurnId: running.id,
           message: {
             messageId: MessageId.make("message-steer-reply-lost"),
             text: "also cover the README",
@@ -4519,12 +4504,13 @@ describe("OpenCodeAdapterV2", () => {
         modelSelection,
         runtimePolicy: policy,
       });
+      const tracked = trackProviderTurns(runtime);
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy: policy,
       });
-      const terminalEvents = yield* runtime.events.pipe(
+      const terminalEvents = yield* tracked.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
@@ -4575,8 +4561,7 @@ describe("OpenCodeAdapterV2", () => {
         .pipe(Effect.forkScoped);
 
       yield* Effect.promise(() => promptStarted.promise);
-      const running = yield* runtime.readThreadSnapshot({ providerThread });
-      const activeTurn = running.providerTurns.at(-1)!;
+      const activeTurn = yield* tracked.awaitLatestTurn();
       const interrupt = yield* runtime
         .interruptTurn({ providerThread, providerTurnId: activeTurn.id })
         .pipe(Effect.forkScoped);
@@ -4644,10 +4629,7 @@ describe("OpenCodeAdapterV2", () => {
         mcp: { add: async () => ({ data: true }) },
       });
       yield* harness.startTurn();
-      const snapshot = yield* harness.runtime.readThreadSnapshot({
-        providerThread: harness.providerThread,
-      });
-      const turn = snapshot.providerTurns.at(-1)!;
+      const turn = yield* harness.awaitLatestTurn();
       const interrupt = yield* harness.runtime
         .interruptTurn({ providerThread: harness.providerThread, providerTurnId: turn.id })
         .pipe(Effect.flip, Effect.forkScoped);
@@ -4688,10 +4670,7 @@ describe("OpenCodeAdapterV2", () => {
         },
       );
       yield* harness.startTurn();
-      const terminalEvents = yield* harness.runtime.events.pipe(
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
+      const terminalEvents = yield* harness.events.pipe(Stream.runCollect, Effect.forkScoped);
 
       nativeEvents.close();
       const received = Array.from(yield* Fiber.join(terminalEvents));
@@ -4745,7 +4724,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       ).pipe(Effect.provideService(Clock.Clock, blockingClock));
-      const events = yield* harness.runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const events = yield* harness.events.pipe(Stream.runCollect, Effect.forkScoped);
       const start = yield* harness.startTurn("/compact").pipe(Effect.forkScoped);
       yield* Effect.promise(() => summarizeStarted.promise);
       blockNextClockRead = true;
@@ -4818,7 +4797,7 @@ describe("OpenCodeAdapterV2", () => {
         .pipe(Effect.provideService(Clock.Clock, blockingClock), Effect.exit, Effect.forkScoped);
       yield* Deferred.await(startClockRead);
 
-      const events = yield* harness.runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const events = yield* harness.events.pipe(Stream.runCollect, Effect.forkScoped);
       nativeEvents.close();
       yield* Fiber.join(events);
       yield* Deferred.succeed(releaseStartClockRead, undefined);
