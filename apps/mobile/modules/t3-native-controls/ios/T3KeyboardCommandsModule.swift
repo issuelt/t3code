@@ -43,6 +43,8 @@ public final class T3KeyboardCommandsView: ExpoView {
         : enabledCommand("focusSearch", input: "k", modifiers: .command, action: #selector(focusSearch), title: "Focus Search"),
       enabledCommand("paletteNext", input: UIKeyCommand.inputDownArrow, modifiers: [], action: #selector(paletteNext), title: "Next Result"),
       enabledCommand("palettePrevious", input: UIKeyCommand.inputUpArrow, modifiers: [], action: #selector(palettePrevious), title: "Previous Result"),
+      enabledCommand("paletteNext", input: "n", modifiers: .control, action: #selector(paletteNext), title: "Next Result"),
+      enabledCommand("palettePrevious", input: "p", modifiers: .control, action: #selector(palettePrevious), title: "Previous Result"),
       enabledCommand("paletteDismiss", input: UIKeyCommand.inputEscape, modifiers: [], action: #selector(paletteDismiss), title: "Close Command Palette"),
       enabledCommand("back", input: "[", modifiers: .command, action: #selector(goBack), title: "Back"),
       enabledCommand("files", input: "f", modifiers: [.command, .shift], action: #selector(openFiles), title: "Open Files"),
