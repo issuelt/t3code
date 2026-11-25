@@ -6,7 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -19,6 +19,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { PullRequestCheckList } from "./PullRequestCheckList";
 import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
+  pullRequestChecksCountLabel,
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
@@ -117,12 +118,7 @@ export function PullRequestChecksPopover({
   const gt = useGT();
   const resolve = useMessages();
   const presentation = pullRequestChecksStatePresentation(checksState, resolve);
-  const incompleteCount =
-    checks?.filter((check) => check.status === "pending" || check.status === "action-required")
-      .length ?? 0;
-  const failedCount =
-    checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
-    0;
+  const countLabel = checks === undefined ? null : pullRequestChecksCountLabel(checks, resolve);
   const summary =
     checks === undefined || stale ? null : summarizePullRequestChecks(checks, resolve);
   return (
@@ -148,26 +144,8 @@ export function PullRequestChecksPopover({
         onClick={(event) => event.stopPropagation()}
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
-        {variant === "count" ? (
-          <>
-            {checks !== undefined && incompleteCount > 0 ? (
-              // Clip the second line so "checks" disappears whole when the count must shrink.
-              <span className="h-lh min-w-0 overflow-hidden text-left whitespace-normal tabular-nums">
-                <T>
-                  <span className="whitespace-nowrap">
-                    <Var>{checks.length - incompleteCount}</Var>/<Var>{checks.length}</Var>
-                  </span>{" "}
-                  checks
-                </T>
-              </span>
-            ) : failedCount > 0 ? (
-              <span className="min-w-0 truncate tabular-nums">
-                {gt("{count, plural, one {{count} failed} other {{count} failed}}", {
-                  count: failedCount,
-                })}
-              </span>
-            ) : null}
-          </>
+        {variant === "count" && countLabel !== null ? (
+          <span className="min-w-0 truncate tabular-nums">{countLabel}</span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">

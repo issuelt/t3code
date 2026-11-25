@@ -61,6 +61,15 @@ function watchChecksOf(checks: ReadonlyArray<PullRequestCheck>): ThreadPullReque
   };
 }
 
+function isReviewAcknowledgement(remark: PullRequestComment): boolean {
+  return (
+    remark.author?.login.toLowerCase().replace(/\[bot\]$/, "") === "coderabbitai" &&
+    /<!-- This is an auto-generated reply by CodeRabbit -->[\s\S]*?<summary>[^\p{L}<]*Actions? performed<\/summary>\s*(?:<dl>\s*<dd>\s*<br>\s*)?(?:Full review|Review) triggered\./u.test(
+      remark.body.slice(0, 1_000),
+    )
+  );
+}
+
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
@@ -173,7 +182,9 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      if (!checksBaseline) {
+      // CI running at the start that has since settled green is news. The start rollup can be
+      // pending only on optional checks, so a passed gate alone is not.
+      if (!checksBaseline || (watch.checksPending === true && settled)) {
         changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       }
       owedChecks =
@@ -241,7 +252,8 @@ export function evaluatePullRequestWatch(
       remark.author?.login.toLowerCase() !== own
     );
   });
-  if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
+  const actionable = fresh.filter((remark) => !isReviewAcknowledgement(remark));
+  if (actionable.length > 0) changes.push({ kind: "remarks", remarks: actionable });
   const latest = Math.max(through, ...fresh.map((remark) => Date.parse(activeAt(remark))));
   const atLatest = fresh.filter((remark) => Date.parse(activeAt(remark)) === latest);
   const remarksThrough = latest === through ? watch.remarksThrough : activeAt(atLatest[0]!);

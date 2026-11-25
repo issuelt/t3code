@@ -157,14 +157,14 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       : undefined;
   return yield* (
     refusedDirect ??
-      transient ??
-      blocked ??
-      new ConnectionTransientError({
-        reason: "endpoint-unavailable",
-        ...translatableDetail(
-          msg("{host} did not answer on any saved route.", { host: entry.target.label }),
-        ),
-      })
+    transient ??
+    blocked ??
+    new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      ...translatableDetail(
+        msg("{host} did not answer on any saved route.", { host: entry.target.label }),
+      ),
+    })
   );
 });
 

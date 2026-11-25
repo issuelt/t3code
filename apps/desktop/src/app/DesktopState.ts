@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { DatabaseMigrationProgress } from "@t3tools/contracts";
 
 import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts";
 
@@ -25,6 +26,7 @@ export class DesktopState extends Context.Service<
     // Set by DesktopUpdates.configure, which runs before the first backend start.
     readonly canInstallUpdates: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
+    readonly databaseMigrationProgress: Ref.Ref<DatabaseMigrationProgress | null>;
   }
 >()("@t3tools/desktop/app/DesktopState") {}
 
@@ -34,6 +36,7 @@ const make = Effect.all({
   keepAliveOnClose: Ref.make(false),
   canInstallUpdates: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
+  databaseMigrationProgress: Ref.make<DatabaseMigrationProgress | null>(null),
 });
 
 export const layer = Layer.effect(DesktopState, make);

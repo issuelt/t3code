@@ -116,6 +116,8 @@ const setup = (
               turnItems: items.filter((row) => runIds?.includes(row.runId as never) ?? true),
             } as never;
           }),
+        // The fork inherited every run its origin had when it forked.
+        getForkSourceRunIds: () => Effect.succeed(["run:o1"] as never),
       }),
     ),
     Layer.provide(

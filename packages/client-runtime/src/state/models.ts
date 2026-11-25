@@ -12,6 +12,7 @@ import type {
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -99,6 +100,11 @@ export interface ThreadRunSummary {
   readonly providerStartingLabel?: string;
   /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
   readonly providerStartingLabelMsg?: string;
+  /** The starting provider, so clients can show its logo beside the label. */
+  readonly providerStarting?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  };
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -165,6 +171,8 @@ export interface EnvironmentThreadShell {
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
   readonly homeJob: NonNullable<OrchestrationV2ThreadShell["homeJob"]> | null;
+  /** The workflow run this thread is an agent step of, if it is one. */
+  readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -320,6 +328,7 @@ export function presentThreadShell(
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
     homeJob: thread.homeJob ?? null,
+    workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,
