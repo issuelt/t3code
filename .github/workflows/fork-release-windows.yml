@@ -157,8 +157,8 @@ jobs:
           set -euo pipefail
           cd release-assets
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir ../old
-          sha256sum t3-*.zip > ../new-sums
-          # Keep every other platform's line, replace this archive's.
+          sha256sum ./* | sed 's#  \./#  #' > ../new-sums
+          # Keep every other platform's line, replace the lines of the files uploaded here.
           awk 'NR == FNR { replaced[$2] = 1; next } !($2 in replaced)' ../new-sums ../old/SHA256SUMS > SHA256SUMS
           cat ../new-sums >> SHA256SUMS
           cat SHA256SUMS
