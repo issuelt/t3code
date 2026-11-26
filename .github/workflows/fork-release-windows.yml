@@ -1,0 +1,165 @@
+name: Fork Release Windows
+
+# Adds the Windows x64 installer, its update feed (nightly.yml), and the CLI
+# archive to a nightly that was published without them, such as one built
+# locally while Fork Release is disabled. Uses Fork Release's Windows steps on
+# a GitHub-hosted runner.
+#   gh workflow run fork-release-windows.yml -R issuelt/t3code -f tag=v<version>
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, such as v0.1.13-nightly.20261126.220
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release-windows-${{ inputs.tag }}
+
+jobs:
+  build:
+    name: Build win-x64
+    runs-on: windows-2025
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Resolve the tag
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]] || { echo "Not a nightly tag: $TAG" >&2; exit 1; }
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        shell: bash
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) { exit 1 }
+
+      - name: Install dependencies
+        run: vp install
+
+      # Official builds bake T3 Connect's public Clerk and relay ids into the bundle.
+      - name: Enable T3 Connect
+        run: cp .env.example .env
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ steps.meta.outputs.version }}"
+
+      - name: Build desktop artifact
+        shell: bash
+        run: |
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "${{ steps.meta.outputs.version }}" \
+            --verbose
+
+      - name: Build CLI single-executable
+        shell: bash
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor"
+          mkdir -p "$monitor_dir/win32-x64"
+          cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe "$monitor_dir/win32-x64/t3-resource-monitor.exe"
+          node scripts/build-cli-archive.ts \
+            --platform win \
+            --arch x64 \
+            --version "${{ steps.meta.outputs.version }}" \
+            --resource-monitor-dir "$monitor_dir" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.meta.outputs.version }}"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-publish
+          for file in release-cli/* release/*.exe release/*.blockmap release/*.yml; do
+            [[ "$file" == */builder-debug.yml ]] && continue
+            cp "$file" release-publish/
+          done
+          ls -la release-publish
+          ls release-publish/nightly.yml
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-win-x64
+          path: release-publish/*
+          if-no-files-found: error
+          retention-days: 2
+
+  # Stays on Linux: only this job holds contents: write.
+  upload:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: desktop-win-x64
+          path: release-assets
+
+      - name: Upload to the release and update SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir ../old
+          sha256sum t3-*.zip > ../new-sums
+          # Keep every other platform's line, replace this archive's.
+          awk 'NR == FNR { replaced[$2] = 1; next } !($2 in replaced)' ../new-sums ../old/SHA256SUMS > SHA256SUMS
+          cat ../new-sums >> SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" ./* --repo "$GITHUB_REPOSITORY" --clobber
