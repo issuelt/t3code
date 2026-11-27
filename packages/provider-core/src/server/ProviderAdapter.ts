@@ -77,6 +77,12 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
+/** The fork answers provider approval asks itself only in Full access with no stricter policy set. */
+export const acceptsEveryApproval = (policy: ProviderAdapterV2RuntimePolicy): boolean =>
+  policy.runtimeMode === "full-access" &&
+  policy.approvalPolicy === undefined &&
+  policy.sandboxPolicy === undefined;
+
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
   messageId: MessageId,
   text: Schema.String,

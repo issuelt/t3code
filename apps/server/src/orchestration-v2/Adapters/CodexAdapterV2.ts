@@ -903,8 +903,8 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
 
 // Codex still asks under full access's granular policy, for example before `rm -rf`.
 const isFullAccess = (context: {
-  readonly input: { readonly runtimePolicy: { readonly runtimeMode: RuntimeMode } };
-}) => context.input.runtimePolicy.runtimeMode === "full-access";
+  readonly input: { readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy };
+}) => ProviderAdapter.acceptsEveryApproval(context.input.runtimePolicy);
 
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 

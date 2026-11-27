@@ -13539,7 +13539,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
-          const fullAccess = context.input.runtimePolicy.runtimeMode === "full-access";
+          const fullAccess = ProviderAdapter.acceptsEveryApproval(context.input.runtimePolicy);
           if (
             context.input.runtimePolicy.interactionMode === "plan" &&
             (context.input.runtimePolicy.approvalPolicy === "never" || fullAccess)
@@ -13705,7 +13705,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // from Full access or an earlier answer and offers none to remember.
           if (
             ownRequest === undefined &&
-            (context.input.runtimePolicy.runtimeMode === "full-access" ||
+            (ProviderAdapter.acceptsEveryApproval(context.input.runtimePolicy) ||
               (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey))
           ) {
             return acceptance;

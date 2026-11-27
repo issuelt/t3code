@@ -2058,7 +2058,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (pendingRequestsByNativeId.has(nativeRequestId)) return;
           const { state, turn, subagent } = owner;
           // Full access installs allow-all rules, but OpenCode can still ask before they apply.
-          if (request.type === "permission" && turn.runtimePolicy.runtimeMode === "full-access") {
+          if (
+            request.type === "permission" &&
+            ProviderAdapter.acceptsEveryApproval(turn.runtimePolicy)
+          ) {
             const replied = yield* sdkCall(
               "permission.reply",
               { requestID: nativeRequestId, reply: "once" },
