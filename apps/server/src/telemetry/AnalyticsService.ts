@@ -68,10 +68,13 @@ function retryDelayMs(failures: number, random: number): number {
 }
 
 const TelemetryEnvConfig = Config.all({
+  // The fork keeps the pre-rename names so an existing override never falls back to ingest.t3.codes.
   ingestKey: Config.String("T3CODE_TELEMETRY_KEY").pipe(
+    Config.orElse(() => Config.String("T3CODE_POSTHOG_KEY")),
     Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
   ),
   ingestHost: Config.String("T3CODE_TELEMETRY_HOST").pipe(
+    Config.orElse(() => Config.String("T3CODE_POSTHOG_HOST")),
     Config.withDefault("https://ingest.t3.codes"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option),

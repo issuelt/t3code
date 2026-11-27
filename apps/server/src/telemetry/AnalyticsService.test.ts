@@ -514,6 +514,66 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
   );
 });
 
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "AnalyticsService env names",
+  (it) => {
+    it.effect.each([
+      {
+        name: "the pre-rename names alone",
+        env: { T3CODE_POSTHOG_KEY: "phc_old", T3CODE_POSTHOG_HOST: "http://old.invalid" },
+        expected: { url: "http://old.invalid/batch/", key: "phc_old" },
+      },
+      {
+        name: "the new names over the pre-rename ones",
+        env: {
+          T3CODE_POSTHOG_KEY: "phc_old",
+          T3CODE_POSTHOG_HOST: "http://old.invalid",
+          T3CODE_TELEMETRY_KEY: "phc_new",
+          T3CODE_TELEMETRY_HOST: "http://new.invalid",
+        },
+        expected: { url: "http://new.invalid/batch/", key: "phc_new" },
+      },
+    ])("sends to the host and key from $name", ({ env, expected }) =>
+      Effect.gen(function* () {
+        const sent: Array<{ url: string; key: unknown }> = [];
+        const client = HttpClient.make((request) => {
+          if (request.body._tag === "Uint8Array") {
+            const body = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              readonly api_key?: unknown;
+            };
+            sent.push({ url: request.url, key: body.api_key });
+          }
+          return respondWithStatus(204)(request);
+        });
+        const layer = AnalyticsService.layer.pipe(
+          Layer.provideMerge(
+            ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-names-" }),
+          ),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({ T3CODE_TELEMETRY_ENABLED: true, ...env }),
+            ),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Architecture, "x64"),
+              Layer.succeed(HttpClient.HttpClient, client),
+              ManagedPolicy.layerTest(),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.env-names");
+          yield* analytics.flush;
+        }).pipe(Effect.provide(layer));
+        assert.deepEqual(sent, [expected]);
+      }),
+    );
+  },
+);
+
 it("reports a WSL distro by its family, never by a name its user chose", () => {
   assert.equal(AnalyticsService.wslDistroFamily("Ubuntu-24.04"), "Ubuntu");
   assert.equal(AnalyticsService.wslDistroFamily("openSUSE-Tumbleweed"), "openSUSE");
