@@ -539,6 +539,12 @@ const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "preview.find": msg("Preview: Find on Page"),
 };
 
+const FORK_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
+  "decisions.open": msg("Decisions: Open"),
+  "home.open": msg("Home: Open"),
+  "fleet.open": msg("Fleet: Open"),
+};
+
 export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {
   const label = COMMAND_LABELS[command];
   if (label) return resolve(label);
@@ -546,6 +552,8 @@ export function commandLabel(command: KeybindingCommand, resolve: MessageResolve
   if (usageLabel) return resolve(usageLabel);
   const lateLabel = LATE_COMMAND_LABELS[command];
   if (lateLabel) return resolve(lateLabel);
+  const forkLabel = FORK_COMMAND_LABELS[command];
+  if (forkLabel) return resolve(forkLabel);
   const raw = String(command);
   if (raw.startsWith("thread.jump.")) {
     return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
