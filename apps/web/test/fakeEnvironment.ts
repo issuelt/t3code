@@ -718,16 +718,6 @@ export function answerRpc(method: string, handler: (input: never) => unknown): D
   };
 }
 
-export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
-  if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");
-  await Effect.runPromise(Queue.offer(terminalMetadataSubscriber, event));
-}
-
-/** Whether the app holds a live subscription to the thread, so events reach it. */
-export function isThreadSubscribed(threadId: ThreadId): boolean {
-  return threadSubscribers.has(threadId);
-}
-
 /** Delivers one domain event, such as a run or turn-item update, to the thread's subscription. */
 export async function emitThreadEvent(
   threadId: ThreadId,
@@ -754,8 +744,3 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
 }
 
 export { userItem };
-
-export async function emitVcsStatus(event: VcsStatusStreamEvent): Promise<void> {
-  if (vcsStatusSubscriber === null) throw new Error("No VCS status subscription");
-  await Effect.runPromise(Queue.offer(vcsStatusSubscriber, event));
-}

@@ -71,6 +71,7 @@ const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
   "previewOpen",
+  "composerEmpty",
   "isWeb",
   "isDesktop",
   "true",
@@ -218,7 +219,9 @@ function keybindingRowId(command: KeybindingCommand, key: string, when: string):
 
 function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
   if (leftWhen === "false" || rightWhen === "false") return false;
-  return leftWhen.length === 0 || rightWhen.length === 0 || leftWhen === rightWhen;
+  // An empty condition and "true" are both always active.
+  const always = (when: string) => when.length === 0 || when === "true";
+  return always(leftWhen) || always(rightWhen) || leftWhen === rightWhen;
 }
 
 export function keybindingConflictLabels(
@@ -468,6 +471,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.splitVertical": msg("Terminal: Split Vertical"),
   "terminal.new": msg("Terminal: New"),
   "terminal.close": msg("Terminal: Close"),
+  "terminal.previous": msg("Terminal: Previous"),
+  "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
   "threadPanel.toggle": msg("Thread Panel: Toggle"),
@@ -534,6 +539,12 @@ const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "preview.find": msg("Preview: Find on Page"),
 };
 
+const FORK_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
+  "decisions.open": msg("Decisions: Open"),
+  "home.open": msg("Home: Open"),
+  "fleet.open": msg("Fleet: Open"),
+};
+
 export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {
   const label = COMMAND_LABELS[command];
   if (label) return resolve(label);
@@ -541,6 +552,8 @@ export function commandLabel(command: KeybindingCommand, resolve: MessageResolve
   if (usageLabel) return resolve(usageLabel);
   const lateLabel = LATE_COMMAND_LABELS[command];
   if (lateLabel) return resolve(lateLabel);
+  const forkLabel = FORK_COMMAND_LABELS[command];
+  if (forkLabel) return resolve(forkLabel);
   const raw = String(command);
   if (raw.startsWith("thread.jump.")) {
     return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));

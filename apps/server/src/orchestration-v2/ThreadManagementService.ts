@@ -82,6 +82,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -687,7 +688,8 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
-  const sql = yield* SqlClient.SqlClient;
+  // Home coordination stores requests in SQL; tests that never coordinate run without a database.
+  const sql = Option.getOrUndefined(yield* Effect.serviceOption(SqlClient.SqlClient));
   const worktreeRestore = yield* ThreadWorktreeRestore;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
@@ -728,6 +730,7 @@ const make = Effect.gen(function* () {
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
+    { attributes: routineSpan },
   )(function* (threadId: ThreadId) {
     yield* legacyImporter.ensureTranscript(threadId).pipe(
       Effect.tapError((cause) =>
@@ -1024,6 +1027,7 @@ const make = Effect.gen(function* () {
       ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
+      ...(mode === "queue" ? { explicitQueue: true as const } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });
@@ -1087,6 +1091,13 @@ const make = Effect.gen(function* () {
           messageRoles: ["user"],
         },
       );
+      if (sql === undefined) {
+        return yield* new ThreadManagementCoordinationError({
+          threadId: input.requesterThreadId,
+          requestMessageId: input.requestMessageId,
+          reason: "storage",
+        });
+      }
       yield* sql`INSERT INTO coordination_requests
       (request_message_id, requester_thread_id, responder_environment_id, responder_thread_id, origin_run_id, owner)
       VALUES (${input.requestMessageId}, ${input.requesterThreadId}, ${input.responder.environmentId},
@@ -1131,6 +1142,9 @@ const make = Effect.gen(function* () {
 
   const deliverCoordinationResult = Effect.fn("ThreadManagementService.deliverCoordinationResult")(
     function* (input: FleetInput<"threads.deliver-result">, actor: FleetActor) {
+      if (sql === undefined) {
+        return yield* new ThreadManagementCoordinationError({ ...input, reason: "storage" });
+      }
       const records = yield* sql<{
         origin_run_id: string | null;
         owner: "job" | "coordination";
@@ -2193,7 +2207,6 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-  | SqlClient.SqlClient
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(layerThreadWorktreeRestoreNoop),
@@ -2209,5 +2222,4 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-  | SqlClient.SqlClient
 > = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));

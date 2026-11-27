@@ -6,7 +6,7 @@ import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { PullRequestCheckStatusIcon, pullRequestCheckStatusLabel } from "./pullRequestPresentation";
 
 export type PullRequestCheckListItem = Pick<PullRequestCheck, "name" | "status" | "phase" | "url"> &
@@ -53,24 +53,22 @@ export function PullRequestCheckList({
               still={dense}
               {...(dense && { className: "size-3" })}
             />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  dense && check.url !== null ? (
-                    <button
-                      type="button"
-                      className="min-w-0 truncate rounded-sm text-left hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                      onClick={() => open(check.url)}
-                    />
-                  ) : (
-                    <span className="min-w-0 truncate" />
-                  )
-                }
-              >
-                {check.name}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                dense && check.url !== null ? (
+                  <button
+                    type="button"
+                    className="min-w-0 truncate rounded-sm text-left hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    onClick={() => open(check.url)}
+                  />
+                ) : (
+                  <span className="min-w-0 truncate" />
+                )
+              }
+              label={check.description ?? check.name}
+            >
+              {check.name}
+            </SharedTooltipTrigger>
             <span className="justify-self-end whitespace-nowrap text-muted-foreground">
               {pullRequestCheckStatusLabel(check, resolve)}
             </span>

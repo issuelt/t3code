@@ -14,7 +14,6 @@ import {
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -22,7 +21,6 @@ import {
   contextUsageForHandoff,
   handoffBudget,
   handoffCoverage,
-  handoffByteCapConfig,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -269,7 +267,7 @@ describe("handoff budget", () => {
 
   it("subtracts native usage, input, attachments, instructions and space for work", () => {
     const base = {
-      byteCap: 16_000,
+      tokenCap: 16_000,
       userText: "Continue",
       attachments: [],
       providerThread,
@@ -306,7 +304,7 @@ describe("handoff budget", () => {
       assert.equal(
         handoffBudget({
           ...base,
-          byteCap: 64_000,
+          tokenCap: 64_000,
           modelContextWindow: 1_000_000,
           userText: "x".repeat(70_000),
           attachments,
@@ -318,7 +316,7 @@ describe("handoff budget", () => {
         64_000,
       );
     }
-    assert.equal(handoffBudget({ ...base, byteCap: 2_000 }), 2_000);
+    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 8_000);
     // The work reserve never takes more than half of a small local window.
     for (const [modelContextWindow, nativeContextEstimate, expected] of [
       [8_192, 0, 4_086],
@@ -326,30 +324,11 @@ describe("handoff budget", () => {
       [131_072, 50_000, 48_294],
     ] as const) {
       assert.equal(
-        handoffBudget({ ...base, byteCap: 64_000, modelContextWindow, nativeContextEstimate }),
+        handoffBudget({ ...base, tokenCap: 64_000, modelContextWindow, nativeContextEstimate }),
         expected,
       );
     }
   });
-
-  it.effect.each([
-    { name: "the byte cap", env: { T3CODE_CONTEXT_HANDOFF_BYTE_CAP: "32000" }, cap: 32_000 },
-    {
-      name: "the legacy token cap",
-      env: { T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "24000" },
-      cap: 24_000,
-    },
-    {
-      name: "the byte cap over the legacy token cap",
-      env: { T3CODE_CONTEXT_HANDOFF_BYTE_CAP: "32000", T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "24000" },
-      cap: 32_000,
-    },
-    { name: "the default", env: {}, cap: 16_000 },
-  ])("reads the history cap from $name", ({ env, cap }) =>
-    Effect.gen(function* () {
-      assert.equal(yield* handoffByteCapConfig, cap);
-    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
-  );
 
   it("keeps measured occupancy across a model change", () => {
     const previous = {
@@ -411,7 +390,7 @@ describe("handoff budget", () => {
     });
     assert.equal(
       handoffBudget({
-        byteCap: 16_000,
+        tokenCap: 16_000,
         userText: "Continue work",
         attachments: [
           {
@@ -433,11 +412,11 @@ describe("handoff budget", () => {
         nativeContextEstimate: 0,
         modelContextWindow: preserved?.maxTokens,
       }),
-      16_000,
+      64_000,
     );
     assert.equal(
       handoffBudget({
-        byteCap: 16_000,
+        tokenCap: 16_000,
         userText: "Continue work",
         attachments: [],
         providerThread,
@@ -447,10 +426,10 @@ describe("handoff budget", () => {
     );
   });
   it("reserves context for image batches up to the attachment limit, honoring smaller known windows", () => {
-    let previousBudget = 16_000;
+    let previousBudget = 64_000;
     for (let count = 1; count <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS; count++) {
       const input = {
-        byteCap: 16_000,
+        tokenCap: 16_000,
         userText: "Compare these screenshots",
         providerThread,
         nativeContextEstimate: 0,
@@ -466,17 +445,17 @@ describe("handoff budget", () => {
       assert.isAtLeast(budget, 0);
       assert.isAtMost(budget, previousBudget);
       previousBudget = budget;
-      if (count <= 8) assert.equal(budget, 16_000);
-      if (count === 10) {
+      if (count <= 3) assert.equal(budget, 64_000);
+      if (count >= 4 && count <= 10) {
         assert.isAbove(budget, 0);
-        assert.isBelow(budget, 16_000);
+        assert.isBelow(budget, 64_000);
       }
       if (count === PROVIDER_SEND_TURN_MAX_ATTACHMENTS) assert.equal(budget, 0);
       if (budget > 0) {
         const selected = selectHistory({ messages, coverage: "Recover omitted history", budget });
         assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       }
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 16_000);
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 64_000);
       // 20k window: half is reserved for work, then 27 prompt bytes and 8,192 per image.
       const smallWindowBudget = count === 1 ? 1_781 : 0;
       assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), smallWindowBudget);

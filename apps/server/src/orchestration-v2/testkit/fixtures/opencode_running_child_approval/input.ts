@@ -5,6 +5,8 @@ export const OPENCODE_RUNNING_CHILD_APPROVAL_PENDING_SHELL_KEY =
 
 export function openCodeRunningChildApprovalInput(): OrchestratorFixtureInput {
   return {
+    // The fork accepts every Full access ask itself, so the approval card needs a mode that asks.
+    runtimeMode: "approval-required",
     steps: [
       { type: "message", text: OPENCODE_SUBAGENT_PROMPT },
       {

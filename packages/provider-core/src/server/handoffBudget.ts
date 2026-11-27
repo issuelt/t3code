@@ -14,17 +14,12 @@ import * as Config from "effect/Config";
 
 import { withSenderNoteFor } from "./agentMessageLabel.ts";
 
-export const DEFAULT_HANDOFF_BYTE_CAP = 16_000;
+export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
-export const handoffByteCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_BYTE_CAP").pipe(
-  Config.orElse(() => Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP")),
-  Config.withDefault(DEFAULT_HANDOFF_BYTE_CAP),
+export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
+  Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
-
-export function handoffByteCapForThread(threadId: string, configuredCap: number): number {
-  return isHomeThreadId(threadId) ? HANDOFF_BYTE_CAP : configuredCap;
-}
 
 // Only accepted roots with matching native identity count; row reuse must not revive old usage.
 export function latestNativeContextUsage(
@@ -111,9 +106,13 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text) / 4);
 }
 
-// One UTF-8 byte per token keeps the new turn and imported history pessimistic.
+export function handoffByteCap(tokenCap: number): number {
+  return Math.min(HANDOFF_BYTE_CAP, tokenCap * 4);
+}
+
+// One UTF-8 byte per remaining token keeps the native context window reservation pessimistic.
 export function handoffBudget(input: {
-  readonly byteCap: number;
+  readonly tokenCap: number;
   readonly userText: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -133,12 +132,7 @@ export function handoffBudget(input: {
   const workReserve = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   return Math.max(
     0,
-    Math.min(
-      input.byteCap,
-      // Cap imported history only; adapters own attachment transport limits.
-      HANDOFF_BYTE_CAP,
-      window - native - current - workReserve,
-    ),
+    Math.min(handoffByteCap(input.tokenCap), window - native - current - workReserve),
   );
 }
 
