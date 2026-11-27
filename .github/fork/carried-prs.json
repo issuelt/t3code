@@ -41,6 +41,51 @@
       "number": 31169,
       "takenSha": "21d6fe6c7f65b32962fcea1fcfcb00b6ace178f5",
       "reason": "Providers re-check after late shell PATH; rebuild only missing installs or Codex launch failures"
+    },
+    {
+      "number": 38587,
+      "takenSha": "25243a270186971ddcef36ccf37df0faf12d3411",
+      "reason": "Muse threads can use Auto mode"
+    },
+    {
+      "number": 42578,
+      "takenSha": "b4a4ee90f6111c8d1c1af9a8b13d0f2eee1c04b3",
+      "reason": "Worktree launches look up the repository's git directory once"
+    },
+    {
+      "number": 42601,
+      "takenSha": "86ad93943fdf568554120d2ed08a4fcd8b89a9d6",
+      "reason": "A turn folding under the reader no longer re-arms live follow"
+    },
+    {
+      "number": 42658,
+      "takenSha": "2c16acd2fc8c1d0b3047ad5adaa1e49fb568cb50",
+      "reason": "Mobile launch with many environments does less work"
+    },
+    {
+      "number": 42700,
+      "takenSha": "1f109467668fd739126a3880b8c50579061b6b9d",
+      "reason": "Cursor follow-up turns reuse the agent's MCP connections"
+    },
+    {
+      "number": 43651,
+      "takenSha": "5082cc7c4653bcc81c1f53ebe5bf5715c6464719",
+      "reason": "Source control discovery runs its probes in parallel"
+    },
+    {
+      "number": 43811,
+      "takenSha": "e38016703b988b1741332a2db3a263c0995275a9",
+      "reason": "Claude agent-file hooks and MCP servers run at Full access in folders opened only through T3"
+    },
+    {
+      "number": 43988,
+      "takenSha": "440eeb0fddb6dcfba2c558bffefa9a0979696909",
+      "reason": "MCP Apps can compile WebAssembly"
+    },
+    {
+      "number": 44020,
+      "takenSha": "cd76e5c88df6214502a47ff1426c4b7d002dc227",
+      "reason": "Idle threads detach from shared provider sessions, so the session table stops growing per thread"
     }
   ]
 }
