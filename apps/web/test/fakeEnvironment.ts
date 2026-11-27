@@ -734,3 +734,13 @@ export async function emitThreadEvent(
     } as OrchestrationV2ThreadStreamItem),
   );
 }
+
+export function runningRun(threadId: ThreadId, id: string, ordinal: number, userMessageId: string) {
+  return {
+    ...run(threadId, RunId.make(id), ordinal, userMessageId),
+    status: "running" as const,
+    completedAt: null,
+  };
+}
+
+export { userItem };
