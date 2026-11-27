@@ -761,6 +761,7 @@ const make = Effect.gen(function* () {
         const requestedBaseRef = input.workspaceStrategy.baseRef;
         let startRef = requestedBaseRef;
         let baseRefName = requestedBaseRef;
+        let baseBranchName: string | undefined;
         const remote =
           input.workspaceStrategy.startFromOrigin === true && projectIsRepository
             ? yield* git
@@ -784,6 +785,7 @@ const make = Effect.gen(function* () {
           if (remoteBase !== null) {
             startRef = remoteBase.commitSha;
             baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
+            baseBranchName = remote.branchName;
             fetchedBase = true;
           }
         }
@@ -813,6 +815,7 @@ const make = Effect.gen(function* () {
           if (fallback !== null) {
             startRef = fallback.startRef;
             baseRefName = fallback.baseRefName;
+            baseBranchName = undefined;
             yield* setupTracker.update(threadId, (snapshot) => ({
               ...snapshot,
               baseRef: fallback.baseRefName,
@@ -893,7 +896,7 @@ const make = Effect.gen(function* () {
                     baseRefName,
                     path: null,
                   },
-                  { progress },
+                  { progress, ...(baseBranchName === undefined ? {} : { baseBranchName }) },
                 )
                 .pipe(
                   Effect.catchIf(
