@@ -85,6 +85,7 @@ vi.mock("./environmentSections", () => ({
 vi.mock("./devAutoConnect", () => ({
   autoConnectReport: () => ({ connecting: false, error: null }),
   devAutoConnectAttemptAtom: {},
+  pairingLinksAllowed: () => __DEV__,
 }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ presentation: null }),

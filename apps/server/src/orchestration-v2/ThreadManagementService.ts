@@ -82,6 +82,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -728,6 +729,7 @@ const make = Effect.gen(function* () {
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
+    { attributes: routineSpan },
   )(function* (threadId: ThreadId) {
     yield* legacyImporter.ensureTranscript(threadId).pipe(
       Effect.tapError((cause) =>
@@ -1024,6 +1026,7 @@ const make = Effect.gen(function* () {
       ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
+      ...(mode === "queue" ? { explicitQueue: true as const } : {}),
       createdBy: input.createdBy,
       creationSource: input.creationSource,
     });

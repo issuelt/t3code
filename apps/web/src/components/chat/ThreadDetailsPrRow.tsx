@@ -75,6 +75,7 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
@@ -466,34 +467,29 @@ export function ThreadDetailsPrRow({
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
   const watchControl = (part: "secondary" | "icon") =>
     watching ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ThreadDetailsControl
-              type="button"
-              variant="ghost"
-              size="sm"
-              part={part}
-              className="group/watch"
-              aria-label={gt("Stop watching #{number}", { number })}
-              onClick={onStopWatching}
-            />
-          }
-        >
-          <EyeIcon
-            aria-hidden
-            className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+      <SharedTooltipTrigger
+        render={
+          <ThreadDetailsControl
+            type="button"
+            variant="ghost"
+            size="sm"
+            part={part}
+            className="group/watch"
+            aria-label={gt("Stop watching #{number}", { number })}
+            onClick={onStopWatching}
           />
-          <EyeOffIcon
-            aria-hidden
-            className={cn(
-              part === "icon" ? "size-3.5" : "size-4",
-              "hidden group-hover/watch:block",
-            )}
-          />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{PULL_REQUEST_WATCHING_HINT}</TooltipPopup>
-      </Tooltip>
+        }
+        label={PULL_REQUEST_WATCHING_HINT}
+      >
+        <EyeIcon
+          aria-hidden
+          className={cn(part === "icon" ? "size-3.5" : "size-4", "group-hover/watch:hidden")}
+        />
+        <EyeOffIcon
+          aria-hidden
+          className={cn(part === "icon" ? "size-3.5" : "size-4", "hidden group-hover/watch:block")}
+        />
+      </SharedTooltipTrigger>
     ) : null;
 
   // The title row wraps to two lines; a conventional-commit prefix eats most of one line.
@@ -550,25 +546,23 @@ export function ThreadDetailsPrRow({
             {watchControl("icon")}
             <span className="flex-1" />
             {trailingAction ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <ThreadDetailsControl
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      part="meta"
-                      tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
-                      onClick={trailingAction.onClick}
-                    />
-                  }
-                >
-                  {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
-                  {trailingAction.suffix}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    part="meta"
+                    tone={trailingAction.destructive ? "destructive" : "primary"}
+                    disabled={actionPending || handoff !== null}
+                    onClick={trailingAction.onClick}
+                  />
+                }
+                label={trailingAction.tooltip}
+              >
+                {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
+                {trailingAction.suffix}
+              </SharedTooltipTrigger>
             ) : null}
           </div>
         </div>

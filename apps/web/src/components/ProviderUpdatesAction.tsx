@@ -21,7 +21,7 @@ import {
 } from "./ProviderUpdateLaunchNotification.logic";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
@@ -142,32 +142,34 @@ export function ProviderUpdatesAction() {
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={isPending}
-            onClick={() => void handleUpdate()}
-          >
-            {isPending ? <T>Updating…</T> : <T>Update all machines</T>}
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">
-        <div>
-          <T>Updates providers across connected machines. Each machine checks your permissions.</T>
-        </div>
-        {machines.map((machine) => (
-          <div key={machine.environmentId}>
-            {machine.label}:{" "}
-            {machine.candidates
-              .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
-              .join(", ")}
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={isPending}
+          onClick={() => void handleUpdate()}
+        >
+          {isPending ? <T>Updating…</T> : <T>Update all machines</T>}
+        </Button>
+      }
+      label={
+        <>
+          <div>
+            <T>
+              Updates providers across connected machines. Each machine checks your permissions.
+            </T>
           </div>
-        ))}
-      </TooltipPopup>
-    </Tooltip>
+          {machines.map((machine) => (
+            <div key={machine.environmentId}>
+              {machine.label}:{" "}
+              {machine.candidates
+                .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
+                .join(", ")}
+            </div>
+          ))}
+        </>
+      }
+    />
   );
 }

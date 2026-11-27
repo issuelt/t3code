@@ -1,12 +1,17 @@
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
-import { T } from "gt-react";
+import { T, useMessages } from "gt-react";
 import type { ThreadPendingApproval } from "@t3tools/client-runtime/state/thread-requests";
-import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  fullAccessOverrideExplanation,
+  PUSH_HOOKS_APPROVAL_QUESTION,
+} from "@t3tools/client-runtime/state/thread-requests";
 import type { ReactNode } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand, useCommandStatus } from "../../state/use-atom-command";
+import { ApprovalText } from "./ApprovalText";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 import { RequestCard } from "./RequestCard";
 
 export function PendingApprovalCard({
@@ -25,6 +30,7 @@ export function PendingApprovalCard({
   const canRespond = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const { pending: responding, error, run } = useCommandStatus();
+  const messages = useMessages();
   return (
     <RequestCard
       label={label}
@@ -55,9 +61,14 @@ export function PendingApprovalCard({
         </>
       }
     >
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
-        {approval.detail || approval.requestKind}
-      </pre>
+      {approval.pushHooks ? (
+        <>
+          <p className="mb-1">{messages(PUSH_HOOKS_APPROVAL_QUESTION)}</p>
+          <PushHooksApprovalDetails pushHooks={approval.pushHooks} />
+        </>
+      ) : (
+        <ApprovalText text={approval.detail || approval.requestKind} />
+      )}
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
       {approval.responseCapability !== "live" ? (
         <p className="mt-2 text-warning">
@@ -67,7 +78,7 @@ export function PendingApprovalCard({
       {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
       {approval.fullAccessOverride ? (
         <p className="mt-2 text-muted-foreground">
-          {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+          {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
     </RequestCard>
