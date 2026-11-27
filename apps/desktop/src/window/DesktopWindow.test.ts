@@ -216,7 +216,10 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const layerDesktopEnvironmentFor = (platform: NodeJS.Platform) =>
+const layerDesktopEnvironmentFor = (
+  platform: NodeJS.Platform,
+  env: Readonly<Record<string, string | undefined>> = {},
+) =>
   DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -224,6 +227,7 @@ const layerDesktopEnvironmentFor = (platform: NodeJS.Platform) =>
         DesktopConfig.layerTest({
           T3CODE_PORT: "3773",
           VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+          ...env,
         }),
       ),
     ),
@@ -257,6 +261,7 @@ function layerTest(input: {
   readonly focusedWindow?: Electron.BrowserWindow;
   readonly fallbackWindow?: Electron.BrowserWindow;
   readonly platform?: NodeJS.Platform;
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly appearanceWindows?: ReadonlyArray<{
     readonly window: Electron.BrowserWindow;
     readonly titleBarOverlay: boolean;
@@ -341,9 +346,9 @@ function layerTest(input: {
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
-        input.platform === undefined
+        input.platform === undefined && input.env === undefined
           ? layerDesktopEnvironment
-          : layerDesktopEnvironmentFor(input.platform),
+          : layerDesktopEnvironmentFor(input.platform ?? environmentInput.platform, input.env),
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
@@ -1373,6 +1378,35 @@ describe("DesktopWindow", () => {
       assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
       assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
     }),
+  );
+
+  it.effect.each([
+    { hide: undefined, overlay: true },
+    { hide: "1", overlay: false },
+  ] as const)(
+    "creates a Linux window with an overlay $overlay when T3CODE_HIDE_WINDOW_CONTROLS is $hide",
+    (input) =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+          createdWindowOptions,
+          platform: "linux",
+          env: { T3CODE_HIDE_WINDOW_CONTROLS: input.hide },
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        }).pipe(Effect.provide(layer));
+
+        const options = createdWindowOptions[0];
+        assert.equal(options?.titleBarStyle, "hidden");
+        assert.equal(options?.titleBarOverlay !== undefined, input.overlay);
+      }),
   );
 
   it.effect.each([
