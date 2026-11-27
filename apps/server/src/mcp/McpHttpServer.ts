@@ -1471,7 +1471,12 @@ const withReadableInvalidArguments = Effect.fn("McpHttpServer.withReadableInvali
                   Effect.succeed(
                     new McpSchema.CallToolResult({
                       isError: true,
-                      content: [{ type: "text", text: error.message }],
+                      content: [
+                        {
+                          type: "text",
+                          text: `${error.message}\nExpected inputSchema: ${encodeJsonText(options.tool.inputSchema)}`,
+                        },
+                      ],
                     }),
                   ),
               }),
