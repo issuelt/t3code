@@ -2505,6 +2505,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Keep the stream open until descendants settle to avoid stranding child projections.
         const deferredRootTerminals = yield* Ref.make(new Map<string, DeferredCodexRootTerminal>());
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        // Commands still running when Codex starts a later reasoning/message step yielded to background.
+        const backgroundedCommandItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        // Backgrounded commands that exited mid-turn with no subsequent tool step to observe them.
+        const unobservedCompletedBackgroundCommandsByTurn = yield* Ref.make(
+          new Map<
+            string,
+            Array<{
+              readonly id: string;
+              readonly command: string;
+              readonly exitCode?: number | null | undefined;
+              readonly aggregatedOutput?: string | null | undefined;
+            }>
+          >(),
+        );
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const imageTurns = new Map<
@@ -5820,6 +5834,80 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         );
 
+        const offerBackgroundCommandContinuation = Effect.fn(
+          "CodexAdapterV2.offerBackgroundCommandContinuation",
+        )(function* (
+          context: ActiveCodexTurnContext,
+          nativeTurnId: string,
+          item: {
+            readonly id: string;
+            readonly command: string;
+            readonly exitCode?: number | null | undefined;
+            readonly aggregatedOutput?: string | null | undefined;
+          },
+        ) {
+          if (context.subagent !== null || continuationRequests === undefined) return;
+          const alreadyOffered = yield* Ref.modify(offeredContinuationItemsByTurn, (current) => {
+            const items = current.get(nativeTurnId);
+            if (items !== undefined && items.has(item.id)) {
+              return [true, current] as const;
+            }
+            const updated = new Map(current);
+            const updatedItems = new Set(items ?? []);
+            updatedItems.add(item.id);
+            updated.set(nativeTurnId, updatedItems);
+            return [false, updated] as const;
+          });
+          if (alreadyOffered) return;
+          yield* continuationRequests.offer({
+            threadId: context.projectionThreadId,
+            providerThreadId: context.providerThread.id,
+            driver: CODEX_PROVIDER,
+            // Codex starts a new turn from this text, so nothing is buffered.
+            delivery: "message_text",
+            detail: codexBackgroundCommandDetail(item),
+            notification: {
+              ...backgroundWorkNotification([
+                {
+                  kind: "command",
+                  label: item.command,
+                  outcome:
+                    item.exitCode === 0
+                      ? "completed"
+                      : item.exitCode == null
+                        ? "unknown"
+                        : "failed",
+                  exitCode: item.exitCode ?? undefined,
+                },
+              ]),
+              detail: item.command,
+            },
+          });
+        });
+
+        yield* client.handleServerNotification(
+          "item/commandExecution/terminalInteraction",
+          (payload) =>
+            Effect.gen(function* () {
+              yield* Ref.update(backgroundedCommandItemsByTurn, (current) => {
+                const items = current.get(payload.turnId);
+                if (items === undefined || !items.has(payload.itemId)) return current;
+                const remaining = new Set(items);
+                remaining.delete(payload.itemId);
+                const updated = new Map(current);
+                if (remaining.size === 0) updated.delete(payload.turnId);
+                else updated.set(payload.turnId, remaining);
+                return updated;
+              });
+              yield* Ref.update(unobservedCompletedBackgroundCommandsByTurn, (current) => {
+                if (!current.has(payload.turnId)) return current;
+                const updated = new Map(current);
+                updated.delete(payload.turnId);
+                return updated;
+              });
+            }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -5857,6 +5945,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             yield* completeProviderRetry(context, yield* DateTime.now);
+            if (payload.item.type === "reasoning" || payload.item.type === "agentMessage") {
+              const running = (yield* Ref.get(runningCommandItemsByTurn)).get(payload.turnId);
+              if (running !== undefined && running.size > 0) {
+                yield* Ref.update(backgroundedCommandItemsByTurn, (current) => {
+                  const updated = new Map(current);
+                  const items = new Set(updated.get(payload.turnId) ?? []);
+                  for (const id of running.keys()) items.add(id);
+                  updated.set(payload.turnId, items);
+                  return updated;
+                });
+              }
+            } else if (
+              payload.item.type === "commandExecution" ||
+              payload.item.type === "fileChange" ||
+              payload.item.type === "mcpToolCall" ||
+              payload.item.type === "dynamicToolCall" ||
+              payload.item.type === "webSearch"
+            ) {
+              // A subsequent tool step ran after earlier mid-turn background exits.
+              yield* Ref.update(unobservedCompletedBackgroundCommandsByTurn, (current) => {
+                if (!current.has(payload.turnId)) return current;
+                const updated = new Map(current);
+                updated.delete(payload.turnId);
+                return updated;
+              });
+            }
             if (payload.item.type !== "reasoning") {
               yield* resolveItemPosition(
                 context,
@@ -6062,57 +6176,55 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem: artifacts.turnItem,
                 ...(settledUnknown ? { sessionScoped: true } : {}),
               });
-              if (settled) {
-                if (
-                  context.subagent === null &&
-                  continuationRequests !== undefined &&
-                  !userStopped &&
-                  !(yield* Ref.get(interruptingNativeTurns)).has(payload.turnId)
-                ) {
-                  const alreadyOffered = yield* Ref.modify(
-                    offeredContinuationItemsByTurn,
-                    (current) => {
-                      const items = current.get(payload.turnId);
-                      if (items !== undefined && items.has(payload.item.id)) {
-                        return [true, current] as const;
-                      }
-                      const updated = new Map(current);
-                      const updatedItems = new Set(items ?? []);
-                      updatedItems.add(payload.item.id);
-                      updated.set(payload.turnId, updatedItems);
-                      return [false, updated] as const;
-                    },
-                  );
-                  if (!alreadyOffered) {
-                    yield* continuationRequests.offer({
-                      threadId: context.projectionThreadId,
-                      providerThreadId: context.providerThread.id,
-                      driver: CODEX_PROVIDER,
-                      // Codex starts a new turn from this text, so nothing is buffered.
-                      delivery: "message_text",
-                      detail: codexBackgroundCommandDetail(payload.item),
-                      notification: {
-                        ...backgroundWorkNotification([
-                          {
-                            kind: "command",
-                            label: payload.item.command,
-                            outcome:
-                              payload.item.exitCode === 0
-                                ? "completed"
-                                : payload.item.exitCode == null
-                                  ? "unknown"
-                                  : "failed",
-                            exitCode: payload.item.exitCode ?? undefined,
-                          },
-                        ]),
-                        detail: payload.item.command,
-                      },
-                    });
+              const completedCommand = payload.item;
+              const wasBackgrounded = yield* Ref.modify(
+                backgroundedCommandItemsByTurn,
+                (current) => {
+                  const items = current.get(payload.turnId);
+                  if (items === undefined || !items.has(completedCommand.id)) {
+                    return [false, current] as const;
                   }
+                  const remaining = new Set(items);
+                  remaining.delete(completedCommand.id);
+                  const updated = new Map(current);
+                  if (remaining.size === 0) updated.delete(payload.turnId);
+                  else updated.set(payload.turnId, remaining);
+                  return [true, updated] as const;
+                },
+              );
+              const interrupting = (yield* Ref.get(interruptingNativeTurns)).has(payload.turnId);
+              if (settled) {
+                if (!userStopped && !interrupting) {
+                  yield* offerBackgroundCommandContinuation(
+                    context,
+                    payload.turnId,
+                    completedCommand,
+                  );
                 }
                 if (turnDrained) {
                   yield* releaseSettledTurnIfIdle(payload.turnId);
                 }
+              } else if (
+                wasBackgrounded &&
+                context.subagent === null &&
+                continuationRequests !== undefined &&
+                !userStopped &&
+                !interrupting
+              ) {
+                yield* Ref.update(unobservedCompletedBackgroundCommandsByTurn, (current) => {
+                  const updated = new Map(current);
+                  const existing = updated.get(payload.turnId) ?? [];
+                  updated.set(payload.turnId, [
+                    ...existing,
+                    {
+                      id: completedCommand.id,
+                      command: completedCommand.command,
+                      exitCode: completedCommand.exitCode,
+                      aggregatedOutput: completedCommand.aggregatedOutput,
+                    },
+                  ]);
+                  return updated;
+                });
               }
               return;
             }
@@ -7611,6 +7723,36 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* Deferred.succeed(input.context.capacityRetryPending, undefined);
               }
               yield* flushReadyRootTerminals();
+              yield* Ref.update(backgroundedCommandItemsByTurn, (current) => {
+                if (!current.has(input.nativeTurnId)) return current;
+                const updated = new Map(current);
+                updated.delete(input.nativeTurnId);
+                return updated;
+              });
+              const unobservedCompleted = yield* Ref.modify(
+                unobservedCompletedBackgroundCommandsByTurn,
+                (current) => {
+                  const items = current.get(input.nativeTurnId);
+                  if (items === undefined) return [undefined, current] as const;
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return [items, updated] as const;
+                },
+              );
+              if (
+                input.status === "completed" &&
+                !interruptInProgress &&
+                !input.continueRun &&
+                unobservedCompleted !== undefined
+              ) {
+                for (const item of unobservedCompleted) {
+                  yield* offerBackgroundCommandContinuation(
+                    input.context,
+                    input.nativeTurnId,
+                    item,
+                  );
+                }
+              }
               if (!retainSettledContext && !interruptInProgress) {
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
@@ -7630,6 +7772,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               if (!retainSettledContext) {
+                yield* Ref.update(offeredContinuationItemsByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
