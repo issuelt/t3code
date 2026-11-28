@@ -7570,6 +7570,386 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect(
+    "wakes at turn end when a backgrounded command exits mid-turn with no subsequent tool step",
+    () =>
+      Effect.gen(function* () {
+        const failedCommand = {
+          ...backgroundCommandItem("completed"),
+          status: "failed",
+          exitCode: 1,
+          aggregatedOutput: "FAIL: metadata perf check\n",
+        };
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-bg-mid-turn-exit",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: BG_NATIVE_THREAD,
+                nativeTurnId: BG_NATIVE_TURN,
+                prompt: BG_PROMPT,
+              }),
+              {
+                type: "emit_inbound",
+                label: "item/started/command",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    item: backgroundCommandItem("inProgress"),
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    startedAtMs: 1782622440500,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/started/reasoning",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    item: { type: "reasoning", id: "rs-bg-1", summary: [], content: [] },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    startedAtMs: 1782622441000,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/completed/command-mid-turn",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: failedCommand,
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    completedAtMs: 1782622442000,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/completed/reasoning",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: { type: "reasoning", id: "rs-bg-1", summary: [], content: [] },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    completedAtMs: 1782622442500,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/started/root-answer",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    item: {
+                      type: "agentMessage",
+                      id: "root-answer-bg",
+                      text: "",
+                      phase: "final_answer",
+                      memoryCitation: null,
+                    },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    startedAtMs: 1782622442600,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "item/completed/root-answer",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: {
+                      type: "agentMessage",
+                      id: "root-answer-bg",
+                      text: "The tracked job is still running.",
+                      phase: "final_answer",
+                      memoryCitation: null,
+                    },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    completedAtMs: 1782622443000,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: BG_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-bg-mid-turn-exit"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        yield* harness.until(() => harness.continuationRequests.length === 1);
+        const [request] = harness.continuationRequests;
+        assert.include(
+          request?.detail ?? "",
+          `Background command completed (exit 1): ${BG_COMMAND}`,
+        );
+        assert.include(request?.detail ?? "", "FAIL: metadata perf check");
+        assert.equal(request?.notification?.outcome, "failed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    {
+      name: "synchronous command completing before reasoning",
+      extraEntries: [
+        {
+          type: "emit_inbound" as const,
+          label: "item/completed/command-sync",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: backgroundCommandItem("completed"),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622440800,
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/started/reasoning",
+          frame: {
+            method: "item/started",
+            params: {
+              item: { type: "reasoning", id: "rs-sync-1", summary: [], content: [] },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              startedAtMs: 1782622441000,
+            },
+          },
+        },
+      ],
+    },
+    {
+      name: "backgrounded command observed through terminalInteraction before exit",
+      extraEntries: [
+        {
+          type: "emit_inbound" as const,
+          label: "item/started/reasoning",
+          frame: {
+            method: "item/started",
+            params: {
+              item: { type: "reasoning", id: "rs-poll-1", summary: [], content: [] },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              startedAtMs: 1782622441000,
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/commandExecution/terminalInteraction",
+          frame: {
+            method: "item/commandExecution/terminalInteraction",
+            params: {
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              itemId: BG_COMMAND_ITEM,
+              processId: "4242",
+              stdin: "",
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/completed/command-polled",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: backgroundCommandItem("completed"),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622441500,
+            },
+          },
+        },
+      ],
+    },
+    {
+      name: "mid-turn background exit followed by a later tool call in the same turn",
+      extraEntries: [
+        {
+          type: "emit_inbound" as const,
+          label: "item/started/reasoning",
+          frame: {
+            method: "item/started",
+            params: {
+              item: { type: "reasoning", id: "rs-step-1", summary: [], content: [] },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              startedAtMs: 1782622441000,
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/completed/command-mid-turn",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: backgroundCommandItem("completed"),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622441500,
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/started/followup-command",
+          frame: {
+            method: "item/started",
+            params: {
+              item: {
+                ...backgroundCommandItem("inProgress"),
+                id: "call-codex-followup",
+                command: "cat /tmp/out.log",
+                processId: "4244",
+              },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              startedAtMs: 1782622441700,
+            },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "item/completed/followup-command",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: {
+                ...backgroundCommandItem("completed"),
+                id: "call-codex-followup",
+                command: "cat /tmp/out.log",
+                processId: "4244",
+              },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622441900,
+            },
+          },
+        },
+      ],
+    },
+  ])("does not wake at turn end for $name", ({ name, extraEntries }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: `codex-bg-no-wake-${name.replaceAll(/[^a-z0-9]+/gi, "-")}`,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId: BG_NATIVE_THREAD,
+              nativeTurnId: BG_NATIVE_TURN,
+              prompt: BG_PROMPT,
+            }),
+            {
+              type: "emit_inbound",
+              label: "item/started/command",
+              frame: {
+                method: "item/started",
+                params: {
+                  item: backgroundCommandItem("inProgress"),
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  startedAtMs: 1782622440500,
+                },
+              },
+            },
+            ...extraEntries,
+            {
+              type: "emit_inbound",
+              label: "item/completed/root-answer",
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: {
+                    type: "agentMessage",
+                    id: "root-answer-bg",
+                    text: "Done.",
+                    phase: "final_answer",
+                    memoryCitation: null,
+                  },
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  completedAtMs: 1782622443000,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: BG_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-bg-no-wake"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      assert.deepEqual(harness.continuationRequests, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("settles a command Codex never completed once its terminal is gone", () =>
     Effect.gen(function* () {
       const settled = yield* Deferred.make<void>();
